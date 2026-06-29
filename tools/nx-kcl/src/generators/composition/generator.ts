@@ -12,6 +12,26 @@ export interface CompositionGeneratorSchema {
   registry?: string;
 }
 
+type Tier = 'standard' | 'nearline' | 'cold' | 'archive';
+
+type StorageClass =
+  | { kind: 'field'; field: string; map: Record<Tier, string> }
+  | {
+      // S3 has no bucket-level storage class: express tiers via a separate
+      // BucketLifecycleConfiguration MR that transitions objects to a class.
+      kind: 's3lifecycle';
+      map: Partial<Record<Tier, [storageClass: string, days: number]>>;
+      lifecycleFields: string[];
+    }
+  | {
+      // Azure account accessTier covers standard..cold but has no Archive;
+      // emit a ManagementPolicy MR to tier blobs to Archive for the listed tiers.
+      kind: 'azureTier';
+      field: string;
+      map: Record<Tier, string>;
+      archiveDays: Partial<Record<Tier, number>>;
+    };
+
 interface Backend {
   apiVersion: string;
   kind: string;
@@ -19,23 +39,35 @@ interface Backend {
   schemaPackage: string;
   /** KCL lines (8-space indent) setting the managed resource's spec fields. */
   fields: string[];
+  /** How the abstract spec.storageClass maps to this provider, if supported. */
+  storageClass?: StorageClass;
 }
 
 const BACKENDS: Record<string, Backend> = {
   aws: {
-    apiVersion: 's3.aws.upbound.io/v1beta1',
+    apiVersion: 's3.aws.m.upbound.io/v1beta1',
     kind: 'Bucket',
     schemaPackage: 'aws-s3',
     fields: ['        spec.forProvider.region = oxr.spec.region'],
+    storageClass: {
+      kind: 's3lifecycle',
+      map: { nearline: ['STANDARD_IA', 30], cold: ['GLACIER_IR', 90], archive: ['DEEP_ARCHIVE', 180] },
+      lifecycleFields: ['        spec.forProvider.region = oxr.spec.region'],
+    },
   },
   gcp: {
-    apiVersion: 'storage.gcp.upbound.io/v1beta2',
+    apiVersion: 'storage.gcp.m.upbound.io/v1beta1',
     kind: 'Bucket',
     schemaPackage: 'gcp-storage',
     fields: ['        spec.forProvider.location = oxr.spec.region'],
+    storageClass: {
+      kind: 'field',
+      field: 'spec.forProvider.storageClass',
+      map: { standard: 'STANDARD', nearline: 'NEARLINE', cold: 'COLDLINE', archive: 'ARCHIVE' },
+    },
   },
   azure: {
-    apiVersion: 'storage.azure.upbound.io/v1beta1',
+    apiVersion: 'storage.azure.m.upbound.io/v1beta1',
     kind: 'Account',
     schemaPackage: 'azure-storage',
     fields: [
@@ -43,16 +75,32 @@ const BACKENDS: Record<string, Backend> = {
       '        spec.forProvider.accountTier = "Standard"',
       '        spec.forProvider.accountReplicationType = "LRS"',
     ],
+    storageClass: {
+      kind: 'azureTier',
+      field: 'spec.forProvider.accessTier',
+      map: { standard: 'Hot', nearline: 'Cool', cold: 'Cold', archive: 'Cold' },
+      archiveDays: { archive: 180 },
+    },
   },
   rustfs: {
     // rustfs is S3-compatible: reuse the aws-s3 schema + a rustfs ProviderConfig.
-    apiVersion: 's3.aws.upbound.io/v1beta1',
+    apiVersion: 's3.aws.m.upbound.io/v1beta1',
     kind: 'Bucket',
     schemaPackage: 'aws-s3',
     fields: [
+      '        spec.providerConfigRef.kind = "ProviderConfig"',
       '        spec.providerConfigRef.name = "rustfs"',
       '        spec.forProvider.region = "us-east-1"',
     ],
+    storageClass: {
+      kind: 's3lifecycle',
+      map: { nearline: ['STANDARD_IA', 30], cold: ['GLACIER_IR', 90], archive: ['DEEP_ARCHIVE', 180] },
+      lifecycleFields: [
+        '        spec.providerConfigRef.kind = "ProviderConfig"',
+        '        spec.providerConfigRef.name = "rustfs"',
+        '        spec.forProvider.region = "us-east-1"',
+      ],
+    },
   },
 };
 
@@ -120,17 +168,155 @@ function typedRenderModule(opts: {
   name: string;
   provider: string;
   backend: Backend;
-  importPath: string; // e.g. gcp_storage.models.v1beta2.storage_..._bucket
+  importPath: string; // e.g. gcp_storage.models.v1beta1.storage_..._bucket
+  companionImport?: string | null; // companion MR module (s3lifecycle / azureTier)
 }): string {
-  return [
+  const { backend } = opts;
+  const head = [
     `# ${opts.name} (${opts.provider}) — Crossplane Composition logic (function-kcl module).`,
-    `# Typed against the ${opts.backend.schemaPackage} schema package.`,
+    `# Typed against the ${backend.schemaPackage} schema package.`,
     `import ${opts.importPath} as backend`,
+  ];
+  const sc = backend.storageClass;
+
+  if (sc?.kind === 's3lifecycle' && opts.companionImport) {
+    const transition =
+      '{' +
+      Object.entries(sc.map)
+        .map(([t, v]) => `"${t}" = {storageClass = "${v[0]}", days = ${v[1]}}`)
+        .join(', ') +
+      '}';
+    return [
+      ...head,
+      `import ${opts.companionImport} as lifecycle`,
+      ``,
+      `# S3 has no bucket-level storage class: map the abstract tier to an object`,
+      `# lifecycle transition on a companion BucketLifecycleConfiguration MR.`,
+      `_transition = ${transition}`,
+      ``,
+      `render = lambda oxr {`,
+      `    _items: [any] = [backend.${backend.kind} {`,
+      `        ${RN}`,
+      ...backend.fields,
+      `    }]`,
+      `    _sc = oxr.spec?.storageClass`,
+      `    if _sc and _sc in _transition:`,
+      `        _t = _transition[_sc]`,
+      `        _items += [lifecycle.BucketLifecycleConfiguration {`,
+      `            metadata.annotations = {"krm.kcl.dev/composition-resource-name" = "lifecycle"}`,
+      ...sc.lifecycleFields.map((l) => '    ' + l),
+      `            spec.forProvider.bucketSelector.matchControllerRef = True`,
+      `            spec.forProvider.$rule = [{`,
+      `                id = "storage-class"`,
+      `                status = "Enabled"`,
+      `                $filter = [{}]`,
+      `                transition = [{days = _t.days, storageClass = _t.storageClass}]`,
+      `            }]`,
+      `        }]`,
+      `    _items`,
+      `}`,
+      ``,
+    ].join('\n');
+  }
+
+  if (sc?.kind === 'field') {
+    const map =
+      '{' +
+      Object.entries(sc.map)
+        .map(([t, v]) => `"${t}" = "${v}"`)
+        .join(', ') +
+      '}';
+    return [
+      ...head,
+      ``,
+      `# Abstract storage tier -> ${opts.provider} native value.`,
+      `_storage_class = ${map}`,
+      ``,
+      `render = lambda oxr {`,
+      `    [backend.${backend.kind} {`,
+      `        ${RN}`,
+      ...backend.fields,
+      `        if oxr.spec?.storageClass:`,
+      `            ${sc.field} = _storage_class[oxr.spec.storageClass]`,
+      `    }]`,
+      `}`,
+      ``,
+    ].join('\n');
+  }
+
+  if (sc?.kind === 'azureTier') {
+    const tierMap =
+      '{' +
+      Object.entries(sc.map)
+        .map(([t, v]) => `"${t}" = "${v}"`)
+        .join(', ') +
+      '}';
+    const daysMap =
+      '{' +
+      Object.entries(sc.archiveDays)
+        .map(([t, v]) => `"${t}" = ${v}`)
+        .join(', ') +
+      '}';
+    const setTier = [
+      `        if oxr.spec?.storageClass:`,
+      `            ${sc.field} = _access_tier[oxr.spec.storageClass]`,
+    ];
+    if (opts.companionImport) {
+      return [
+        ...head,
+        `import ${opts.companionImport} as policy`,
+        ``,
+        `# Azure accessTier has no account-level Archive: tier blobs to Archive`,
+        `# via a companion ManagementPolicy MR for the deepest tier(s).`,
+        `_access_tier = ${tierMap}`,
+        `_archive_days = ${daysMap}`,
+        ``,
+        `render = lambda oxr {`,
+        `    _items: [any] = [backend.${backend.kind} {`,
+        `        ${RN}`,
+        ...backend.fields,
+        ...setTier,
+        `    }]`,
+        `    _sc = oxr.spec?.storageClass`,
+        `    if _sc and _sc in _archive_days:`,
+        `        _items += [policy.ManagementPolicy {`,
+        `            metadata.annotations = {"krm.kcl.dev/composition-resource-name" = "lifecycle"}`,
+        `            spec.forProvider.storageAccountIdSelector.matchControllerRef = True`,
+        `            spec.forProvider.$rule = [{`,
+        `                name = "archive"`,
+        `                enabled = True`,
+        `                filters = {blobTypes = ["blockBlob"]}`,
+        `                actions = {baseBlob = {tierToArchiveAfterDaysSinceModificationGreaterThan = _archive_days[_sc]}}`,
+        `            }]`,
+        `        }]`,
+        `    _items`,
+        `}`,
+        ``,
+      ].join('\n');
+    }
+    return [
+      ...head,
+      ``,
+      `_access_tier = ${tierMap}`,
+      ``,
+      `render = lambda oxr {`,
+      `    [backend.${backend.kind} {`,
+      `        ${RN}`,
+      ...backend.fields,
+      ...setTier,
+      `    }]`,
+      `}`,
+      ``,
+    ].join('\n');
+  }
+
+  return [
+    ...head,
     ``,
     `render = lambda oxr {`,
-    `    [backend.${opts.backend.kind} {`,
+    `    [backend.${backend.kind} {`,
     `        ${RN}`,
-    ...opts.backend.fields,
+    ...backend.fields,
     `    }]`,
     `}`,
     ``,
@@ -142,17 +328,47 @@ function inlineRenderModule(opts: {
   provider: string;
   backend: Backend;
 }): string {
-  return [
+  const { backend } = opts;
+  const head = [
     `# ${opts.name} (${opts.provider}) — Crossplane Composition logic (function-kcl module).`,
-    `# Untyped fallback. Run \`nx g nx-kcl:import-crd ${opts.backend.schemaPackage} --image=<provider-image>\``,
+    `# Untyped fallback. Run \`nx g nx-kcl:import-crd ${backend.schemaPackage} --image=<provider-image>\``,
     `# then regenerate to get typed, default-aware schemas.`,
+  ];
+  const sc = backend.storageClass;
+  if (sc?.kind === 'field' || sc?.kind === 'azureTier') {
+    const map =
+      '{' +
+      Object.entries(sc.map)
+        .map(([t, v]) => `"${t}" = "${v}"`)
+        .join(', ') +
+      '}';
+    return [
+      ...head,
+      ``,
+      `_storage_class = ${map}`,
+      ``,
+      `render = lambda oxr {`,
+      `    [{`,
+      `        apiVersion = "${backend.apiVersion}"`,
+      `        kind = "${backend.kind}"`,
+      `        ${RN}`,
+      ...backend.fields,
+      `        if oxr.spec?.storageClass:`,
+      `            ${sc.field} = _storage_class[oxr.spec.storageClass]`,
+      `    }]`,
+      `}`,
+      ``,
+    ].join('\n');
+  }
+  return [
+    ...head,
     ``,
     `render = lambda oxr {`,
     `    [{`,
-    `        apiVersion = "${opts.backend.apiVersion}"`,
-    `        kind = "${opts.backend.kind}"`,
+    `        apiVersion = "${backend.apiVersion}"`,
+    `        kind = "${backend.kind}"`,
     `        ${RN}`,
-    ...opts.backend.fields,
+    ...backend.fields,
     `    }]`,
     `}`,
     ``,
@@ -172,7 +388,8 @@ function mainModule(modId: string): string {
 }
 
 function testModule(modId: string, backend: Backend): string {
-  return [
+  const sc = backend.storageClass;
+  const lines = [
     `import .${modId}`,
     ``,
     `test_render = lambda {`,
@@ -183,9 +400,58 @@ function testModule(modId: string, backend: Backend): string {
     `    assert items[0].kind == "${backend.kind}"`,
     `}`,
     ``,
-    `test_render()`,
-    ``,
-  ].join('\n');
+  ];
+
+  if (sc?.kind === 'field') {
+    lines.push(
+      `test_storage_class = lambda {`,
+      `    oxr = {metadata.name = "demo", spec = {region = "us-central1", storageClass = "archive"}}`,
+      `    items = ${modId}.render(oxr)`,
+      `    assert items[0].${sc.field} == "${sc.map.archive}", "archive -> ${sc.map.archive}"`,
+      `}`,
+      ``,
+      `test_render()`,
+      `test_storage_class()`,
+      ``,
+    );
+    return lines.join('\n');
+  }
+
+  if (sc?.kind === 'azureTier') {
+    lines.push(
+      `test_storage_class = lambda {`,
+      `    oxr = {metadata.name = "demo", spec = {region = "us-central1", storageClass = "archive"}}`,
+      `    items = ${modId}.render(oxr)`,
+      `    assert len(items) == 2, "expected account + management policy"`,
+      `    assert items[1].kind == "ManagementPolicy"`,
+      `    assert items[0].${sc.field} == "${sc.map.archive}", "archive accessTier -> ${sc.map.archive}"`,
+      `}`,
+      ``,
+      `test_render()`,
+      `test_storage_class()`,
+      ``,
+    );
+    return lines.join('\n');
+  }
+
+  if (sc?.kind === 's3lifecycle') {
+    lines.push(
+      `test_storage_class = lambda {`,
+      `    oxr = {metadata.name = "demo", spec = {region = "us-central1", storageClass = "archive"}}`,
+      `    items = ${modId}.render(oxr)`,
+      `    assert len(items) == 2, "expected bucket + lifecycle config"`,
+      `    assert items[1].kind == "BucketLifecycleConfiguration"`,
+      `}`,
+      ``,
+      `test_render()`,
+      `test_storage_class()`,
+      ``,
+    );
+    return lines.join('\n');
+  }
+
+  lines.push(`test_render()`, ``);
+  return lines.join('\n');
 }
 
 function compositionYaml(opts: {
@@ -251,6 +517,11 @@ function xrdYaml(opts: { group: string; version: string; kind: string; plural: s
     `                region:`,
     `                  type: string`,
     `                  description: Cloud region/location for the ${opts.kind}.`,
+    `                storageClass:`,
+    `                  type: string`,
+    `                  enum: [standard, nearline, cold, archive]`,
+    `                  default: standard`,
+    `                  description: Abstract storage tier (portable across providers); mapped to each cloud's native value.`,
     `              required:`,
     `                - region`,
     `            status:`,
@@ -290,6 +561,7 @@ function exampleXr(opts: { group: string; version: string; kind: string; provide
     `  name: my-${opts.kind.toLowerCase()}`,
     `spec:`,
     `  region: us-central1`,
+    `  storageClass: archive   # standard | nearline | cold | archive (optional, default standard)`,
     `  crossplane:`,
     `    compositionSelector:`,
     `      matchLabels:`,
@@ -346,6 +618,7 @@ export default async function compositionGenerator(
 
     const schemaRoot = findSchemaPackage(tree, backend.schemaPackage);
     let typedImport: string | null = null;
+    let companionImport: string | null = null;
     if (schemaRoot) {
       const modulePath = discoverSchemaModule(
         join(tree.root, schemaRoot),
@@ -356,13 +629,27 @@ export default async function compositionGenerator(
         const alias = backend.schemaPackage.replace(/-/g, '_');
         typedImport = `${alias}.${modulePath}`;
         pathDeps[provider] = relative(join(tree.root, pkgRoot), join(tree.root, schemaRoot));
+        const companionKind =
+          backend.storageClass?.kind === 's3lifecycle'
+            ? 'BucketLifecycleConfiguration'
+            : backend.storageClass?.kind === 'azureTier'
+            ? 'ManagementPolicy'
+            : null;
+        if (companionKind) {
+          const companionPath = discoverSchemaModule(
+            join(tree.root, schemaRoot),
+            companionKind,
+            backend.apiVersion
+          );
+          if (companionPath) companionImport = `${alias}.${companionPath}`;
+        }
       }
     }
 
     tree.write(
       join(pkgRoot, `${modId}.k`),
       typedImport
-        ? typedRenderModule({ name, provider, backend, importPath: typedImport })
+        ? typedRenderModule({ name, provider, backend, importPath: typedImport, companionImport })
         : inlineRenderModule({ name, provider, backend })
     );
     tree.write(join(pkgRoot, 'main.k'), mainModule(modId));
