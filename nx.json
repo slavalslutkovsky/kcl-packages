@@ -16,7 +16,8 @@
   },
   "release": {
     "projects": [
-      "tag:lang:kcl"
+      "tag:lang:kcl",
+      "!tag:area:providers"
     ],
     "projectsRelationship": "independent",
     "version": {
