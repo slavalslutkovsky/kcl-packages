@@ -1,0 +1,14 @@
+{
+  "executors": {
+    "publish": {
+      "implementation": "./src/release/publish-executor",
+      "schema": "./src/release/publish-schema.json",
+      "description": "Publish a KCL package to an OCI registry via `kcl mod push`."
+    },
+    "remove": {
+      "implementation": "./src/remove/remove-executor",
+      "schema": "./src/remove/remove-schema.json",
+      "description": "Remove a dependency from a KCL package and reconcile kcl.mod.lock."
+    }
+  }
+}

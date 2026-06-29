@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "$id": "KclPublish",
+  "title": "Publish a KCL package to OCI",
+  "type": "object",
+  "properties": {
+    "registry": {
+      "type": "string",
+      "description": "OCI registry prefix, e.g. oci://docker.io/<namespace>. Environment variables are expanded; defaults to oci://$KCL_REGISTRY."
+    }
+  },
+  "additionalProperties": true
+}

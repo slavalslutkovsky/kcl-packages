@@ -1,0 +1,11 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Bucket
+metadata:
+  namespace: default
+  name: my-bucket
+spec:
+  region: us-central1
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws   # the flag: picks the backend

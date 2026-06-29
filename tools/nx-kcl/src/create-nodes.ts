@@ -1,4 +1,4 @@
-import { CreateNodesV2, CreateNodesContextV2, ProjectConfiguration } from '@nx/devkit';
+import { CreateNodes, CreateNodesContext, ProjectConfiguration } from '@nx/devkit';
 import { dirname } from 'path';
 import { readKclMod } from './utils';
 
@@ -7,7 +7,7 @@ export interface NxKclPluginOptions {
   registryPrefix?: string;
 }
 
-export const createNodesV2: CreateNodesV2<NxKclPluginOptions> = [
+export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
   '**/kcl.mod',
   (kclModFiles, options, context) => {
     return kclModFiles
@@ -15,7 +15,6 @@ export const createNodesV2: CreateNodesV2<NxKclPluginOptions> = [
       .map((kclModFile) => {
         const projectRoot = dirname(kclModFile);
         const { name } = readKclMod(context.workspaceRoot, kclModFile);
-        const registry = options?.registryPrefix ?? 'oci://$KCL_REGISTRY';
 
         const project: ProjectConfiguration = {
           name,
@@ -66,6 +65,23 @@ export const createNodesV2: CreateNodesV2<NxKclPluginOptions> = [
                 cwd: `{workspaceRoot}/${projectRoot}`,
               },
             },
+            add: {
+              // Wraps `kcl mod add`; forwarded args (e.g. `k8s:1.32.4`, or
+              // `--git <url> --tag <tag>`) are appended. Not cached: it mutates
+              // kcl.mod and kcl.mod.lock.
+              executor: 'nx:run-commands',
+              options: {
+                command: 'kcl mod add',
+                cwd: `{workspaceRoot}/${projectRoot}`,
+              },
+            },
+            remove: {
+              // `kcl mod remove` does not exist; the nx-kcl:remove executor
+              // edits kcl.mod and regenerates the lock. Usage:
+              // `nx run <project>:remove <dep>`.
+              executor: 'nx-kcl:remove',
+              options: {},
+            },
             pkg: {
               cache: true,
               executor: 'nx:run-commands',
@@ -83,11 +99,8 @@ export const createNodesV2: CreateNodesV2<NxKclPluginOptions> = [
             },
             'nx-release-publish': {
               dependsOn: ['test', 'lint'],
-              executor: 'nx:run-commands',
-              options: {
-                command: `kcl mod push ${registry}/${name}`,
-                cwd: `{workspaceRoot}/${projectRoot}`,
-              },
+              executor: 'nx-kcl:publish',
+              options: options?.registryPrefix ? { registry: options.registryPrefix } : {},
             },
           },
         };

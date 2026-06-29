@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "$id": "KclRemove",
+  "title": "Remove a dependency from a KCL package",
+  "description": "Remove a dependency from kcl.mod and reconcile kcl.mod.lock. KCL has no native remove, so the manifest is edited and the lock regenerated.",
+  "type": "object",
+  "cli": "nx",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Name of the dependency to remove (e.g. k8s).",
+      "$default": { "$source": "argv", "index": 0 },
+      "x-prompt": "Which dependency should be removed?"
+    }
+  },
+  "required": ["name"]
+}

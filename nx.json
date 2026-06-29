@@ -1,33 +1,41 @@
 {
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
   "plugins": [
-    {
-      "plugin": "./tools/nx-kcl/src/index.ts",
-      "options": {
-        "registryPrefix": "oci://ghcr.io/yurikrupnik"
-      }
-    }
+    "./tools/nx-kcl/src/index.ts"
   ],
   "targetDefaults": {
-    "build": { "cache": true },
-    "test": { "cache": true },
-    "lint": { "cache": true }
+    "build": {
+      "cache": true
+    },
+    "test": {
+      "cache": true
+    },
+    "lint": {
+      "cache": true
+    }
   },
   "release": {
-    "projects": ["tag:lang:kcl"],
+    "projects": [
+      "tag:lang:kcl"
+    ],
     "projectsRelationship": "independent",
-    "releaseTagPattern": "{projectName}@{version}",
     "version": {
       "conventionalCommits": true,
-      "generator": "./tools/nx-kcl/src/release/version-generator"
+      "versionActions": "./tools/nx-kcl/src/release/version-actions.ts",
+      "fallbackCurrentVersionResolver": "disk"
     },
     "changelog": {
-      "projectChangelogs": true
+      "projectChangelogs": true,
+      "automaticFromRef": true
     },
     "git": {
       "commit": true,
       "commitMessage": "chore(release): {projectName}@{version}",
       "tag": true
+    },
+    "releaseTag": {
+      "pattern": "{projectName}@{version}"
     }
-  }
+  },
+  "analytics": true
 }

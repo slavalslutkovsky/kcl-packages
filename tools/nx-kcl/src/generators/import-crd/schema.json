@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/schema",
+  "$id": "NxKclImportCrd",
+  "title": "Import CRDs as a KCL package",
+  "description": "Generate a KCL package from Kubernetes CRDs via `kcl import -m crd`. Source the CRDs from a Crossplane provider OCI image (--image), a GitHub repo at a pinned ref (--repo), or a local directory (--from). Useful for consuming up-to-date cloud resources (e.g. provider-upjet-gcp).",
+  "type": "object",
+  "cli": "nx",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Name of the KCL package to create (also the Nx project name).",
+      "$default": { "$source": "argv", "index": 0 },
+      "x-prompt": "Package name for the generated schemas (e.g. gcp-storage):",
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$"
+    },
+    "directory": {
+      "type": "string",
+      "description": "Parent directory the package is created in.",
+      "default": "packages"
+    },
+    "from": {
+      "type": "string",
+      "description": "Local directory (or file) of CRD YAMLs. Mutually exclusive with --repo."
+    },
+    "image": {
+      "type": "string",
+      "description": "Crossplane provider OCI image to extract CRDs from, e.g. ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0. Requires docker + yq. Mutually exclusive with --from/--repo."
+    },
+    "repo": {
+      "type": "string",
+      "description": "Crossplane provider GitHub repo, e.g. crossplane-contrib/provider-upjet-gcp. Mutually exclusive with --from."
+    },
+    "ref": {
+      "type": "string",
+      "description": "Git ref/tag/branch for --repo (pin a release for reproducibility).",
+      "default": "main"
+    },
+    "service": {
+      "type": "string",
+      "description": "Comma-separated service/group prefixes to include, e.g. storage,compute. Omit to include all (large)."
+    },
+    "crdPath": {
+      "type": "string",
+      "description": "Path to the CRD directory within --repo.",
+      "default": "package/crds"
+    },
+    "apiScope": {
+      "type": "string",
+      "enum": ["cluster", "namespaced"],
+      "description": "Which CRD flavor to import: cluster-scoped (*.upbound.io) or namespaced v2 (*.m.upbound.io).",
+      "default": "cluster"
+    }
+  },
+  "required": ["name"]
+}

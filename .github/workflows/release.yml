@@ -1,0 +1,70 @@
+name: Release
+
+# Automatically versions and publishes KCL packages on every push to main.
+#
+# Versioning is driven by Conventional Commits since the last release tag:
+#   - fix:   -> patch   (0.0.X)
+#   - feat:  -> minor   (0.X.0)
+#   - feat!  / "BREAKING CHANGE:" -> major (X.0.0)
+# A push with no releasable commits is a no-op (nothing is versioned or published).
+#
+# For each released package, nx will:
+#   1. bump the version in its kcl.mod and update its CHANGELOG.md
+#   2. commit "chore(release): <pkg>@<version>" and tag "<pkg>@<version>"
+#   3. publish it to oci://docker.io/<DOCKERHUB_USERNAME>/<pkg>:<version>
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   - DOCKERHUB_USERNAME : your Docker Hub account (also the OCI namespace)
+#   - DOCKERHUB_TOKEN    : a Docker Hub access token with Read/Write scope
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # push the version commit + tags back to the repo
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      # Each package publishes to oci://docker.io/<namespace>/<pkg>.
+      # On Docker Hub the namespace is your username; change this if you
+      # publish under a different Docker Hub organization.
+      KCL_REGISTRY: docker.io/${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags for conventional-commit versioning
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install KCL CLI
+        run: curl -fsSL https://kcl-lang.io/script/install-cli.sh | bash
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Log in to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: kcl registry login -u "$DOCKERHUB_USERNAME" -p "$DOCKERHUB_TOKEN" docker.io
+
+      - name: Version, changelog, tag and publish to OCI
+        run: pnpm exec nx release --yes
+
+      - name: Push version commits and tags
+        run: git push --follow-tags origin HEAD:main
