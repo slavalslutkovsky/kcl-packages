@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "$id": "NxKclPackage",
+  "title": "Create a KCL package",
+  "description": "Scaffold a new KCL package (kcl.mod + starter sources). The nx-kcl plugin auto-discovers it via its kcl.mod, so no project registration is needed.",
+  "type": "object",
+  "cli": "nx",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Package name. Also the Nx project name and the OCI image name it publishes to.",
+      "$default": { "$source": "argv", "index": 0 },
+      "x-prompt": "What name would you like to use for the KCL package?",
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$"
+    },
+    "directory": {
+      "type": "string",
+      "description": "Parent directory the package is created in.",
+      "default": "packages",
+      "x-prompt": "Which directory should hold the package?"
+    },
+    "dependencies": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "KCL dependencies to add after creation, each passed to `kcl mod add` (e.g. k8s:1.32.4).",
+      "default": []
+    }
+  },
+  "required": ["name"]
+}

@@ -65,6 +65,23 @@ export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
                 cwd: `{workspaceRoot}/${projectRoot}`,
               },
             },
+            add: {
+              // Wraps `kcl mod add`; forwarded args (e.g. `k8s:1.32.4`, or
+              // `--git <url> --tag <tag>`) are appended. Not cached: it mutates
+              // kcl.mod and kcl.mod.lock.
+              executor: 'nx:run-commands',
+              options: {
+                command: 'kcl mod add',
+                cwd: `{workspaceRoot}/${projectRoot}`,
+              },
+            },
+            remove: {
+              // `kcl mod remove` does not exist; the nx-kcl:remove executor
+              // edits kcl.mod and regenerates the lock. Usage:
+              // `nx run <project>:remove <dep>`.
+              executor: 'nx-kcl:remove',
+              options: {},
+            },
             pkg: {
               cache: true,
               executor: 'nx:run-commands',

@@ -18,15 +18,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: 24
+          cache: pnpm
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
       - name: Install KCL CLI
         run: curl -fsSL https://kcl-lang.io/script/install-cli.sh | bash
 
       - name: Build, test and lint
-        run: npx nx run-many -t build test lint
+        run: pnpm exec nx run-many -t build test lint

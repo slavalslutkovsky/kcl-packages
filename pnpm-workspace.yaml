@@ -1,0 +1,9 @@
+packages:
+  - 'packages/*'
+  - 'tools/*'
+
+# Allow these dependencies to run install/build scripts (pnpm blocks them by default).
+onlyBuiltDependencies:
+  - '@swc/core'
+  - esbuild
+  - nx

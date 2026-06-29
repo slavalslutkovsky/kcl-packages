@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/schema",
+  "$id": "NxKclSearch",
+  "title": "Search Artifact Hub for KCL packages",
+  "description": "List published KCL packages (Artifact Hub kind=20) to discover dependencies to add with `kcl mod add` / the `add` target.",
+  "type": "object",
+  "cli": "nx",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Free-text to search for (matches name and description). Omit to list by relevance.",
+      "$default": { "$source": "argv", "index": 0 },
+      "x-prompt": "Search term (leave empty to list popular packages):"
+    },
+    "limit": {
+      "type": "number",
+      "description": "Maximum number of results.",
+      "default": 20
+    }
+  }
+}

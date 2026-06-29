@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/schema",
+  "name": "nx-kcl",
+  "generators": {
+    "package": {
+      "factory": "./src/generators/package/generator",
+      "schema": "./src/generators/package/schema.json",
+      "description": "Create a new KCL package, auto-discovered by the nx-kcl plugin.",
+      "aliases": ["pkg"]
+    },
+    "search": {
+      "factory": "./src/generators/search/generator",
+      "schema": "./src/generators/search/schema.json",
+      "description": "Search Artifact Hub for published KCL packages to add as dependencies.",
+      "aliases": ["find"]
+    },
+    "import-crd": {
+      "factory": "./src/generators/import-crd/generator",
+      "schema": "./src/generators/import-crd/schema.json",
+      "description": "Generate a KCL package from Kubernetes CRDs (local dir or a Crossplane provider repo).",
+      "aliases": ["crd"]
+    },
+    "composition": {
+      "factory": "./src/generators/composition/generator",
+      "schema": "./src/generators/composition/schema.json",
+      "description": "Scaffold a Crossplane v2 XRD + per-provider function-kcl Composition packages.",
+      "aliases": ["xrd"]
+    }
+  }
+}

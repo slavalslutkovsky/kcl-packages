@@ -36,5 +36,6 @@
     "releaseTag": {
       "pattern": "{projectName}@{version}"
     }
-  }
+  },
+  "analytics": true
 }
