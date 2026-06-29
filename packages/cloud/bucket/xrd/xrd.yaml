@@ -22,6 +22,11 @@ spec:
                 region:
                   type: string
                   description: Cloud region/location for the Bucket.
+                storageClass:
+                  type: string
+                  enum: [standard, nearline, cold, archive]
+                  default: standard
+                  description: Abstract storage tier (portable across providers); mapped to each cloud's native value.
               required:
                 - region
             status:

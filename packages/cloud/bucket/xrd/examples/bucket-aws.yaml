@@ -5,6 +5,7 @@ metadata:
   name: my-bucket
 spec:
   region: us-central1
+  storageClass: archive   # standard | nearline | cold | archive (optional, default standard)
   crossplane:
     compositionSelector:
       matchLabels:
