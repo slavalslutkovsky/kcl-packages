@@ -30,5 +30,6 @@ render = lambda oxr {
                 transition = [{days = _t.days, storageClass = _t.storageClass}]
             }]
         }]
+
     _items
 }

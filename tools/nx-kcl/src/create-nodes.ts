@@ -113,6 +113,12 @@ export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
           },
         };
 
+        // Providers are generated schema libraries, consumed by relative path.
+        // They never run nx targets — drop build/test/lint/pkg/publish so even a
+        // bare `nx run-many -t build` skips them. Kept as a tagged project for
+        // visibility and the `!tag:area:providers` release exclusion.
+        if (area === 'providers') project.targets = {};
+
         return [kclModFile, { projects: { [projectRoot]: project } }] as const;
       });
   },

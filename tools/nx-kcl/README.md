@@ -115,6 +115,12 @@ lingers in `kcl.mod.lock`. The `nx-kcl:remove` executor therefore edits
 
 ## Generators
 
+The repo's root `justfile` wraps these generators for the common flows — run
+`just --list`. `just provider <name> <image>` adds a provider schema package,
+`just composition <name>` scaffolds an XRD + per-provider Compositions, and
+`just check` builds/tests everything except the internal providers. The raw
+`nx g nx-kcl:<gen>` commands below are what each recipe runs.
+
 ### `package` — scaffold a new KCL package
 
 ```bash

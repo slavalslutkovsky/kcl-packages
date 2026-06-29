@@ -26,8 +26,11 @@ render = lambda oxr {
                 name = "archive"
                 enabled = True
                 filters = {blobTypes = ["blockBlob"]}
-                actions = {baseBlob = {tierToArchiveAfterDaysSinceModificationGreaterThan = _archive_days[_sc]}}
+                actions = {
+                    baseBlob = {tierToArchiveAfterDaysSinceModificationGreaterThan = _archive_days[_sc]}
+                }
             }]
         }]
+
     _items
 }
