@@ -6,5 +6,6 @@ render = lambda oxr {
     [backend.Bucket {
         metadata.annotations = {"krm.kcl.dev/composition-resource-name" = "managed"}
         spec.forProvider.location = oxr.spec.region
+        storageClass: "MULTI_REGIONAL"
     }]
 }
