@@ -1,0 +1,9 @@
+{
+  "executors": {
+    "publish": {
+      "implementation": "./src/release/publish-executor",
+      "schema": "./src/release/publish-schema.json",
+      "description": "Publish a KCL package to an OCI registry via `kcl mod push`."
+    }
+  }
+}

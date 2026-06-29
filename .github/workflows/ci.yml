@@ -1,0 +1,32 @@
+name: CI
+
+# Validates every KCL package (build + test + lint) on pull requests and
+# pushes to main. The publish workflow gates on these same targets, so a
+# broken package can never be published.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install KCL CLI
+        run: curl -fsSL https://kcl-lang.io/script/install-cli.sh | bash
+
+      - name: Build, test and lint
+        run: npx nx run-many -t build test lint

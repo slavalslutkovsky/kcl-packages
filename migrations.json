@@ -1,0 +1,160 @@
+{
+  "migrations": [
+    {
+      "version": "21.0.0-beta.8",
+      "description": "Removes the legacy cache configuration from nx.json",
+      "implementation": "./dist/src/migrations/update-21-0-0/remove-legacy-cache",
+      "documentation": "./dist/src/migrations/update-21-0-0/remove-legacy-cache.md",
+      "package": "nx",
+      "name": "remove-legacy-cache"
+    },
+    {
+      "version": "21.0.0-beta.8",
+      "description": "Removes the legacy cache configuration from nx.json",
+      "implementation": "./dist/src/migrations/update-21-0-0/remove-custom-tasks-runner",
+      "documentation": "./dist/src/migrations/update-21-0-0/remove-custom-tasks-runner.md",
+      "package": "nx",
+      "name": "remove-custom-tasks-runner"
+    },
+    {
+      "version": "21.0.0-beta.11",
+      "description": "Updates release version config based on the breaking changes in Nx v21",
+      "implementation": "./dist/src/migrations/update-21-0-0/release-version-config-changes",
+      "documentation": "./dist/src/migrations/update-21-0-0/release-version-config-changes.md",
+      "package": "nx",
+      "name": "release-version-config-changes"
+    },
+    {
+      "version": "21.0.0-beta.11",
+      "description": "Updates release changelog config based on the breaking changes in Nx v21",
+      "implementation": "./dist/src/migrations/update-21-0-0/release-changelog-config-changes",
+      "documentation": "./dist/src/migrations/update-21-0-0/release-changelog-config-changes.md",
+      "package": "nx",
+      "name": "release-changelog-config-changes"
+    },
+    {
+      "version": "22.0.0-beta.1",
+      "description": "Updates release version config based on the breaking changes in Nx v22",
+      "implementation": "./dist/src/migrations/update-22-0-0/release-version-config-changes",
+      "package": "nx",
+      "name": "22-0-0-release-version-config-changes"
+    },
+    {
+      "version": "22.0.0-beta.2",
+      "description": "Consolidates releaseTag* options into nested releaseTag object structure",
+      "implementation": "./dist/src/migrations/update-22-0-0/consolidate-release-tag-config",
+      "package": "nx",
+      "name": "22-0-0-consolidate-release-tag-config"
+    },
+    {
+      "cli": "nx",
+      "version": "22.1.0-beta.5",
+      "description": "Updates the nx wrapper.",
+      "implementation": "./dist/src/migrations/update-22-1-0/update-nx-wrapper",
+      "package": "nx",
+      "name": "22-1-0-update-nx-wrapper"
+    },
+    {
+      "cli": "nx",
+      "version": "22.6.0-beta.10",
+      "description": "Adds .claude/worktrees to .gitignore",
+      "implementation": "./dist/src/migrations/update-22-6-0/add-claude-worktrees-to-git-ignore",
+      "package": "nx",
+      "name": "22-6-1-add-claude-worktrees-to-git-ignore"
+    },
+    {
+      "cli": "nx",
+      "version": "22.7.0-beta.0",
+      "description": "Adds .nx/polygraph to .gitignore",
+      "implementation": "./dist/src/migrations/update-22-7-0/add-polygraph-to-git-ignore",
+      "package": "nx",
+      "name": "22-7-0-add-polygraph-to-git-ignore"
+    },
+    {
+      "cli": "nx",
+      "version": "22.6.0-rc.0",
+      "description": "Adds .claude/settings.local.json to .gitignore",
+      "implementation": "./dist/src/migrations/update-17-3-0/update-nxw",
+      "package": "nx",
+      "name": "22-6-0-add-claude-settings-local-to-git-ignore"
+    },
+    {
+      "cli": "nx",
+      "version": "22.7.0-beta.0",
+      "description": "Adds .nx/self-healing to .gitignore",
+      "implementation": "./dist/src/migrations/update-22-2-0/add-self-healing-to-gitignore",
+      "documentation": "./dist/src/migrations/update-22-2-0/add-self-healing-to-gitignore.md",
+      "package": "nx",
+      "name": "22-7-0-add-self-healing-to-gitignore"
+    },
+    {
+      "version": "23.0.0-beta.16",
+      "description": "Consolidates any remaining legacy releaseTag* flat properties into the nested releaseTag object. The flat properties were removed in Nx 23.",
+      "implementation": "./dist/src/migrations/update-23-0-0/consolidate-release-tag-config",
+      "package": "nx",
+      "name": "23-0-0-consolidate-release-tag-config"
+    },
+    {
+      "version": "23.0.0-beta.18",
+      "description": "Adds .nx/migrate-runs to .gitignore",
+      "implementation": "./dist/src/migrations/update-23-0-0/add-migrate-runs-to-git-ignore",
+      "package": "nx",
+      "name": "23-0-0-add-migrate-runs-to-git-ignore"
+    },
+    {
+      "version": "23.0.0-beta.6",
+      "description": "Rewrite imports from `@nx/devkit/src/...` to `@nx/devkit` (for public symbols) or `@nx/devkit/internal` (for the rest), since deep imports are no longer reachable through the package's `exports` map.",
+      "implementation": "./dist/src/migrations/update-23-0-0/update-deep-imports",
+      "documentation": "./dist/src/migrations/update-23-0-0/update-deep-imports.md",
+      "package": "@nx/devkit",
+      "name": "update-devkit-deep-imports"
+    },
+    {
+      "version": "23.0.0-beta.24",
+      "description": "Rename deprecated CreateNodes `V2` type imports (CreateNodesV2, CreateNodesContextV2, CreateNodesResultV2, CreateNodesFunctionV2, NxPluginV2) from `@nx/devkit` to their canonical names.",
+      "implementation": "./dist/src/migrations/update-23-0-0/rename-create-nodes-v2-types",
+      "documentation": "./dist/src/migrations/update-23-0-0/rename-create-nodes-v2-types.md",
+      "package": "@nx/devkit",
+      "name": "update-23-0-0-rename-create-nodes-v2-types"
+    },
+    {
+      "version": "21.5.0-beta.2",
+      "description": "Migrate the legacy 'development' custom condition to a workspace-unique custom condition name.",
+      "factory": "./dist/src/migrations/update-21-5-0/migrate-development-custom-condition",
+      "documentation": "./dist/src/migrations/update-21-5-0/migrate-development-custom-condition.md",
+      "package": "@nx/js",
+      "name": "migrate-development-custom-condition"
+    },
+    {
+      "version": "22.0.0-beta.0",
+      "description": "Remove the deprecated `external` and `externalBuildTargets` options from the `@nx/js:swc` and `@nx/js:tsc` executors.",
+      "factory": "./dist/src/migrations/update-22-0-0/remove-external-options-from-js-executors",
+      "documentation": "./dist/src/migrations/update-22-0-0/remove-external-options-from-js-executors.md",
+      "package": "@nx/js",
+      "name": "remove-external-options-from-js-executors"
+    },
+    {
+      "version": "22.1.0-rc.1",
+      "description": "Removes redundant TypeScript project references from project's tsconfig.json files when runtime tsconfig files (e.g., tsconfig.lib.json, tsconfig.app.json) exist.",
+      "factory": "./dist/src/migrations/update-22-1-0/remove-redundant-ts-project-references",
+      "documentation": "./dist/src/migrations/update-22-1-0/remove-redundant-ts-project-references.md",
+      "package": "@nx/js",
+      "name": "remove-redundant-ts-project-references"
+    },
+    {
+      "version": "23.0.0-beta.14",
+      "description": "Rewrites `@nx/js/src/*` subpath imports to the new `@nx/js/internal` entry. The `./src/*` wildcard has been removed from `@nx/js`'s exports map; `@nx/js/src/release/version-actions` is preserved as a non-wildcard entry for back-compat with existing nx.json release configs. If a rewritten import resolves to a symbol that lives on the public `@nx/js` entry (e.g. `libraryGenerator`, `extractTsConfigBase`, `resolvePathsBaseUrl`), change the specifier to `@nx/js`.",
+      "factory": "./dist/src/migrations/update-23-0-0/rewrite-internal-subpath-imports",
+      "package": "@nx/js",
+      "name": "23-0-0-rewrite-internal-subpath-imports"
+    },
+    {
+      "version": "23.0.0-beta.24",
+      "description": "Rename imports of `createNodesV2` from `@nx/js/typescript` to the canonical `createNodes` export.",
+      "implementation": "./dist/src/migrations/update-23-0-0/migrate-create-nodes-v2-to-create-nodes",
+      "documentation": "./dist/src/migrations/update-23-0-0/migrate-create-nodes-v2-to-create-nodes.md",
+      "package": "@nx/js",
+      "name": "update-23-0-0-migrate-create-nodes-v2-import"
+    }
+  ]
+}
