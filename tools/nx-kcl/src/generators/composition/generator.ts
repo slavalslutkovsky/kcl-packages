@@ -676,6 +676,18 @@ export default async function compositionGenerator(
           // Typed: depend on the schema package (and k8s, which its schemas import).
           execFileSync('kcl', ['mod', 'add', dep], { cwd: pkgAbs, stdio: 'inherit' });
           execFileSync('kcl', ['mod', 'add', 'k8s'], { cwd: pkgAbs, stdio: 'inherit' });
+          // Local path deps must NOT pin a version. The schema package is
+          // versioned independently; a pinned version breaks the moment it is
+          // bumped (`package 'X:0.0.1' not found`). kcl resolves a path dep
+          // from disk regardless of version, so drop the pin.
+          const mod = readFileSync(modPath, 'utf-8');
+          writeFileSync(
+            modPath,
+            mod.replace(
+              /(\{\s*path\s*=\s*"[^"]*")\s*,\s*version\s*=\s*"[^"]*"\s*(\})/g,
+              '$1 $2'
+            )
+          );
         }
       } catch {
         logger.warn(`Wrote sources for ${name}/${provider}, but \`kcl mod\` setup failed.`);

@@ -16,12 +16,20 @@ export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
         const projectRoot = dirname(kclModFile);
         const { name } = readKclMod(context.workspaceRoot, kclModFile);
 
+        // Tag by area: the path segment under `packages/` (e.g. "providers",
+        // "cloud", "cluster"). Lets release scoping target/exclude groups —
+        // schema/provider packages are internal (consumed by relative path) and
+        // are excluded from publishing in nx.json.
+        const segments = projectRoot.split('/');
+        const pkgsIdx = segments.indexOf('packages');
+        const area = pkgsIdx >= 0 ? segments[pkgsIdx + 1] : undefined;
+
         const project: ProjectConfiguration = {
           name,
           root: projectRoot,
           sourceRoot: projectRoot,
           projectType: 'library',
-          tags: ['lang:kcl'],
+          tags: area ? ['lang:kcl', `area:${area}`] : ['lang:kcl'],
           targets: {
             build: {
               cache: true,

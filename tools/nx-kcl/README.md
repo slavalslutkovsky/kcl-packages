@@ -279,7 +279,9 @@ the registry string are expanded at runtime.
 Releases are driven by [`nx release`](https://nx.dev/features/manage-releases)
 configured in `nx.json`:
 
-- **Projects** — everything tagged `lang:kcl`, versioned **independently**.
+- **Projects** — published packages are those tagged `lang:kcl` **except**
+  provider/schema packages (`!tag:area:providers`), which are internal
+  dependencies consumed by relative path (see below). Versioned **independently**.
 - **Versioning** — Conventional Commits since each package's last tag
   (`fix:` → patch, `feat:` → minor, `feat!`/`BREAKING CHANGE:` → major). A
   package with no releasable commits is skipped. Commit-to-project attribution
@@ -302,6 +304,45 @@ In CI (`.github/workflows`):
 - `ci.yml` runs `build`, `test`, `lint` on pull requests and pushes to `main`.
 - `release.yml` runs `nx release --yes` on pushes to `main`, logging in to the
   registry first and pushing the version commits and tags back.
+
+### First release
+
+Conventional-commit versioning needs a baseline tag, and a non-conventional
+history releases nothing. For the very first release (no tags yet), publish an
+explicit version once:
+
+```bash
+export KCL_REGISTRY=docker.io/<namespace>
+kcl registry login -u <user> -p <token> docker.io
+nx release 0.1.0 --first-release --yes      # add --dry-run to preview
+```
+
+`release.yml` auto-passes `--first-release` when no tags exist; afterwards plain
+`nx release --yes` versions from conventional commits.
+
+### Provider/schema packages are internal
+
+A Composition package (e.g. `bucket-gcp`) imports a schema package (e.g.
+`gcp-storage`) by a **version-less local path dependency**:
+
+```toml
+[dependencies]
+gcp-storage = { path = "../../../providers/gcp-storage" }
+```
+
+- **No version pin** — the schema is versioned independently; a pin breaks the
+  moment it is bumped (`package 'gcp-storage:0.0.1' not found`). kcl resolves a
+  path dep from disk, so `build`/`test`/`lint` and local `crossplane render` /
+  `kcl run` work offline with no registry.
+- **Not published** — provider/schema packages live under `packages/providers/`
+  (tagged `area:providers`) and are excluded from `nx release`. They are an
+  internal implementation detail: compositions consume them by relative path and
+  are rendered locally, so the schema never needs its own OCI image.
+
+> If you later need a composition pulled remotely by function-kcl
+> (`source: oci://…`), the schema must travel with it — kcl cannot vendor a path
+> dep, so you would embed the schema into the composition package. Not needed
+> for the local-render workflow.
 
 ## Layout
 
