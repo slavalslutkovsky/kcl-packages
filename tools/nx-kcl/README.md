@@ -255,9 +255,9 @@ packages/cloud/bucket/
   `azure` → `azure-storage`, `rustfs` → `aws-s3`.
 - Each provider package's `render` logic is unit-tested (`nx test bucket-<provider>`)
   and `nx build` renders the managed resource locally. Publish the modules with
-  `nx release` (`--vendor` to bundle the schema dep), then pin `?tag=` in each
-  `composition.yaml`. For production, apply the XRD/Compositions/Functions and
-  `crossplane render` against the published modules.
+  `nx release` — the publish executor embeds each path-dep schema into the
+  artifact (see below), so the pushed image is self-contained. Then pin `?tag=`
+  in each `composition.yaml` and `crossplane render` against the published modules.
 
 | Option       | Default               | Description |
 | ------------ | --------------------- | ----------- |
@@ -298,7 +298,9 @@ configured in `nx.json`:
   (e.g. `cluster@1.2.0`).
 - **Changelog** — per-project `CHANGELOG.md`.
 - **Publish** — `nx-release-publish` runs `nx-kcl:publish` → `kcl mod push`,
-  using the version from `kcl.mod` as the OCI tag.
+  using the version from `kcl.mod` as the OCI tag. Local path-dep schemas are
+  embedded into the artifact at push time (see below), so published images are
+  self-contained and schema packages are never pushed.
 
 ```bash
 nx release --dry-run                   # preview version bumps + changelog
@@ -341,14 +343,17 @@ gcp-storage = { path = "../../../providers/gcp-storage" }
   path dep from disk, so `build`/`test`/`lint` and local `crossplane render` /
   `kcl run` work offline with no registry.
 - **Not published** — provider/schema packages live under `packages/providers/`
-  (tagged `area:providers`) and are excluded from `nx release`. They are an
-  internal implementation detail: compositions consume them by relative path and
-  are rendered locally, so the schema never needs its own OCI image.
-
-> If you later need a composition pulled remotely by function-kcl
-> (`source: oci://…`), the schema must travel with it — kcl cannot vendor a path
-> dep, so you would embed the schema into the composition package. Not needed
-> for the local-render workflow.
+  (tagged `area:providers`) and are excluded from `nx release`. A composition's
+  typed `import` is generated from the provider CRDs (via `import-crd`); the
+  schema is never pushed to a registry on its own.
+- **Embedded at publish** — when `nx-kcl:publish` pushes a composition, it
+  vendors each path-dep schema into the artifact as an in-package source dir
+  (`<import_name>/`), drops the path dep, and merges the schema's registry deps.
+  The repo source keeps the clean path dep (local `kcl run`/`nx build` resolve it
+  from disk); only the published image is self-contained. This mirrors Upbound's
+  `up project build` — generate schemas from provider CRDs, embed at build, never
+  publish them separately — so a consumer can `kcl run oci://<registry>/bucket-gcp`
+  and get the **typed** managed resource.
 
 ## Layout
 
