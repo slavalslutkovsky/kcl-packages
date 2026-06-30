@@ -1,3 +1,13 @@
+## 0.0.4 (2026-06-30)
+
+### 🩹 Fixes
+
+- **gcp-bucket:** enable versioning by default and update OCI source location ([8301a10](https://github.com/slavalslutkovsky/kcl-packages/commit/8301a10))
+
+### ❤️ Thank You
+
+- yurikrupnik @yurikrupnik
+
 ## 0.0.3 (2026-06-30)
 
 ### 🚀 Features
