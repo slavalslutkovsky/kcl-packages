@@ -2,10 +2,11 @@ name: Release
 
 # Automatically versions and publishes KCL packages on every push to main.
 #
-# Versioning is driven by `nx affected`: any releasable package whose code (or
-# transitive dependency) changed since the last successful run on main gets a
-# patch bump. Commit messages are not parsed - any message works. A push with
-# no affected releasable projects is a no-op.
+# Versioning is driven by `nx affected`, diffed against the latest release tag:
+# any releasable package whose code (or transitive dependency) changed since
+# that tag gets a patch bump. Commit messages are not parsed - any message
+# works. A push with no affected releasable projects is a clean no-op, and
+# manually re-running the workflow with no source changes does nothing.
 #
 # For each released package, nx will:
 #   1. bump the version in its kcl.mod and update its CHANGELOG.md
@@ -22,7 +23,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: read # nrwl/nx-set-shas reads recent workflow runs to derive the base SHA
   contents: write # push the version commit + tags back to the repo
 
 jobs:
@@ -36,10 +36,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history + tags so nx affected can diff against the last release
+          fetch-depth: 0 # full history + tags so we can diff against the last release tag
 
-      - name: Derive SHAs for nx affected
-        uses: nrwl/nx-set-shas@v4
+      - name: Set affected base to latest release tag
+        # We diff against the most recent "{project}@{version}" tag rather than
+        # the last successful workflow run. nx-set-shas would use the SHA the
+        # previous run was *triggered on*, which sits before the release commit
+        # the workflow itself pushed — so every subsequent run would see that
+        # release commit in the diff and re-bump every project. Basing off the
+        # latest release tag (which points at the release commit) excludes it
+        # from the diff, making re-runs with no source changes a clean no-op.
+        run: |
+          LATEST=$(git tag -l '*@*' --sort=-creatordate | head -n 1)
+          if [ -n "$LATEST" ]; then
+            echo "Base: $LATEST"
+            echo "NX_BASE=$LATEST" >> "$GITHUB_ENV"
+          else
+            ROOT=$(git rev-list --max-parents=0 HEAD | head -n 1)
+            echo "No release tags yet, basing off root commit: $ROOT"
+            echo "NX_BASE=$ROOT" >> "$GITHUB_ENV"
+          fi
+          echo "NX_HEAD=$GITHUB_SHA" >> "$GITHUB_ENV"
 
       - uses: pnpm/action-setup@v4
         with:
