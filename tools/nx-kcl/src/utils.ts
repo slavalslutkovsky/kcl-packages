@@ -83,3 +83,31 @@ export function removeKclModDependency(
 
   return { content: kept.join('\n'), removed };
 }
+
+/**
+ * Rewrite the `source: oci://...` line in a Crossplane Composition's KCL input
+ * to pin a specific package version. Only lines whose OCI path ends with the
+ * given project name are touched, so cross-project references in the same file
+ * are preserved.
+ *
+ * Idempotent: an existing `?tag=...` or `:tag` suffix is replaced.
+ */
+export function pinCompositionSource(
+  yaml: string,
+  projectName: string,
+  registry: string,
+  version: string
+): { content: string; matched: boolean } {
+  const escapedName = escapeRegExp(projectName);
+  // ^(<indent>source: )oci://<host-and-path>/<projectName>(<optional tag suffix>)$
+  const lineRe = new RegExp(
+    `^(\\s*source:\\s*)oci://\\S+?/${escapedName}(?:[?:][^\\s]*)?\\s*$`,
+    'gm'
+  );
+  let matched = false;
+  const content = yaml.replace(lineRe, (_full, prefix) => {
+    matched = true;
+    return `${prefix}oci://${registry}/${projectName}?tag=${version}`;
+  });
+  return { content, matched };
+}
