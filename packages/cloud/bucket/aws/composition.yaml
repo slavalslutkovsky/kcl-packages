@@ -18,7 +18,7 @@ spec:
         kind: KCLInput
         spec:
           # Pin a release with ?tag=<version> once published via `nx release`.
-          source: oci://docker.io/yurikrupnik/bucket-aws?tag=0.0.4
+          source: oci://docker.io/yurikrupnik/bucket-aws?tag=0.0.5
     - step: ready
       functionRef:
         name: function-auto-ready
