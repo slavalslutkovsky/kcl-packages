@@ -18,7 +18,7 @@ spec:
         kind: KCLInput
         spec:
           # Pin a release with ?tag=<version> once published via `nx release`.
-          source: oci://ghcr.io/your-org/bucket-gcp
+          source: oci://docker.io/yurikrupnik/bucket-gcp
     - step: ready
       functionRef:
         name: function-auto-ready
