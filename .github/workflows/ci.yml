@@ -10,6 +10,7 @@ on:
     branches: [main]
 
 permissions:
+  actions: read # nrwl/nx-set-shas reads recent workflow runs to derive the base SHA
   contents: read
 
 jobs:
@@ -17,6 +18,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so nx affected can diff against the base SHA
+
+      - name: Derive SHAs for nx affected
+        uses: nrwl/nx-set-shas@v4
 
       - uses: pnpm/action-setup@v4
         with:
@@ -33,4 +39,4 @@ jobs:
         run: curl -fsSL https://kcl-lang.io/script/install-cli.sh | bash
 
       - name: Build, test and lint
-        run: pnpm exec nx run-many -t build test lint
+        run: pnpm exec nx affected -t build test lint
