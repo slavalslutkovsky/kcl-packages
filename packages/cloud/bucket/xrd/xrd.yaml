@@ -18,15 +18,135 @@ spec:
           properties:
             spec:
               type: object
+              description: |
+                Portable object-storage Bucket. Every field below is a COMMON
+                parameter mapped to each cloud's native resources (GCP Cloud
+                Storage Bucket, AWS S3 Bucket + companion configuration MRs).
               properties:
                 region:
                   type: string
-                  description: Cloud region/location for the Bucket.
+                  description: Cloud region/location for the Bucket (GCS location / S3 region).
                 storageClass:
                   type: string
                   enum: [standard, nearline, cold, archive]
                   default: standard
-                  description: Abstract storage tier (portable across providers); mapped to each cloud's native value.
+                  description: Abstract storage tier; mapped to each cloud's native value (GCP native storage class; AWS lifecycle transition).
+                versioning:
+                  type: boolean
+                  default: true
+                  description: Keep noncurrent object versions. GCP Bucket.versioning / AWS BucketVersioning.
+                forceDestroy:
+                  type: boolean
+                  default: false
+                  description: Delete all contained objects when the bucket is destroyed. GCP/AWS forceDestroy.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the cloud bucket when this resource is deleted; maps to Crossplane managementPolicies (Orphan keeps the external bucket).
+                blockPublicAccess:
+                  type: boolean
+                  default: true
+                  description: Block all public access. GCP publicAccessPrevention=enforced / AWS BucketPublicAccessBlock (all four flags).
+                uniformAccess:
+                  type: boolean
+                  default: true
+                  description: Disable per-object ACLs, enforce bucket-level IAM. GCP uniformBucketLevelAccess / AWS BucketOwnershipControls=BucketOwnerEnforced.
+                encryptionKmsKeyId:
+                  type: string
+                  description: CMEK/SSE-KMS key. When set, GCP encryption.defaultKmsKeyName / AWS SSE aws:kms with this key; otherwise provider-default encryption.
+                requesterPays:
+                  type: boolean
+                  default: false
+                  description: Charge requesters for access. GCP requesterPays / AWS BucketRequestPaymentConfiguration.
+                retention:
+                  type: object
+                  description: Write-once-read-many object retention. GCP retentionPolicy / AWS Object Lock.
+                  properties:
+                    days:
+                      type: integer
+                      minimum: 1
+                      description: Minimum retention in days.
+                    mode:
+                      type: string
+                      enum: [governance, compliance]
+                      default: governance
+                      description: AWS Object Lock mode. compliance is irreversible and locks the GCP retention policy.
+                  required: [days]
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value labels applied to the bucket. GCP labels / AWS tags.
+                logging:
+                  type: object
+                  description: Server access logging to another bucket.
+                  properties:
+                    targetBucket:
+                      type: string
+                      description: Destination bucket name for access logs.
+                    targetPrefix:
+                      type: string
+                      description: Object key prefix for log objects.
+                  required: [targetBucket]
+                website:
+                  type: object
+                  description: Static website hosting.
+                  properties:
+                    indexDocument:
+                      type: string
+                      default: index.html
+                      description: Suffix served for directory requests (GCP mainPageSuffix / AWS index document).
+                    errorDocument:
+                      type: string
+                      description: Object served for 404s (GCP notFoundPage / AWS error document).
+                cors:
+                  type: array
+                  description: Cross-Origin Resource Sharing rules.
+                  items:
+                    type: object
+                    properties:
+                      origins:
+                        type: array
+                        items: {type: string}
+                        description: Allowed origins ("*" for any).
+                      methods:
+                        type: array
+                        items: {type: string}
+                        description: Allowed HTTP methods.
+                      headers:
+                        type: array
+                        items: {type: string}
+                        description: Allowed request headers.
+                      maxAgeSeconds:
+                        type: integer
+                        default: 3600
+                        description: Preflight cache duration.
+                    required: [origins, methods]
+                lifecycleRules:
+                  type: array
+                  description: Object lifecycle management rules (in addition to the storageClass tier mapping).
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        description: Rule identifier.
+                      prefix:
+                        type: string
+                        default: ""
+                        description: Object key prefix the rule matches.
+                      expirationDays:
+                        type: integer
+                        description: Delete objects this many days after creation.
+                      transitionDays:
+                        type: integer
+                        description: Transition objects after this many days.
+                      transitionStorageClass:
+                        type: string
+                        enum: [standard, nearline, cold, archive]
+                        description: Abstract tier to transition to; mapped per-provider.
+                    required: [id]
               required:
                 - region
             status:
@@ -34,3 +154,47 @@ spec:
               properties:
                 ready:
                   type: boolean
+                  description: True once the backing cloud bucket exists.
+                provider:
+                  type: string
+                  description: Cloud backend that fulfilled the claim (gcp | aws).
+                bucketName:
+                  type: string
+                  description: Name of the provisioned bucket.
+                region:
+                  type: string
+                  description: Region/location the bucket resides in.
+                storageClass:
+                  type: string
+                  description: Native storage class reported by the provider.
+                url:
+                  type: string
+                  description: Native storage URI (gs://… or s3://…).
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the bucket.
+                endpoint:
+                  type: string
+                  description: HTTP(S) host/domain for the bucket.
+                arn:
+                  type: string
+                  description: AWS ARN (AWS only).
+                selfLink:
+                  type: string
+                  description: GCP self link (GCP only).
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: URL
+          type: string
+          jsonPath: .status.url
+        - name: CLOUD-URL
+          type: string
+          jsonPath: .status.cloud-url

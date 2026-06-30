@@ -1,0 +1,28 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Bucket
+metadata:
+  namespace: default
+  name: my-gcp-bucket
+spec:
+  region: us-central1
+  storageClass: nearline         # standard | nearline | cold | archive (default standard)
+  versioning: true               # keep noncurrent versions (default true)
+  forceDestroy: false            # delete objects on bucket destroy (default false)
+  deletionPolicy: Orphan         # Delete | Orphan — Orphan keeps the cloud bucket (default Delete)
+  blockPublicAccess: true        # publicAccessPrevention=enforced (default true)
+  uniformAccess: true            # uniformBucketLevelAccess (default true)
+  encryptionKmsKeyId: projects/p/locations/us/keyRings/r/cryptoKeys/k  # optional CMEK
+  requesterPays: false
+  retention:
+    days: 30
+    mode: governance             # governance | compliance (compliance locks the policy)
+  tags:
+    team: platform
+  lifecycleRules:
+    - id: expire-tmp
+      prefix: tmp/
+      expirationDays: 7
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp            # the flag: picks the backend (aws | gcp)

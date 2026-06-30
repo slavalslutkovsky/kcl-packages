@@ -4,9 +4,39 @@ metadata:
   namespace: default
   name: my-bucket
 spec:
-  region: us-central1
-  storageClass: archive   # standard | nearline | cold | archive (optional, default standard)
+  region: us-east-1
+  storageClass: archive          # standard | nearline | cold | archive (default standard)
+  versioning: true               # keep noncurrent versions (default true)
+  forceDestroy: false            # delete objects on bucket destroy (default false)
+  deletionPolicy: Delete         # Delete | Orphan — Orphan keeps the cloud bucket (default Delete)
+  blockPublicAccess: true        # block all public access (default true)
+  uniformAccess: true            # disable per-object ACLs (default true)
+  encryptionKmsKeyId: arn:aws:kms:us-east-1:111122223333:key/abcd-ef  # optional CMEK; omit for provider default
+  requesterPays: false
+  retention:                     # WORM object retention (S3 Object Lock / GCS retention policy)
+    days: 30
+    mode: governance             # governance | compliance
+  tags:
+    team: platform
+    cost-center: "42"
+  logging:
+    targetBucket: my-access-logs
+    targetPrefix: my-bucket/
+  website:
+    indexDocument: index.html
+    errorDocument: 404.html
+  cors:
+    - origins: ["https://example.com"]
+      methods: [GET, HEAD]
+      headers: ["*"]
+      maxAgeSeconds: 3600
+  lifecycleRules:
+    - id: expire-tmp
+      prefix: tmp/
+      expirationDays: 7
+      transitionDays: 3
+      transitionStorageClass: cold
   crossplane:
     compositionSelector:
       matchLabels:
-        provider: aws   # the flag: picks the backend
+        provider: aws            # the flag: picks the backend (aws | gcp)

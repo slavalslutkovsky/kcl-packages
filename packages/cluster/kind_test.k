@@ -33,7 +33,32 @@ test_ingress_config = lambda {
     assert cp_node.extraPortMappings[1].hostPort == 443
 }
 
+# Test database-dedicated workers
+test_db_workers = lambda {
+    cluster = kind.Cluster {
+        _workers: 1
+        _db_workers: 2
+    }
+    assert len(cluster.nodes) == 4, "Should have 1 control-plane + 1 worker + 2 db workers"
+    assert cluster.nodes[1].role == "worker"
+    # DB workers have taint patches
+    assert cluster.nodes[2].role == "worker"
+    assert len(cluster.nodes[2].kubeadmConfigPatches) == 1, "DB worker should have 1 patch"
+    assert len(cluster.nodes[3].kubeadmConfigPatches) == 1, "DB worker should have 1 patch"
+}
+
+# Test db_workers only (no regular workers)
+test_db_workers_only = lambda {
+    cluster = kind.Cluster {
+        _db_workers: 1
+    }
+    assert len(cluster.nodes) == 2, "Should have 1 control-plane + 1 db worker"
+    assert len(cluster.nodes[1].kubeadmConfigPatches) == 1
+}
+
 # Run tests
 test_default_cluster()
 test_cluster_with_workers()
 test_ingress_config()
+test_db_workers()
+test_db_workers_only()
