@@ -1,7 +1,7 @@
 [package]
 name = "bucket-rustfs"
 edition = "v0.12.3"
-version = "0.0.3"
+version = "0.0.4"
 
 [dependencies]
 aws-s3 = { path = "../../../providers/aws-s3" }

@@ -1,3 +1,7 @@
+## 0.0.5 (2026-06-30)
+
+This was a version bump only for bucket-gcp to align it with other projects, there were no code changes.
+
 ## 0.0.4 (2026-06-30)
 
 ### 🩹 Fixes
