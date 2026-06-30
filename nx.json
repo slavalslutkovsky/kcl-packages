@@ -21,7 +21,6 @@
     ],
     "projectsRelationship": "independent",
     "version": {
-      "conventionalCommits": true,
       "versionActions": "./tools/nx-kcl/src/release/version-actions.ts",
       "fallbackCurrentVersionResolver": "disk"
     },

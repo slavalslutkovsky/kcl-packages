@@ -2,11 +2,10 @@ name: Release
 
 # Automatically versions and publishes KCL packages on every push to main.
 #
-# Versioning is driven by Conventional Commits since the last release tag:
-#   - fix:   -> patch   (0.0.X)
-#   - feat:  -> minor   (0.X.0)
-#   - feat!  / "BREAKING CHANGE:" -> major (X.0.0)
-# A push with no releasable commits is a no-op (nothing is versioned or published).
+# Versioning is driven by `nx affected`: any releasable package whose code (or
+# transitive dependency) changed since the last successful run on main gets a
+# patch bump. Commit messages are not parsed - any message works. A push with
+# no affected releasable projects is a no-op.
 #
 # For each released package, nx will:
 #   1. bump the version in its kcl.mod and update its CHANGELOG.md
@@ -23,6 +22,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read # nrwl/nx-set-shas reads recent workflow runs to derive the base SHA
   contents: write # push the version commit + tags back to the repo
 
 jobs:
@@ -36,7 +36,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history + tags for conventional-commit versioning
+          fetch-depth: 0 # full history + tags so nx affected can diff against the last release
+
+      - name: Derive SHAs for nx affected
+        uses: nrwl/nx-set-shas@v4
 
       - uses: pnpm/action-setup@v4
         with:
@@ -63,16 +66,66 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: kcl registry login -u "$DOCKERHUB_USERNAME" -p "$DOCKERHUB_TOKEN" docker.io
 
-      - name: Version, changelog, tag and publish to OCI
-        # First run (no tags yet) needs --first-release; afterwards rely on
-        # conventional commits since the last release tag.
+      - name: Determine affected releasable projects
+        id: affected
+        # Intersect `nx affected` with the projects nx.json marks releasable
+        # ("tag:lang:kcl" minus "tag:area:providers") so internal tools and
+        # provider/schema projects never end up in the release set.
         run: |
-          if git tag | grep -q .; then
-            pnpm exec nx release --yes
-          else
-            echo "No release tags found - performing first release."
-            pnpm exec nx release --yes --first-release
+          AFFECTED=$(pnpm exec nx show projects \
+            --affected \
+            --projects="tag:lang:kcl" \
+            --exclude="tag:area:providers" \
+            --json | jq -r 'join(",")')
+
+          if [ -z "$AFFECTED" ]; then
+            echo "No affected releasable projects."
+            echo "projects=" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
+          echo "Affected: $AFFECTED"
+          echo "projects=$AFFECTED" >> "$GITHUB_OUTPUT"
+
+      - name: Version, changelog and tag (patch bump)
+        if: steps.affected.outputs.projects != ''
+        id: version
+        # Force a patch bump for each affected releasable project. We skip
+        # publishing here so the publish step only runs against projects whose
+        # tag actually moved (otherwise `kcl mod push` re-pushes existing
+        # versions and fails).
+        run: |
+          BEFORE=$(git rev-parse HEAD)
+          FIRST_RELEASE=""
+          if ! git tag | grep -q .; then
+            echo "No release tags found - performing first release."
+            FIRST_RELEASE="--first-release"
+          fi
+
+          pnpm exec nx release \
+            --projects="${{ steps.affected.outputs.projects }}" \
+            --specifier=patch \
+            --skip-publish \
+            --yes \
+            $FIRST_RELEASE
+
+          AFTER=$(git rev-parse HEAD)
+          if [ "$BEFORE" = "$AFTER" ]; then
+            echo "Nothing was versioned."
+            echo "projects=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Tags follow the "{projectName}@{version}" pattern, so strip the
+          # trailing "@<version>" to recover the bumped project names.
+          BUMPED=$(git tag --points-at HEAD | sed 's/@[^@]*$//' | sort -u | paste -sd, -)
+          echo "Bumped: $BUMPED"
+          echo "projects=$BUMPED" >> "$GITHUB_OUTPUT"
+
+      - name: Publish bumped packages to OCI
+        if: steps.version.outputs.projects != ''
+        run: pnpm exec nx release publish --projects="${{ steps.version.outputs.projects }}" --yes
+
       - name: Push version commits and tags
+        if: steps.version.outputs.projects != ''
         run: git push --follow-tags origin HEAD:main
