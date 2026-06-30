@@ -20,6 +20,7 @@
       "!tag:area:providers"
     ],
     "projectsRelationship": "independent",
+    "registry": "docker.io/yurikrupnik",
     "version": {
       "versionActions": "./tools/nx-kcl/src/release/version-actions.ts",
       "fallbackCurrentVersionResolver": "disk"
