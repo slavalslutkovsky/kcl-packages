@@ -106,7 +106,6 @@ jobs:
             --projects="${{ steps.affected.outputs.projects }}" \
             --specifier=patch \
             --skip-publish \
-            --yes \
             $FIRST_RELEASE
 
           AFTER=$(git rev-parse HEAD)
