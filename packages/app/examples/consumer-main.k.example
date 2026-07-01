@@ -1,0 +1,54 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Consumer entry point — Helm-style usage of the published `app` OCI package.
+#
+# Each app keeps this tiny main.k next to a values.yaml. The values file is plain
+# YAML (like Helm's values.yaml), but it is VALIDATED against the typed schema on
+# render: unknown keys, wrong types, or missing required fields fail the build,
+# and defaults are filled in. That is the type-safety Helm templating can't give.
+#
+# Layout:
+#   apps/<app>/k8s/
+#     ├── kcl.mod        # depends on the app package (see below)
+#     ├── main.k         # this file
+#     └── values.yaml    # the app's values (copy one of examples/values-*.yaml)
+#
+# kcl.mod:
+#   [package]
+#   name = "zerg_api_k8s"
+#   edition = "v0.12.3"
+#   version = "0.1.0"
+#   [dependencies]
+#   app = { oci = "oci://docker.io/yurikrupnik/app", tag = "0.0.1" }
+#   # local dev alternative: app = { path = "../../../packages/app" }
+#
+# Render:
+#   kcl run apps/zerg/api/k8s -q | kubectl apply -f -
+#   kcl run apps/zerg/api/k8s -q -o manifests.yaml      # write to disk for Flux
+# ─────────────────────────────────────────────────────────────────────────────
+
+import app
+import manifests
+import yaml
+import file
+
+# 1) Load + validate values.yaml against the typed schema (Helm values, but typed).
+_values = yaml.decode(file.read("values.yaml"))
+_w = app.Workload {**_values}
+
+# 2) Per-app extras the values file doesn't cover (typed ConfigMap, ExternalSecret…).
+_config = {
+    PORT = "8080"
+    TASKS_SERVICE_ADDR = "http://zerg-tasks:50051"
+}
+
+# 3) Render everything to a multi-doc YAML stream for `kubectl apply -f -`.
+_out = app.render(_w) \
+    + [app.configMap("zerg-api-config", _config, _w.namespace)]
+
+manifests.yaml_stream(_out)
+
+# ── CLI app variant (Job / CronJob) ──────────────────────────────────────────
+# For a CLI app, swap the Workload for a Task and use renderTask:
+#
+#   _t = app.Task {**yaml.decode(file.read("values.yaml"))}
+#   manifests.yaml_stream(app.renderTask(_t))

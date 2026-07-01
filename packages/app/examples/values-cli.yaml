@@ -1,0 +1,21 @@
+# CLI app values (Helm-style) → app.Task. No `schedule` → one-shot batch/v1 Job.
+# Add `schedule: "0 2 * * *"` to render a CronJob from the same template instead.
+name: db-migrate
+namespace: zerg
+component: migration
+image: yurikrupnik/zerg-api:latest
+command: ["/app/migrate"]
+args: ["up"]
+restartPolicy: Never
+backoffLimit: 3
+ttlSecondsAfterFinished: 3600
+envFrom:
+  - kind: configMap
+    name: zerg-shared-config
+  - kind: secret
+    name: zerg-api-secrets
+env:
+  - name: LOG
+    value: info
+# schedule: "0 2 * * *"        # uncomment → CronJob instead of Job
+# concurrencyPolicy: Forbid

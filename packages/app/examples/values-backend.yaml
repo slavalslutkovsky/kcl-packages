@@ -1,0 +1,57 @@
+# Backend app values (Helm-style). Validated against app.Workload on render —
+# unknown/mistyped/missing fields are rejected by the schema, defaults are filled.
+name: zerg-api
+namespace: zerg
+component: api-server
+image: yurikrupnik/zerg-api:latest
+port: 8080
+prometheus: true
+startupProbe:
+  type: http
+  path: /health
+  port: 8080
+  initialDelaySeconds: 2
+  periodSeconds: 5
+  failureThreshold: 6
+  timeoutSeconds: 3
+livenessProbe:
+  type: http
+  path: /health
+  port: 8080
+  periodSeconds: 10
+  failureThreshold: 3
+  timeoutSeconds: 3
+readinessProbe:
+  type: http
+  path: /ready
+  port: 8080
+  periodSeconds: 5
+  failureThreshold: 3
+  timeoutSeconds: 2
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 250m
+  limits:
+    memory: 512Mi
+envFrom:
+  - kind: configMap
+    name: zerg-shared-config
+  - kind: configMap
+    name: zerg-api-config
+  - kind: secret
+    name: zerg-shared-secrets
+  - kind: secret
+    name: zerg-api-secrets
+env:
+  - name: REDIS_USERNAME
+    secretName: redis-redis-account-default
+    secretKey: username
+  - name: REDIS_PASSWORD
+    secretName: redis-redis-account-default
+    secretKey: password
+hpa:
+  minReplicas: 1
+  maxReplicas: 10
+  cpu: 70
+  memory: 80

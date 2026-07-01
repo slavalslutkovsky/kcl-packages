@@ -1,0 +1,25 @@
+[dependencies]
+  [dependencies.external-secrets]
+    name = "external-secrets"
+    full_name = "external-secrets_0.18.2"
+    version = "0.18.2"
+    sum = "GKneYUgJl+jFFWRI2NlOwPYVtDTYW/DRb6JHh1tNPqU="
+    reg = "ghcr.io"
+    repo = "kcl-lang/external-secrets"
+    oci_tag = "0.18.2"
+  [dependencies.k8s]
+    name = "k8s"
+    full_name = "k8s_1.31.2"
+    version = "1.31.2"
+    sum = "xBZgPsnpVVyWBpahuPQHReeRx28eUHGFoaPeqbct+vs="
+    reg = "ghcr.io"
+    repo = "kcl-lang/k8s"
+    oci_tag = "1.31.2"
+  [dependencies.keda]
+    name = "keda"
+    full_name = "keda_0.1.3"
+    version = "0.1.3"
+    sum = "j5ejIjCuVQqNySmZZFMG+h0AuoizLEiK+sqwMWqj0u8="
+    reg = "ghcr.io"
+    repo = "kcl-lang/keda"
+    oci_tag = "0.1.3"

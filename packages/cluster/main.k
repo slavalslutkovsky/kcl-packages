@@ -1,5 +1,5 @@
 import .kind
 
-# Generate Kind cluster configuration
-# Usage: kcl run scripts/kcl/cluster/main.k -D name=dev -D workers=2 -D ingress=true
-items = [kind.Cluster {}]
+# Render a single Kind cluster config document at the root (no `items:` wrapper),
+# so `kind create cluster --config` can consume `kcl run` output directly.
+kind.Cluster {}
