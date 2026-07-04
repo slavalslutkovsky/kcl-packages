@@ -1,16 +1,21 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Consumer entry point — Helm-style usage of the published `app` OCI package.
+# Consumer entry point — the library path for the published `app` OCI package.
 #
-# Each app keeps this tiny main.k next to a values.yaml. The values file is plain
-# YAML (like Helm's values.yaml), but it is VALIDATED against the typed schema on
-# render: unknown keys, wrong types, or missing required fields fail the build,
-# and defaults are filled in. That is the type-safety Helm templating can't give.
+# You usually DON'T need this file: `app`'s own main.k already renders a values.yaml
+# (no local main.k / kcl.mod), so most apps ship only a values.yaml. Keep a main.k
+# like this only when you want to add manifests the values file can't express, or
+# post-process the rendered stream in code.
+#
+# The values file is plain YAML (like Helm's values.yaml) but VALIDATED against the
+# typed app.Release schema on render: unknown keys, wrong types, or missing required
+# fields fail the build, and defaults are filled in. That is the type-safety Helm
+# templating can't give.
 #
 # Layout:
 #   apps/<app>/k8s/
 #     ├── kcl.mod        # depends on the app package (see below)
 #     ├── main.k         # this file
-#     └── values.yaml    # the app's values (copy one of examples/values-*.yaml)
+#     └── values.yaml    # a Release (copy one of examples/values-*.yaml)
 #
 # kcl.mod:
 #   [package]
@@ -32,23 +37,20 @@ import yaml
 import file
 
 # 1) Load + validate values.yaml against the typed schema (Helm values, but typed).
+#    A Release = a `workload:` (or `task:`) + optional `config:` / `externalSecret:`.
 _values = yaml.decode(file.read("values.yaml"))
-_w = app.Workload {**_values}
+_release = app.Release {**_values}
 
-# 2) Per-app extras the values file doesn't cover (typed ConfigMap, ExternalSecret…).
-_config = {
-    PORT = "8080"
-    TASKS_SERVICE_ADDR = "http://zerg-tasks:50051"
-}
+# 2) Render the whole release (workload/task + ConfigMap + ExternalSecret), then
+#    append any per-app extras the values file doesn't cover (typed, checked here).
+_out = app.renderRelease(_release) \
+    + [app.configMap("zerg-api-extra", {FEATURE_FLAG = "on"}, _release.workload.namespace)]
 
-# 3) Render everything to a multi-doc YAML stream for `kubectl apply -f -`.
-_out = app.render(_w) \
-    + [app.configMap("zerg-api-config", _config, _w.namespace)]
-
+# 3) Emit a multi-doc YAML stream for `kubectl apply -f -`.
 manifests.yaml_stream(_out)
 
-# ── CLI app variant (Job / CronJob) ──────────────────────────────────────────
-# For a CLI app, swap the Workload for a Task and use renderTask:
-#
-#   _t = app.Task {**yaml.decode(file.read("values.yaml"))}
-#   manifests.yaml_stream(app.renderTask(_t))
+# ── Lower-level API ───────────────────────────────────────────────────────────
+# renderRelease is the one-call entrypoint; the pieces are also exported:
+#   app.render(app.Workload {**w})       # Deployment (+ Service, + HPA/Scaler)
+#   app.renderTask(app.Task {**t})       # Job, or CronJob when `schedule` is set
+#   app.mergeValues(base, overlay)       # deep, right-wins overlay merge

@@ -213,17 +213,20 @@ schedule: "0 3 * * *"
 
 # ── The shipped examples/*.yaml actually validate against the schemas ─────────
 test_examples_valid = lambda {
-    be = Workload {**yaml.decode(file.read("examples/values-backend.yaml"))}
-    assert len(render(be)) == 3, "backend example → Deployment + Service + HPA"
-    assert be.name == "zerg-api" and be.prometheus == True
+    be = Release {**yaml.decode(file.read("examples/values-backend.yaml"))}
+    beOut = renderRelease(be)
+    assert [m.kind for m in beOut] == ["Deployment", "Service", "HorizontalPodAutoscaler", "ConfigMap", "ExternalSecret"], "backend example → Deployment + Service + HPA + ConfigMap + ExternalSecret"
+    assert be.workload.name == "zerg-api" and be.workload.prometheus == True
+    assert beOut[3].metadata.name == "zerg-api-config", "config → <name>-config ConfigMap"
+    assert beOut[4].metadata.name == "zerg-api-secrets", "externalSecret → <name>-secrets"
 
-    fe = Workload {**yaml.decode(file.read("examples/values-frontend.yaml"))}
-    assert len(render(fe)) == 2, "frontend example → Deployment + Service"
-    assert fe.prometheus == False and fe.runAsGroup == 101
+    fe = Release {**yaml.decode(file.read("examples/values-frontend.yaml"))}
+    assert [m.kind for m in renderRelease(fe)] == ["Deployment", "Service"], "frontend example → Deployment + Service"
+    assert fe.workload.prometheus == False and fe.workload.runAsGroup == 101
 
-    cli = Task {**yaml.decode(file.read("examples/values-cli.yaml"))}
-    assert renderTask(cli)[0].kind == "Job", "cli example (no schedule) → Job"
-    assert cli.command == ["/app/migrate"]
+    cli = Release {**yaml.decode(file.read("examples/values-cli.yaml"))}
+    assert renderRelease(cli)[0].kind == "Job", "cli example (no schedule) → Job"
+    assert cli.task.command == ["/app/migrate"]
 }
 
 # ── Release: whole-app values.yaml → workload + config + externalSecret ───────

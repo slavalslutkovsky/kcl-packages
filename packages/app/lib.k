@@ -10,9 +10,11 @@ Two archetypes, one package:
 
 Core resources use the typed `k8s` package and ExternalSecret uses the typed
 `external-secrets` package, so rendered output is checked against the real
-Kubernetes / CRD APIs. Consumers `import app`, build a `Workload`/`Task` (often
-from a Helm-style values.yaml via `app.Workload {**yaml.decode(...)}`), and emit
-with `manifests.yaml_stream(app.render(w))` / `app.renderTask(t)`. See examples/.
+Kubernetes / CRD APIs. The usual path is a Helm-style values.yaml that is a
+`Release` (a `workload:` or `task:` + optional `config:`/`externalSecret:`),
+rendered by the package's own main.k with no local main.k needed. In code:
+`import app` and call `app.renderRelease(app.Release {**yaml.decode(...)})`, or
+the lower-level `app.render(w)` / `app.renderTask(t)`. See examples/.
 """
 
 import k8s.api.apps.v1 as appsv1
