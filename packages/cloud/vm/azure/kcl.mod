@@ -1,7 +1,7 @@
 [package]
 name = "vm-azure"
 edition = "v0.12.3"
-version = "0.0.1"
+version = "0.0.2"
 
 [dependencies]
 azure-compute = { path = "../../../providers/azure-compute" }

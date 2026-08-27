@@ -1,7 +1,7 @@
 [package]
 name = "vm-gcp"
 edition = "v0.12.3"
-version = "0.0.1"
+version = "0.0.2"
 
 [dependencies]
 gcp-compute = { path = "../../../providers/gcp-compute" }

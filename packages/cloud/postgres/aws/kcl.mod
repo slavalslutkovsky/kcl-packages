@@ -1,7 +1,7 @@
 [package]
 name = "postgres-aws"
 edition = "v0.12.3"
-version = "0.0.1"
+version = "0.0.2"
 
 [dependencies]
 aws-rds = { path = "../../../providers/aws-rds" }
