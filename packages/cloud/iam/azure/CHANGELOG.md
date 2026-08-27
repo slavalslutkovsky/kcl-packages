@@ -1,3 +1,7 @@
+## 0.1.0 (2026-08-27)
+
+This was a version bump only for iam-azure to align it with other projects, there were no code changes.
+
 ## 0.0.2 (2026-08-27)
 
 ### 🚀 Features

@@ -1,7 +1,7 @@
 [package]
 name = "iam-azure"
 edition = "v0.12.3"
-version = "0.0.2"
+version = "0.1.0"
 
 [dependencies]
 azure-managedidentity = { path = "../../../providers/azure-managedidentity" }

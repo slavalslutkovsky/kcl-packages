@@ -1,7 +1,7 @@
 [package]
 name = "cluster-aws"
 edition = "v0.12.3"
-version = "0.0.2"
+version = "0.1.0"
 
 [dependencies]
 aws-eks = { path = "../../../providers/aws-eks" }
