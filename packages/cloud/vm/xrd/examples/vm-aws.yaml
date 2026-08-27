@@ -1,0 +1,28 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: VirtualMachine
+metadata:
+  namespace: default
+  name: build-agent
+spec:
+  region: us-east-1
+  size: medium                       # -> m5.large
+  imageId: ami-0123456789abcdef0     # REQUIRED on AWS (no account-independent image families)
+  diskGb: 50
+  spot: true                         # instanceMarketOptions=spot
+  network:
+    subnetId: subnet-0123456789abcdef0
+    securityGroupIds: [sg-0123456789abcdef0]
+    publicIp: true                   # associatePublicIpAddress
+  sshKey:                            # composes an EC2 KeyPair
+    user: ubuntu
+    publicKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample build-agent
+  userData: |
+    #!/bin/sh
+    echo hello > /etc/motd
+  deletionPolicy: Delete             # Delete | Orphan — Orphan keeps the machine
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws                # the flag: picks the backend (aws | gcp | azure)

@@ -1,5 +1,6 @@
 import { CreateNodes, CreateNodesContext, ProjectConfiguration } from '@nx/devkit';
-import { dirname } from 'path';
+import { existsSync } from 'fs';
+import { dirname, join } from 'path';
 import { readKclMod } from './utils';
 
 export interface NxKclPluginOptions {
@@ -112,6 +113,18 @@ export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
             },
           },
         };
+
+        // Composition packages ship a composition.yaml alongside their KCL.
+        // `render` runs it through `crossplane render` against the working tree
+        // — no publish, no cluster. Uncached: the rendered output also depends
+        // on the provider schema packages, which nx does not track as inputs.
+        if (existsSync(join(context.workspaceRoot, projectRoot, 'composition.yaml'))) {
+          project.targets!['render'] = {
+            cache: false,
+            executor: 'nx-kcl:render',
+            options: {},
+          };
+        }
 
         // Providers are generated schema libraries, consumed by relative path.
         // They never run nx targets — drop build/test/lint/pkg/publish so even a

@@ -25,7 +25,6 @@ import external_secrets.v1 as esv1
 import keda.v1alpha1 as keda
 
 # ── Component schemas ────────────────────────────────────────────────────────
-
 schema Probe:
     """Health probe. `type='http'` → httpGet(path, port); `type='grpc'` → grpc(port)."""
     $type: "http" | "grpc" = "http"
@@ -72,13 +71,19 @@ schema Scaler:
     """
     minReplicas: int = 1
     maxReplicas: int = 10
-    cpu?: int                        # → KEDA cpu trigger, Utilization %
-    memory?: int                     # → KEDA memory trigger, Utilization %
-    triggers: [{str:}] = []          # passthrough KEDA triggers
+    # → KEDA cpu trigger, Utilization %
+    cpu?: int
+    # → KEDA memory trigger, Utilization %
+    memory?: int
+    # passthrough KEDA triggers
+    triggers: [{str:}] = []
     pollingInterval?: int
     cooldownPeriod?: int
-    idleReplicas?: int               # → idleReplicaCount (only valid with minReplicas 0)
-    behavior?: {str:}                # → advanced.horizontalPodAutoscalerConfig.behavior
+    # → idleReplicaCount (only valid with minReplicas 0)
+    idleReplicas?: int
+    # → advanced.horizontalPodAutoscalerConfig.behavior
+    behavior?: {str:}
+
     check:
         cpu or memory or triggers, "Scaler needs at least one of cpu, memory, or triggers"
 
@@ -110,10 +115,13 @@ schema Workload:
     terminationGracePeriodSeconds: int = 30
     service: bool = True
     serviceType: str = "ClusterIP"
-    hpa?: Hpa                        # native HPA (legacy; prefer `scaler`)
-    scaler?: Scaler                  # KEDA ScaledObject (preferred)
+    # native HPA (legacy; prefer `scaler`)
+    hpa?: Hpa
+    # KEDA ScaledObject (preferred)
+    scaler?: Scaler
     podAnnotations: {str:str} = {}
     extraManifests: [{str:}] = []
+
     check:
         not (hpa and scaler), "use either `hpa` (native) or `scaler` (KEDA), not both"
 
@@ -155,7 +163,8 @@ schema Task:
 
 schema ExternalSecretSpec:
     """A GCP/cloud ExternalSecret: `items` = [{secretKey, key, property}]."""
-    name?: str                       # defaults to "<release name>-secrets"
+    # defaults to "<release name>-secrets"
+    name?: str
     store: str = "gcp-secret-manager"
     refreshInterval: str = "1h"
     items: [{str:str}]
@@ -174,25 +183,38 @@ schema Release:
     task?: Task
     config?: {str:str}
     externalSecret?: ExternalSecretSpec
+
     check:
         workload or task, "Release needs a `workload:` or a `task:`"
         not (workload and task), "Release can't have both `workload:` and `task:`"
 
 # ── Shared container atoms (env / envFrom / probe) ───────────────────────────
-
 _envVar = lambda e: EnvVar -> {str:} {
-    {name = e.name} | ({value = e.value} if e.value \
-        else {valueFrom = {secretKeyRef = {name = e.secretName, key = e.secretKey, optional = e.optional}}} if e.secretName \
-        else {valueFrom = {configMapKeyRef = {name = e.configMapName, key = e.configMapKey}}} if e.configMapName \
-        else {})
+    {name = e.name} | ({value = e.value} if e.value else {
+        valueFrom = {
+            secretKeyRef = {name = e.secretName, key = e.secretKey, optional = e.optional}
+        }
+    } if e.secretName else {
+        valueFrom = {
+            configMapKeyRef = {name = e.configMapName, key = e.configMapKey}
+        }
+    } if e.configMapName else {})
 }
 
 _envFrom = lambda f: EnvFrom -> {str:} {
-    {configMapRef = {name = f.name}} if f.kind == "configMap" else {secretRef = {name = f.name, optional = f.optional}}
+    {
+        configMapRef = {name = f.name}
+    } if f.kind == "configMap" else {
+        secretRef = {name = f.name, optional = f.optional}
+    }
 }
 
 _probe = lambda p: Probe -> {str:} {
-    ({httpGet = {path = p.path, port = p.port}} if p.$type == "http" else {grpc = {port = p.port}}) | {
+    ({
+        httpGet = {path = p.path, port = p.port}
+    } if p.$type == "http" else {
+        grpc = {port = p.port}
+    }) | {
         periodSeconds = p.periodSeconds
         failureThreshold = p.failureThreshold
         timeoutSeconds = p.timeoutSeconds
@@ -200,7 +222,6 @@ _probe = lambda p: Probe -> {str:} {
 }
 
 # ── Workload renderers ───────────────────────────────────────────────────────
-
 _labels = lambda w: Workload -> {str:str} {
     {
         "app" = w.name
@@ -232,12 +253,7 @@ _container = lambda w: Workload -> {str:} {
         image = w.image
         imagePullPolicy = w.imagePullPolicy
         ports = [{containerPort = w.port, name = w.portName, $protocol = "TCP"}]
-    } | ({envFrom = [_envFrom(f) for f in w.envFrom]} if w.envFrom else {}) \
-      | ({env = [_envVar(e) for e in w.env]} if w.env else {}) \
-      | ({startupProbe = _probe(w.startupProbe)} if w.startupProbe else {}) \
-      | ({livenessProbe = _probe(w.livenessProbe)} if w.livenessProbe else {}) \
-      | ({readinessProbe = _probe(w.readinessProbe)} if w.readinessProbe else {}) \
-      | {
+    } | ({envFrom = [_envFrom(f) for f in w.envFrom]} if w.envFrom else {}) | ({env = [_envVar(e) for e in w.env]} if w.env else {}) | ({startupProbe = _probe(w.startupProbe)} if w.startupProbe else {}) | ({livenessProbe = _probe(w.livenessProbe)} if w.livenessProbe else {}) | ({readinessProbe = _probe(w.readinessProbe)} if w.readinessProbe else {}) | {
         resources = w.resources
         securityContext = {
             allowPrivilegeEscalation = False
@@ -258,7 +274,9 @@ _deployment = lambda w: Workload -> appsv1.Deployment {
         # GitOps (Flux/ArgoCD) server-side apply and Flagger fight the autoscaler
         # over the replica count. The autoscaler's min is the floor.
         spec = ({replicas = w.replicas} if not (w.hpa or w.scaler) else {}) | {
-            selector = {matchLabels = {app = w.name}}
+            selector = {
+                matchLabels = {app = w.name}
+            }
             template = {
                 metadata = {labels = _labels(w)} | ({annotations = _ann} if _ann else {})
                 spec = {
@@ -323,15 +341,15 @@ _scaler = lambda w: Workload -> keda.ScaledObject {
             minReplicaCount = _s.minReplicas
             maxReplicaCount = _s.maxReplicas
             triggers = _triggers
-        } | ({pollingInterval = _s.pollingInterval} if _s.pollingInterval else {}) \
-          | ({cooldownPeriod = _s.cooldownPeriod} if _s.cooldownPeriod else {}) \
-          | ({idleReplicaCount = _s.idleReplicas} if _s.idleReplicas != Undefined else {}) \
-          | ({advanced = {horizontalPodAutoscalerConfig = {behavior = _s.behavior}}} if _s.behavior else {})
+        } | ({pollingInterval = _s.pollingInterval} if _s.pollingInterval else {}) | ({cooldownPeriod = _s.cooldownPeriod} if _s.cooldownPeriod else {}) | ({idleReplicaCount = _s.idleReplicas} if _s.idleReplicas != Undefined else {}) | ({
+            advanced = {
+                horizontalPodAutoscalerConfig = {behavior = _s.behavior}
+            }
+        } if _s.behavior else {})
     }
 }
 
 # ── Task (Job / CronJob) renderers ───────────────────────────────────────────
-
 _taskLabels = lambda t: Task -> {str:str} {
     {
         "app" = t.name
@@ -354,11 +372,7 @@ _taskContainer = lambda t: Task -> {str:} {
         name = t.name
         image = t.image
         imagePullPolicy = t.imagePullPolicy
-    } | ({command = t.command} if t.command else {}) \
-      | ({args = t.args} if t.args else {}) \
-      | ({envFrom = [_envFrom(f) for f in t.envFrom]} if t.envFrom else {}) \
-      | ({env = [_envVar(e) for e in t.env]} if t.env else {}) \
-      | {
+    } | ({command = t.command} if t.command else {}) | ({args = t.args} if t.args else {}) | ({envFrom = [_envFrom(f) for f in t.envFrom]} if t.envFrom else {}) | ({env = [_envVar(e) for e in t.env]} if t.env else {}) | {
         resources = t.resources
         securityContext = {
             allowPrivilegeEscalation = False
@@ -388,10 +402,7 @@ _jobSpec = lambda t: Task -> {str:} {
             spec = _jobPodSpec(t)
         }
         backoffLimit = t.backoffLimit
-    } | ({completions = t.completions} if t.completions else {}) \
-      | ({parallelism = t.parallelism} if t.parallelism else {}) \
-      | ({activeDeadlineSeconds = t.activeDeadlineSeconds} if t.activeDeadlineSeconds else {}) \
-      | ({ttlSecondsAfterFinished = t.ttlSecondsAfterFinished} if t.ttlSecondsAfterFinished != Undefined else {})
+    } | ({completions = t.completions} if t.completions else {}) | ({parallelism = t.parallelism} if t.parallelism else {}) | ({activeDeadlineSeconds = t.activeDeadlineSeconds} if t.activeDeadlineSeconds else {}) | ({ttlSecondsAfterFinished = t.ttlSecondsAfterFinished} if t.ttlSecondsAfterFinished != Undefined else {})
 }
 
 _job = lambda t: Task -> batchv1.Job {
@@ -410,13 +421,11 @@ _cronjob = lambda t: Task -> batchv1.CronJob {
             successfulJobsHistoryLimit = t.successfulJobsHistoryLimit
             failedJobsHistoryLimit = t.failedJobsHistoryLimit
             jobTemplate = {spec = _jobSpec(t)}
-        } | ({suspend = t.suspend} if t.suspend != Undefined else {}) \
-          | ({startingDeadlineSeconds = t.startingDeadlineSeconds} if t.startingDeadlineSeconds else {})
+        } | ({suspend = t.suspend} if t.suspend != Undefined else {}) | ({startingDeadlineSeconds = t.startingDeadlineSeconds} if t.startingDeadlineSeconds else {})
     }
 }
 
 # ── Public API ───────────────────────────────────────────────────────────────
-
 mergeValues = lambda base: {str:}, overlay: {str:} -> {str:} {
     """
     Deep, right-wins merge of two plain values dicts (Helm/kustomize-overlay
@@ -428,11 +437,7 @@ mergeValues = lambda base: {str:}, overlay: {str:} -> {str:} {
 
 render = lambda w: Workload -> [any] {
     """All manifests for a long-running workload: Deployment, optional Service, optional HPA, extras."""
-    [_deployment(w)] \
-        + ([_service(w)] if w.service else []) \
-        + ([_hpa(w)] if w.hpa else []) \
-        + ([_scaler(w)] if w.scaler else []) \
-        + w.extraManifests
+    [_deployment(w)] + ([_service(w)] if w.service else []) + ([_hpa(w)] if w.hpa else []) + ([_scaler(w)] if w.scaler else []) + w.extraManifests
 }
 
 renderTask = lambda t: Task -> [any] {
@@ -451,13 +456,7 @@ renderRelease = lambda r: Release -> [any] {
     _name = r.workload.name if r.workload else r.task.name
     _ns = (r.workload.namespace if r.workload else r.task.namespace) or ""
     _cm: [any] = [configMap("${_name}-config", r.config, _ns)] if r.config else []
-    _es: [any] = [externalSecret(
-        r.externalSecret.name or "${_name}-secrets",
-        r.externalSecret.store,
-        r.externalSecret.items,
-        _ns,
-        r.externalSecret.refreshInterval,
-    )] if r.externalSecret else []
+    _es: [any] = [externalSecret(r.externalSecret.name or "${_name}-secrets", r.externalSecret.store, r.externalSecret.items, _ns, r.externalSecret.refreshInterval)] if r.externalSecret else []
     _core + _cm + _es
 }
 
@@ -478,7 +477,13 @@ secret = lambda name: str, data: {str:str}, namespace: str = "" -> corev1.Secret
     }
 }
 
-externalSecret = lambda name: str, store: str, items: [{str:str}], namespace: str = "", refreshInterval: str = "1h" -> esv1.ExternalSecret {
+externalSecret = lambda {
+    name: str,
+    store: str,
+    items: [{str:str}],
+    namespace: str = "",
+    refreshInterval: str = "1h",
+} -> esv1.ExternalSecret {
     """A typed external-secrets.io ExternalSecret. `items` = [{secretKey, key, property}]."""
     esv1.ExternalSecret {
         metadata = {name = name} | ({namespace = namespace} if namespace else {})

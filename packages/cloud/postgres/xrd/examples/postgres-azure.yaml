@@ -1,0 +1,32 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: PostgresInstance
+metadata:
+  namespace: default
+  name: my-azure-pg
+spec:
+  region: westeurope              # -> location
+  resourceGroup: my-rg            # REQUIRED by the azure backend
+  engineVersion: "16"             # Flexible Server version
+  memoryGb: 4                     # -> B_Standard_B2s, bumped to GP_Standard_D2s_v3 by HA below
+  storageGb: 50                   # -> storageMb rounded up to 65536 (64 GiB step)
+  database: app                   # companion FlexibleServerDatabase MR
+  username: app                   # administratorLogin; password generated into my-azure-pg-postgres-auth
+  workloadIdentity:               # AKS Workload Identity: Entra ID auth + server administrator
+    principal: my-app-workload
+    principalId: 11111111-2222-3333-4444-555555555555
+    tenantId: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+  highAvailability: true          # ZoneRedundant HA
+  publicAccess: false             # publicNetworkAccessEnabled
+  snapshotRetentionDays: 7        # backupRetentionDays (Azure minimum is 7)
+  maintenanceWindow:
+    day: sun
+    hour: 3
+  parameters:                     # one FlexibleServerConfiguration per entry
+    max_connections: "200"
+  deletionPolicy: Delete          # Delete | Orphan — Orphan keeps the instance
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure           # the flag: picks the backend (aws | gcp | azure | cnpg)

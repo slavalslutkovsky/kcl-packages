@@ -1,0 +1,35 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: PostgresInstance
+metadata:
+  namespace: default
+  name: my-gcp-pg
+spec:
+  region: us-central1
+  engineVersion: "16"             # -> POSTGRES_16
+  memoryGb: 4                     # -> tier db-custom-2-7680
+  storageGb: 50                   # diskSize
+  database: app                   # companion Database MR
+  username: app                   # companion User MR, from passwordSecret
+  passwordSecret:                 # GCP cannot generate one server-side
+    name: my-gcp-pg-password
+    key: password
+  workloadIdentity:               # GKE Workload Identity: IAM auth flag + CLOUD_IAM_SERVICE_ACCOUNT user
+    principal: app@my-project.iam.gserviceaccount.com
+  highAvailability: true          # availabilityType REGIONAL
+  publicAccess: false             # private IP only (network.id below)
+  snapshotRetentionDays: 7        # retainedBackups
+  maintenanceWindow:
+    day: sun
+    hour: 3
+  parameters:                     # databaseFlags
+    max_connections: "200"
+  network:
+    id: projects/my-project/global/networks/default
+  encryptionKmsKeyId: projects/p/locations/us-central1/keyRings/r/cryptoKeys/k  # optional CMEK
+  deletionPolicy: Delete          # Delete | Orphan — Orphan keeps the instance
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp             # the flag: picks the backend (aws | gcp | azure | cnpg)

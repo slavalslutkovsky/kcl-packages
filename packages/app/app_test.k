@@ -372,8 +372,9 @@ test_scaler_or_hpa_valid_paths = lambda {
     assert [m.kind for m in render(wh)][2] == "HorizontalPodAutoscaler", "hpa path"
     ws = Workload {name = "x", image = "i", port = 8080, scaler = {cpu = 70}}
     assert [m.kind for m in render(ws)][2] == "ScaledObject", "scaler path"
-    # mutual exclusion (hpa AND scaler) is enforced by the schema `check` block.
 }
+
+# mutual exclusion (hpa AND scaler) is enforced by the schema `check` block.
 
 # ── Deployment omits spec.replicas when autoscaled (GitOps/Flagger safe) ──────
 test_replicas_ownership = lambda {

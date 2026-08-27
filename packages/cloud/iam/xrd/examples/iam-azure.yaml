@@ -1,0 +1,28 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Identity
+metadata:
+  namespace: default
+  name: ci-deployer
+spec:
+  displayName: CI deployer for the web app
+  region: westeurope                  # Azure location of the identity
+  resourceGroup: platform-rg          # Resource Group the identity lives in
+  trust:
+    federated:                        # one FederatedIdentityCredential per subject
+      issuer: https://token.actions.githubusercontent.com
+      subjects: ["repo:my-org/my-repo:ref:refs/heads/main"]
+      # audiences default to [api://AzureADTokenExchange]
+  accessPolicies:                     # one RoleAssignment per grant; scope is required
+    - role: Storage Blob Data Reader  # built-in role name (or a /subscriptions/…/roleDefinitions/… ID)
+      scope: /subscriptions/0b1f6471-1bf0-4dda-aec3-111122223333/resourceGroups/platform-rg
+    - role: Storage Blob Data Contributor
+      scope: /subscriptions/0b1f6471-1bf0-4dda-aec3-111122223333/resourceGroups/platform-rg/providers/Microsoft.Storage/storageAccounts/myartifacts
+      condition:                      # ABAC condition (version 2.0)
+        expression: "@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals 'artifacts'"
+  deletionPolicy: Delete              # Delete | Orphan — Orphan keeps the identity and its assignments
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure               # the flag: picks the backend (aws | gcp | azure)

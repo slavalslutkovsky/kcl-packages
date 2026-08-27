@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "$id": "KclRender",
+  "title": "Render a Crossplane Composition locally",
+  "description": "Run `crossplane render` against the package's working tree, so a Composition can be checked without publishing it or standing up a cluster.",
+  "type": "object",
+  "cli": "nx",
+  "properties": {
+    "example": {
+      "type": "string",
+      "description": "Example XR to render. A bare name resolves inside the module's xrd/examples dir; a path is used as given. Defaults to examples/<project>.yaml.",
+      "$default": { "$source": "argv", "index": 0 }
+    },
+    "xrdDir": {
+      "type": "string",
+      "description": "Module xrd/ directory holding functions.yaml and examples/. Defaults to the sibling `xrd` dir of the package."
+    },
+    "functions": {
+      "type": "string",
+      "description": "Functions manifest to render with. Defaults to <xrdDir>/functions.yaml."
+    },
+    "image": {
+      "type": "string",
+      "description": "function-kcl image to serve the working tree with. Defaults to the pinned `function-kcl` package in the functions manifest."
+    },
+    "port": {
+      "type": "number",
+      "description": "Host port the function listens on for the Development runtime.",
+      "default": 9443
+    },
+    "containerName": {
+      "type": "string",
+      "description": "Name of the reusable function container.",
+      "default": "nx-kcl-render"
+    },
+    "keepContainer": {
+      "type": "boolean",
+      "description": "Leave the function container running so later renders reuse it. Disable to remove it when the render finishes.",
+      "default": true
+    },
+    "functionResults": {
+      "type": "boolean",
+      "description": "Print function results (crossplane render --include-function-results).",
+      "default": false
+    },
+    "fullXr": {
+      "type": "boolean",
+      "description": "Print the full XR spec and metadata (crossplane render --include-full-xr).",
+      "default": false
+    }
+  },
+  "additionalProperties": false
+}

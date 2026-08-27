@@ -1,0 +1,35 @@
+# Crossplane providers the VirtualMachine Compositions render against. Install
+# only the ones whose backends you intend to use; each Composition references
+# exactly one cloud (azure needs both azure providers below — the VM's NIC and
+# public IP live in the network family).
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-vm-providers`) — keep them in step, or the
+# rendered manifests can reference fields the installed provider does not have.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-ec2
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-compute
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-compute
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-compute:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-network
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-network:v2.6.0

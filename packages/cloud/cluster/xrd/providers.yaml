@@ -1,0 +1,36 @@
+# Crossplane providers the KubernetesCluster Compositions render against.
+# Install only the ones whose backends you intend to use; each Composition
+# references exactly one cloud (aws needs both aws providers below — EKS
+# clusters cannot exist without their IAM roles).
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-cluster-providers`) — keep them in step, or
+# the rendered manifests can reference fields the installed provider does not
+# have.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-eks
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-eks:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-iam
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-container
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-container:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-containerservice
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-containerservice:v2.6.0

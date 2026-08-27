@@ -78,4 +78,3 @@ schema Cluster:
         role: "worker"
         kubeadmConfigPatches: [_db_join_patch]
     } for _ in range(_db_workers)]
-

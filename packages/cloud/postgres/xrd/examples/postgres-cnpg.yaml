@@ -1,0 +1,22 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: PostgresInstance
+metadata:
+  namespace: default
+  name: my-pg
+spec:
+  region: in-cluster              # required by the XRD; the cnpg backend ignores it
+  engineVersion: "16"             # -> ghcr.io/cloudnative-pg/postgresql:16
+  memoryGb: 2                     # container memory request/limit
+  storageGb: 20                   # PVC size
+  database: app                   # initdb database
+  username: app                   # initdb owner; password generated into my-pg-app
+  replicas: 1                     # one streaming standby (instances = 2)
+  highAvailability: true          # keeps at least one standby even at replicas=0
+  parameters:                     # postgresql.parameters
+    max_connections: "200"
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: cnpg            # the flag: picks the backend (aws | gcp | azure | cnpg)

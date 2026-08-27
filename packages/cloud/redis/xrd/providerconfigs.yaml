@@ -1,0 +1,18 @@
+# ProviderConfigs for the RedisInstance backends.
+#
+# Kept out of providers.yaml on purpose: these are instances of CRDs that a
+# Provider installs, so a single `kubectl apply` of both files fails with
+# `no matches for kind "ClusterProviderConfig"`. Apply this only once the
+# Providers report Healthy (`just e2e-providerconfigs` does that ordering).
+#
+# The in-cluster (valkey) backend runs helm with the provider's own ServiceAccount,
+# so one cluster-wide config serves XRs in every namespace. The AWS and GCP
+# backends need real cloud credentials — add a ProviderConfig of your own with
+# `credentials.source: Secret` (or IRSA / Workload Identity) before using them.
+apiVersion: helm.m.crossplane.io/v1beta1
+kind: ClusterProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: InjectedIdentity

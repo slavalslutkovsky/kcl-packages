@@ -1,0 +1,26 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: RedisInstance
+metadata:
+  namespace: default
+  name: my-local-cache
+spec:
+  # No cloud account involved: the Bitnami Valkey chart is installed into this
+  # XR's own namespace by provider-helm. `region` stays required by the XRD, so
+  # give it something honest.
+  region: in-cluster
+  memoryGb: 2                    # container memory limit; maxmemory = 80% of it
+  replicas: 1                    # -> architecture=replication, replica.replicaCount=1
+  highAvailability: true
+  authEnabled: true              # chart-generated password in Secret my-local-cache
+  transitEncryption: true        # tls.enabled with self-signed certs
+  persistence: true
+  persistenceSizeGb: 20          # PVC size per node (in-cluster only)
+  deletionPolicy: Delete         # Orphan leaves the Helm release installed
+  parameters:                    # merged into valkey.conf, overriding the defaults
+    maxmemory-policy: noeviction
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: valkey         # the flag: picks the backend (aws | gcp | valkey)

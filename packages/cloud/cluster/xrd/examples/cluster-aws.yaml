@@ -1,0 +1,26 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: KubernetesCluster
+metadata:
+  namespace: default
+  name: web-cluster
+spec:
+  region: us-east-1
+  version: "1.32"
+  nodeCount: 2                       # initial/desired size
+  autoscaling:                       # EKS NodeGroup scalingConfig
+    min: 2
+    max: 5
+  nodeSize: medium                   # -> m5.large
+  # machineType: m6i.large           # native override of the nodeSize mapping
+  spot: true                         # EKS capacityType=SPOT
+  network:
+    subnets:                         # REQUIRED on AWS: EKS cannot exist without subnets
+      - subnet-0123456789abcdef0
+      - subnet-0123456789abcdef1
+  deletionPolicy: Delete             # Delete | Orphan — Orphan keeps the cluster
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws                # the flag: picks the backend (aws | gcp | azure)

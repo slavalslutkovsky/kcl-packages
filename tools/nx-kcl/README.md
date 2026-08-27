@@ -25,6 +25,7 @@ anywhere under the workspace and the project appears automatically.
 
 - The [KCL CLI](https://kcl-lang.io/docs/user_docs/getting-started/install) (`kcl`) on `PATH`.
 - Node.js and Nx (the plugin runs as TypeScript via `@swc-node/register`).
+- For the `render` target only: the [Crossplane CLI](https://docs.crossplane.io/latest/cli/) (`crossplane`) and a running Docker daemon.
 
 ## Setup
 
@@ -76,12 +77,55 @@ Each KCL package gets these targets:
 | `remove`            | `nx-kcl:remove`                  | no     | Remove a dependency + reconcile the lock. |
 | `pkg`               | `kcl mod pkg --target .`         | yes    | Builds a `.tar`; depends on `test`, `lint`. |
 | `nx-release-publish` | `nx-kcl:publish`                 | no     | `kcl mod push` to OCI; depends on `test`, `lint`. Run via `nx release`. |
+| `render`            | `nx-kcl:render`                  | no     | Only on Composition packages. `crossplane render` against the working tree — no publish, no cluster. |
 
 ```bash
 nx build cluster
 nx test cluster
 nx run-many -t build test lint        # across all KCL packages
 ```
+
+## Rendering a Composition locally
+
+Composition packages (those with a `composition.yaml`) also get a `render`
+target. It shows the managed resources the Composition would compose, in about
+a second, with **no cluster and no publish step**:
+
+```bash
+nx run bucket-gcp:render                       # renders xrd/examples/bucket-gcp.yaml
+nx run bucket-gcp:render --example=bucket-aws  # a different example XR
+nx run bucket-gcp:render --functionResults     # also print function results
+just render bucket-gcp                         # same thing
+```
+
+The example XR defaults to `<module>/xrd/examples/<project>.yaml` — the name the
+`composition` generator scaffolds. `functions.yaml` comes from the same `xrd/`
+dir, so renders use the same pinned function images the cluster would.
+
+### How it renders the working tree
+
+A committed `composition.yaml` points its KCL `source:` at a published image
+(`oci://.../bucket-gcp?tag=0.0.6`), so a plain `crossplane render` would show you
+the *last release*, not your edits. Instead the executor:
+
+1. starts `function-kcl` itself — the image pinned in `functions.yaml` — with the
+   workspace mounted read-only at `/workspace`, and annotates the Function with
+   `render.crossplane.io/runtime: Development` so `crossplane render` dials it
+   instead of running its own container;
+2. rewrites the `source:` to `/workspace/<projectRoot>` in a temp copy of
+   `composition.yaml` (the committed file is never touched);
+3. runs `crossplane render`.
+
+Because the whole workspace is mounted, the relative path deps on the provider
+schema packages resolve as they do on disk — no vendoring and no registry, unlike
+publishing.
+
+The container is named `nx-kcl-render` and is left running so later renders reuse
+it (~6s cold, ~1.5s warm). Stop it with `just render-stop`, or render with
+`--keepContainer=false`.
+
+> `render` is deliberately **not cached**: its output also depends on the provider
+> schema packages, which nx does not track as inputs of the Composition package.
 
 ## Dependency management
 
@@ -258,6 +302,8 @@ packages/cloud/bucket/
   `nx release` — the publish executor embeds each path-dep schema into the
   artifact (see below), so the pushed image is self-contained. Then pin `?tag=`
   in each `composition.yaml` and `crossplane render` against the published modules.
+  Before publishing, `nx run bucket-<provider>:render` renders the working tree
+  directly (see [Rendering a Composition locally](#rendering-a-composition-locally)).
 
 | Option       | Default               | Description |
 | ------------ | --------------------- | ----------- |
@@ -274,6 +320,7 @@ packages/cloud/bucket/
 | ----------------- | ------- |
 | `nx-kcl:publish`  | `kcl mod push` a package to an OCI registry. Used by `nx-release-publish`. |
 | `nx-kcl:remove`   | Remove a dependency from `kcl.mod` and reconcile `kcl.mod.lock`. Backs the `remove` target. |
+| `nx-kcl:render`   | `crossplane render` a Composition against the working tree. Backs the `render` target. |
 
 The publish target defaults to `oci://$KCL_REGISTRY/<project>`. The registry can
 be set per invocation via the executor `registry` option, the plugin

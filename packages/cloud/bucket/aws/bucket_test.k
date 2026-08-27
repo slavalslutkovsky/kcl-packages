@@ -184,12 +184,20 @@ test_status_pre_creation = lambda {
 # 10) status after creation: ready with provider-observed fields populated.
 test_status_observed = lambda {
     oxr = {apiVersion = "cloud.example.org/v1alpha1", kind = "Bucket", metadata.name = "demo", spec = {region = "us-east-1"}}
-    ocds = {managed = {Resource = {status = {atProvider = {
-        arn = "arn:aws:s3:::demo"
-        id = "demo"
-        region = "us-east-1"
-        bucketRegionalDomainName = "demo.s3.us-east-1.amazonaws.com"
-    }}}}}
+    ocds = {
+        managed = {
+            Resource = {
+                status = {
+                    atProvider = {
+                        arn = "arn:aws:s3:::demo"
+                        id = "demo"
+                        region = "us-east-1"
+                        bucketRegionalDomainName = "demo.s3.us-east-1.amazonaws.com"
+                    }
+                }
+            }
+        }
+    }
     dxr = bucket.status(oxr, ocds)
     assert dxr.status.ready == True, "observed arn must mark the bucket ready"
     assert dxr.status.arn == "arn:aws:s3:::demo", "arn must be surfaced"

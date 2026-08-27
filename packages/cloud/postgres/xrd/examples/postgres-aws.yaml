@@ -1,0 +1,32 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: PostgresInstance
+metadata:
+  namespace: default
+  name: my-aws-pg
+spec:
+  region: eu-west-1
+  engineVersion: "16"             # RDS engineVersion (latest 16.x minor)
+  memoryGb: 4                     # -> smallest instance class that fits (db.t4g.medium)
+  storageGb: 50                   # allocatedStorage
+  database: app                   # dbName
+  username: app                   # master username; password generated into my-aws-pg-postgres-auth
+  workloadIdentity: {}            # IRSA / Pod Identity: enables IAM database authentication
+  highAvailability: true          # multiAz
+  publicAccess: false             # publiclyAccessible
+  snapshotRetentionDays: 7        # backupRetentionPeriod
+  maintenanceWindow:
+    day: sun
+    hour: 3
+  parameters:                     # companion ParameterGroup
+    max_connections: "200"
+  network:
+    subnetGroupName: my-db-subnets
+    securityGroupIds:
+      - sg-0123456789abcdef0
+  deletionPolicy: Delete          # Delete | Orphan — Orphan keeps the instance
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws             # the flag: picks the backend (aws | gcp | azure | cnpg)

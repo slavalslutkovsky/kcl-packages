@@ -1,0 +1,28 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Identity
+metadata:
+  namespace: default
+  name: ci-deployer
+spec:
+  displayName: CI deployer for the web app
+  trust:                              # who may assume the role (AWS requires at least one entry)
+    services: [ec2.amazonaws.com]     # service principals -> sts:AssumeRole
+    identities:                       # principal ARNs -> sts:AssumeRole
+      - arn:aws:iam::111122223333:role/admin
+    federated:                        # OIDC -> sts:AssumeRoleWithWebIdentity
+      issuer: arn:aws:iam::111122223333:oidc-provider/token.actions.githubusercontent.com
+      subjects: ["repo:my-org/my-repo:ref:refs/heads/main"]
+      audiences: [sts.amazonaws.com]
+  accessPolicies:                     # managed policy attachments
+    - role: AmazonS3ReadOnlyAccess    # name -> arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+    - role: arn:aws:iam::111122223333:policy/deploy-web
+  inlinePolicy: |                     # AWS-only: scoped/conditional access as an inline policy
+    {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::my-artifacts/*"}]}
+  permissionsBoundary: arn:aws:iam::111122223333:policy/boundary   # upper bound on the grants
+  deletionPolicy: Delete              # Delete | Orphan — Orphan keeps the role and its grants
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws                 # the flag: picks the backend (aws | gcp | azure)

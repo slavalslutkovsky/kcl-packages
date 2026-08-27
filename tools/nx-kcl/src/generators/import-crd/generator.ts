@@ -45,13 +45,16 @@ function parseServices(opt?: string): string[] {
   return services;
 }
 
-/** Upjet CRD filenames: `<group>.<cloud>.upbound.io_*` (cluster) and
- * `<group>.<cloud>.m.upbound.io_*` (namespaced v2). */
+/** Crossplane v2 namespaced CRDs carry an `.m.` label in their API group:
+ * `<group>.<cloud>.m.upbound.io` (upjet families), `helm.m.crossplane.io`,
+ * `kubernetes.m.crossplane.io`. v1 cluster-scoped CRDs have no such label. */
+const NAMESPACED_GROUP_RE = /\.m\.[a-z0-9-]+\.[a-z0-9-]+$/;
+
 function matchesScope(file: string, scope: 'cluster' | 'namespaced'): boolean {
-  const namespaced = file.includes('.m.upbound.io_');
-  return scope === 'namespaced'
-    ? namespaced
-    : file.includes('.upbound.io_') && !namespaced;
+  // Upjet ships one file per CRD, named `<group>_<plural>.yaml`.
+  const group = file.replace(/_.*$/, '');
+  const namespaced = NAMESPACED_GROUP_RE.test(group);
+  return scope === 'namespaced' ? namespaced : !namespaced;
 }
 
 function matchesService(file: string, services: string[]): boolean {
@@ -156,10 +159,12 @@ function extractImageCrds(
   }
 
   // Filter to CRDs + the requested scope (+ services) and split one file each.
+  // Same `.m.` group marker as matchesScope, expressed for yq.
+  const nsTest = 'test("\\.m\\.[a-z0-9-]+\\.[a-z0-9-]+$")';
   const scopeExpr =
     scope === 'namespaced'
-      ? 'select(.metadata.name | test("\\.m\\.upbound\\.io$"))'
-      : 'select(.metadata.name | test("\\.m\\.upbound\\.io$") | not)';
+      ? `select(.metadata.name | ${nsTest})`
+      : `select(.metadata.name | ${nsTest} | not)`;
   let select = `select(.kind=="CustomResourceDefinition") | ${scopeExpr}`;
   if (services.length > 0) {
     const svc = services.map((s) => `(.spec.group | test("^${s}\\."))`).join(' or ');

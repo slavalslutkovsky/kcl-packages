@@ -1,0 +1,23 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: KubernetesCluster
+metadata:
+  namespace: default
+  name: web-cluster
+spec:
+  region: westeurope
+  resourceGroup: platform-rg         # Resource Group the cluster lives in
+  version: "1.32"
+  nodeCount: 2
+  autoscaling:                       # AKS enableAutoScaling + minCount/maxCount
+    min: 2
+    max: 5
+  nodeSize: medium                   # -> Standard_D2s_v5
+  network:
+    subnets: [/subscriptions/0b1f6471-1bf0-4dda-aec3-111122223333/resourceGroups/platform-rg/providers/Microsoft.Network/virtualNetworks/platform-vnet/subnets/aks]
+  deletionPolicy: Delete
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure

@@ -45,7 +45,7 @@ assert (not _explicit) or _hasValues, "values file not found: '${_valuesPath}' (
 
 # `-D env=<name>` selects an overlay next to the base: <stem>.<env>.yaml.
 _env = option("env", default="")
-_overlayPath = _valuesPath[0:len(_valuesPath) - 5] + ".${_env}.yaml" if _env else ""
+_overlayPath = _valuesPath[0:len(_valuesPath) - 5:] + ".${_env}.yaml" if _env else ""
 _hasOverlay = _env and file.exists(_overlayPath)
 assert (not _env) or _hasOverlay, "env overlay not found: '${_overlayPath}' for -D env=${_env} (relative to ${file.workdir()})."
 

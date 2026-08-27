@@ -1,0 +1,30 @@
+# Crossplane providers the Bucket Compositions render against. Install only the
+# ones whose backends you intend to use; each Composition references exactly one.
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-providers`) — keep them in step, or the
+# rendered manifests can reference fields the installed provider does not have.
+#
+# The `rustfs` backend needs no provider of its own: it drives an in-cluster,
+# S3-compatible server through provider-aws-s3 with a ProviderConfig whose
+# endpoint points at that server (see providerconfigs.yaml).
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-s3
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-s3:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-storage
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-storage
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-storage:v2.6.0

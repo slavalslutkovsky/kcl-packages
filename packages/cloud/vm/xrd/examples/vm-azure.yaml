@@ -1,0 +1,28 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: VirtualMachine
+metadata:
+  namespace: default
+  name: build-agent
+spec:
+  region: westeurope
+  resourceGroup: platform-rg         # Resource Group for the VM, NIC and public IP
+  size: medium                       # -> Standard_D2s_v5
+  image: ubuntu-24-04                # -> Canonical ubuntu-24_04-lts server
+  diskGb: 50
+  spot: true                         # priority=Spot, evictionPolicy=Deallocate
+  network:
+    subnetId: /subscriptions/0b1f6471-1bf0-4dda-aec3-111122223333/resourceGroups/platform-rg/providers/Microsoft.Network/virtualNetworks/platform-vnet/subnets/vms
+    publicIp: true                   # composes a PublicIP
+  sshKey:                            # REQUIRED on Azure (Linux VMs disable passwords)
+    user: dev
+    publicKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample build-agent
+  userData: |
+    #!/bin/sh
+    echo hello > /etc/motd
+  deletionPolicy: Delete
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure

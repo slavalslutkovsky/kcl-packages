@@ -1,0 +1,251 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: postgresinstances.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: PostgresInstance
+    plural: postgresinstances
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable PostgreSQL instance. Every field below is a COMMON
+                parameter mapped onto each backend's native resources (AWS RDS
+                Instance + ParameterGroup, GCP Cloud SQL DatabaseInstance +
+                Database + User, Azure Flexible Server + Database +
+                Configuration, in-cluster CloudNativePG Cluster). Fields a
+                backend cannot express are documented as ignored rather than
+                silently dropped.
+              properties:
+                region:
+                  type: string
+                  description: Cloud region for the instance (RDS region / Cloud SQL region / Azure location). Ignored by the in-cluster backend, which runs where the XR lives.
+                engineVersion:
+                  type: string
+                  default: "16"
+                  description: 'PostgreSQL major version, e.g. "16". AWS engineVersion / GCP POSTGRES_16 / Azure version / in-cluster image tag (minor tracks the latest published image).'
+                memoryGb:
+                  type: number
+                  default: 2
+                  minimum: 1
+                  description: Instance memory in GiB. AWS and Azure pick the smallest machine that fits (override with instanceClass); GCP derives a db-custom tier; in-cluster becomes the container memory request/limit.
+                instanceClass:
+                  type: string
+                  description: Escape hatch — an explicit machine class in the backend's native spelling (AWS db.m7g.large, GCP db-custom-2-8192, Azure GP_Standard_D2s_v3) that overrides the memoryGb mapping. Ignored in-cluster, which sizes from memoryGb.
+                storageGb:
+                  type: integer
+                  default: 20
+                  minimum: 1
+                  description: Storage in GiB. AWS allocatedStorage; GCP diskSize; Azure rounds UP to the nearest supported storageMb step (min 32 GiB); in-cluster PVC size.
+                database:
+                  type: string
+                  default: app
+                  description: Initial database. AWS dbName; GCP a companion Database MR; Azure a companion FlexibleServerDatabase MR; in-cluster initdb database.
+                username:
+                  type: string
+                  default: app
+                  description: Owner/admin user of the initial database. AWS master username; GCP a companion User MR (see passwordSecret); Azure administratorLogin; in-cluster initdb owner.
+                passwordSecret:
+                  type: object
+                  description: |
+                    Existing Secret in this namespace holding the password for
+                    `username`. When set, AWS/Azure read it and GCP creates its
+                    User from it; the in-cluster backend uses the Secret itself
+                    (which must be kubernetes.io/basic-auth with username and
+                    password keys — key is ignored there). When unset, AWS,
+                    Azure and the in-cluster operator auto-generate a password
+                    and publish it (see status.authSecret); GCP cannot generate
+                    one server-side, so no User is created and credentials must
+                    be managed out of band (e.g. IAM database authentication).
+                  properties:
+                    name:
+                      type: string
+                      description: Secret name.
+                    key:
+                      type: string
+                      default: password
+                      description: Key within the Secret that holds the password.
+                  required: [name]
+                workloadIdentity:
+                  type: object
+                  description: |
+                    Passwordless, cloud-IAM database authentication for org
+                    workloads (GKE Workload Identity, EKS IRSA / Pod Identity,
+                    AKS Workload Identity). Presence enables the backend's IAM
+                    auth mode; `enabled: false` keeps the block but switches it
+                    off. GCP turns on the cloudsql.iam_authentication flag and
+                    admits `principal` as an IAM database user; AWS enables
+                    iamDatabaseAuthenticationEnabled (the in-database GRANT
+                    rds_iam and the rds-db:connect IAM policy are out of band,
+                    so principal is ignored there); Azure enables Entra ID
+                    authentication and makes the principal the server's Entra
+                    administrator. Ignored in-cluster, which has no cloud IAM —
+                    password authentication stays enabled everywhere so
+                    existing credentials keep working.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                      description: Set false to keep the block without enabling IAM authentication.
+                    principal:
+                      type: string
+                      description: 'Identity admitted as a database principal. GCP: an IAM service-account email (…@….iam.gserviceaccount.com, admitted as CLOUD_IAM_SERVICE_ACCOUNT with the .gserviceaccount.com suffix stripped, per Cloud SQL convention) or a user email (CLOUD_IAM_USER). Azure: the Entra display name, paired with principalId/tenantId. AWS: ignored.'
+                    principalId:
+                      type: string
+                      description: Azure-only — Entra object id of the principal. REQUIRED by the azure backend when workload identity is enabled.
+                    tenantId:
+                      type: string
+                      description: Azure-only — Entra tenant id. REQUIRED by the azure backend when workload identity is enabled.
+                    principalType:
+                      type: string
+                      enum: [ServicePrincipal, User, Group]
+                      default: ServicePrincipal
+                      description: Azure-only — kind of Entra principal.
+                highAvailability:
+                  type: boolean
+                  default: false
+                  description: Run a failover-capable topology. AWS multiAz; GCP availabilityType REGIONAL; Azure zone-redundant HA; in-cluster at least one streaming standby.
+                replicas:
+                  type: integer
+                  default: 0
+                  minimum: 0
+                  maximum: 5
+                  description: In-cluster only — streaming standby replicas (CNPG instances = replicas + 1). The managed backends ignore it; cloud read replicas are separate resources outside this XR's scope.
+                publicAccess:
+                  type: boolean
+                  default: false
+                  description: Expose a public endpoint. AWS publiclyAccessible; GCP ipv4Enabled (forced on when no private network is given, Cloud SQL needs at least one interface); Azure publicNetworkAccessEnabled. Ignored in-cluster (ClusterIP services only).
+                snapshotRetentionDays:
+                  type: integer
+                  default: 7
+                  minimum: 0
+                  maximum: 35
+                  description: Days of automatic backups to keep; 0 disables them. AWS backupRetentionPeriod; GCP retainedBackups (COUNT); Azure backupRetentionDays clamped to its 7–35 range. Ignored in-cluster, where backups need an object store this XR does not manage.
+                maintenanceWindow:
+                  type: object
+                  description: Weekly window for provider-driven maintenance. Ignored in-cluster.
+                  properties:
+                    day:
+                      type: string
+                      enum: [mon, tue, wed, thu, fri, sat, sun]
+                      description: Day the window opens.
+                    hour:
+                      type: integer
+                      minimum: 0
+                      maximum: 23
+                      description: UTC hour the window opens; AWS gets a two-hour window, GCP and Azure take the start hour.
+                  required: [day, hour]
+                parameters:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: PostgreSQL config overrides (e.g. max_connections). AWS creates a companion ParameterGroup; GCP databaseFlags; Azure one FlexibleServerConfiguration per entry; in-cluster postgresql.parameters.
+                network:
+                  type: object
+                  description: Where the instance attaches. Each field targets one cloud; the in-cluster backend needs none of them.
+                  properties:
+                    id:
+                      type: string
+                      description: GCP VPC network for a private IP (self link, e.g. projects/p/global/networks/n).
+                    subnetGroupName:
+                      type: string
+                      description: AWS DB subnet group the instance is placed in.
+                    securityGroupIds:
+                      type: array
+                      items: {type: string}
+                      description: AWS VPC security groups attached to the instance.
+                    delegatedSubnetId:
+                      type: string
+                      description: Azure delegated subnet for VNet integration (requires privateDnsZoneId).
+                    privateDnsZoneId:
+                      type: string
+                      description: Azure private DNS zone for the server's records.
+                resourceGroup:
+                  type: string
+                  description: Azure-only — resource group the server is created in. REQUIRED by the azure backend, ignored everywhere else.
+                encryptionKmsKeyId:
+                  type: string
+                  description: CMEK for at-rest encryption. AWS kmsKeyId (storage is always encrypted); GCP encryptionKeyName. Ignored on Azure (its CMK needs a user-assigned identity beyond this XR) and in-cluster.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the backing resources when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them). Ignored in-cluster, where the Cluster's lifetime follows the XR.
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS tags / GCP userLabels / Azure tags / in-cluster inherited labels.
+              required:
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the backing instance reports an endpoint.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp | azure | cnpg).
+                host:
+                  type: string
+                  description: Primary (write) hostname.
+                port:
+                  type: integer
+                  description: Primary port.
+                endpoint:
+                  type: string
+                  description: host:port for the primary.
+                readEndpoint:
+                  type: string
+                  description: host:port for reads; equals endpoint when there is no separate read service.
+                url:
+                  type: string
+                  description: Connection URI (postgresql://host:port/database, no credentials).
+                database:
+                  type: string
+                  description: Initial database name actually configured.
+                username:
+                  type: string
+                  description: Admin/owner username actually configured.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the instance.
+                version:
+                  type: string
+                  description: Engine version actually running.
+                authSecret:
+                  type: string
+                  description: Name of the Secret in this namespace holding the password for status.username, when one is managed.
+                authSecretKey:
+                  type: string
+                  description: Key within authSecret that holds the password. Each backend names it differently, so read it from here rather than hard-coding.
+                arn:
+                  type: string
+                  description: AWS ARN (AWS only).
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: ENDPOINT
+          type: string
+          jsonPath: .status.endpoint
+        - name: DATABASE
+          type: string
+          jsonPath: .status.database

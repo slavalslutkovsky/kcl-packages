@@ -1,0 +1,24 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: KubernetesCluster
+metadata:
+  namespace: default
+  name: web-cluster
+spec:
+  region: us-central1
+  version: "1.32"
+  nodeCount: 2
+  autoscaling:                       # GKE NodePool autoscaling
+    min: 2
+    max: 5
+  nodeSize: medium                   # -> e2-standard-2
+  spot: true                         # GKE nodeConfig.spot
+  network:                           # optional: default network when omitted
+    id: projects/my-project/global/networks/default
+    subnets: [projects/my-project/regions/us-central1/subnetworks/default]
+  deletionPolicy: Delete
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp

@@ -1,0 +1,36 @@
+# Crossplane providers the Identity Compositions render against. Install only
+# the ones whose backends you intend to use; each Composition references
+# exactly one cloud (azure needs both azure providers below).
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-iam-providers`) — keep them in step, or the
+# rendered manifests can reference fields the installed provider does not have.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-iam
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-cloudplatform
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-cloudplatform:v2.6.0
+---
+# The azure backend composes resources from two provider families: the identity
+# itself (managedidentity) and its role assignments (authorization).
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-managedidentity
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-managedidentity:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-authorization
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-authorization:v2.6.0

@@ -1,0 +1,34 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: RedisInstance
+metadata:
+  namespace: default
+  name: my-cache
+spec:
+  region: us-east-1
+  engineVersion: "7.0"           # AWS engineVersion (default 7.0)
+  memoryGb: 6                    # smallest node type that fits -> cache.m7g.large
+  # nodeType: cache.r7g.large    # AWS-only override of the memoryGb mapping
+  replicas: 2                    # read replicas -> numCacheClusters 3
+  highAvailability: true         # multiAzEnabled + automaticFailoverEnabled
+  authEnabled: true              # auto-generated auth token (needs transitEncryption)
+  transitEncryption: true
+  atRestEncryption: true
+  encryptionKmsKeyId: arn:aws:kms:us-east-1:111122223333:key/abcd-ef  # optional CMEK
+  persistence: true
+  snapshotRetentionDays: 7
+  deletionPolicy: Delete         # Delete | Orphan — Orphan keeps the replication group
+  maintenanceWindow:
+    day: sun
+    hour: 5                      # -> sun:05:00-sun:07:00
+  parameters:                    # companion ElastiCache ParameterGroup
+    maxmemory-policy: volatile-lru
+  network:
+    subnetGroupName: my-cache-subnets
+    securityGroupIds: [sg-0123456789abcdef0]
+  tags:
+    team: platform
+    cost-center: "42"
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws            # the flag: picks the backend (aws | gcp | valkey)

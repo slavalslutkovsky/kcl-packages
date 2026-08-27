@@ -1,0 +1,24 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Identity
+metadata:
+  namespace: default
+  name: ci-deployer
+spec:
+  displayName: CI deployer for the web app
+  trust:
+    identities:                       # IAM members granted roles/iam.serviceAccountTokenCreator
+      - user:alice@example.com
+      # GKE / federated workloads are IAM members too:
+      - principal://iam.googleapis.com/projects/1234/locations/global/workloadIdentityPools/my-pool/subject/repo:my-org/my-repo
+  accessPolicies:                     # one ProjectIAMMember per grant
+    - role: roles/storage.objectViewer
+    - role: roles/storage.objectAdmin
+      scope: my-other-project         # project id; defaults to the ProviderConfig project
+      condition:                      # conditional (attribute-based) access
+        title: artifacts-only
+        expression: resource.name.startsWith("projects/_/buckets/my-artifacts")
+  deletionPolicy: Delete              # Delete | Orphan — Orphan keeps the service account and its grants
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp                 # the flag: picks the backend (aws | gcp | azure)

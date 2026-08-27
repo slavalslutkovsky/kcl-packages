@@ -1,0 +1,20 @@
+# devkit configuration — see `devkit config` for the effective merged values.
+#
+# This repo only needs devkit for one thing: a throwaway Kind cluster to run the
+# Crossplane end-to-end tests against (`just e2e`). Everything devkit can do for
+# app monorepos (compose, secrets, gitops, observability) is unused here, so the
+# app/overlay/database sections are deliberately left at their defaults.
+#
+# The Kind topology itself comes from this repo's own `packages/cluster` KCL
+# package, published to OCI — devkit renders it with `kcl run <pkg> --tag <tag>`.
+# Keep `kcl_tag` in step with the released version of that package.
+
+[cluster]
+name = "kcl-e2e"    # dedicated name: `just e2e-down` must never touch another cluster
+workers = 1         # control-plane + one worker is enough for crossplane + valkey
+db_workers = 0      # no tainted database nodes; nothing here schedules onto them
+ingress = false     # nothing needs host ports 80/443, and binding them often conflicts
+kcl_package = "oci://docker.io/yurikrupnik/cluster"
+kcl_tag = "0.0.6"
+
+#[deps]

@@ -1,0 +1,31 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: RedisInstance
+metadata:
+  namespace: default
+  name: my-gcp-cache
+spec:
+  region: us-central1
+  engineVersion: "7.0"           # -> Memorystore REDIS_7_0
+  memoryGb: 4                    # memorySizeGb verbatim
+  replicas: 1                    # implies the STANDARD_HA tier
+  highAvailability: true         # tier STANDARD_HA
+  authEnabled: true              # AUTH string published to the connection Secret
+  transitEncryption: true        # transitEncryptionMode SERVER_AUTHENTICATION
+  encryptionKmsKeyId: projects/p/locations/us-central1/keyRings/r/cryptoKeys/k  # optional CMEK
+  persistence: true              # persistenceConfig RDB
+  snapshotRetentionDays: 1       # -> SIX_HOURS RDB snapshot period
+  deletionPolicy: Orphan         # Delete | Orphan — Orphan keeps the instance
+  maintenanceWindow:
+    day: sun
+    hour: 3
+  parameters:                    # redisConfigs
+    maxmemory-policy: allkeys-lru
+  network:
+    id: projects/my-project/global/networks/default
+    reservedIpRange: 10.1.0.0/29
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp            # the flag: picks the backend (aws | gcp | valkey)
