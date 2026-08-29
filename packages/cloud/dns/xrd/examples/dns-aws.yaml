@@ -1,0 +1,28 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: DnsZone
+metadata:
+  namespace: default
+  name: example-zone
+spec:
+  region: us-east-1               # Route53 is global; upjet still calls through a region
+  domain: example.com
+  records:
+    - name: "@"                   # apex
+      type: TXT
+      values: ["v=spf1 include:amazonses.com ~all"]
+    - name: api
+      type: A
+      ttl: 60
+      values: ["203.0.113.10", "203.0.113.11"]
+    # An EmailDomain's status.dnsRecords rows drop straight in — join the MX
+    # priority into the value and strip the domain suffix off the name.
+    - name: bounce.mail
+      type: MX
+      values: ["10 feedback-smtp.us-east-1.amazonses.com"]
+  deletionPolicy: Delete          # Orphan keeps the hosted zone and records
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws             # the flag: picks the backend (aws | gcp)

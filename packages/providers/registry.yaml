@@ -1,0 +1,412 @@
+# registry.yaml — the single source of truth for every cloud provider this
+# repo supports.
+#
+# One row per schema package under packages/providers/. Each row says where the
+# CRDs come from (an OCI provider image, or a GitHub repo for operator CRDs),
+# what gets installed into a cluster, and which cloud modules
+# (packages/cloud/<module>) consume it.
+#
+# Consumed by the justfile:
+#   just providers                 list the registry
+#   just seed [module|all|<name>]  (re)generate the schema packages from it
+#   just providers-check           fail on drift between this file, the
+#                                  generated packages, and the per-module
+#                                  xrd/providers.yaml manifests
+#
+# Fields
+#   name      schema package directory under packages/providers/
+#   cloud     aws | gcp | azure | kubernetes (in-cluster, no cloud account)
+#   service   --service filter passed to nx-kcl:import-crd ("" = every CRD)
+#   image     provider OCI image WITHOUT the tag (image-sourced rows)
+#   tag       image tag — this is the version the schemas were generated from
+#   repo      owner/repo of an operator's git repo (repo-sourced rows)
+#   ref       git ref for `repo`
+#   crdPath   directory of CRD YAMLs inside `repo`
+#   scope     apiScope passed to the generator (default: namespaced)
+#   install   package ref installed as a pkg.crossplane.io Provider.
+#             Omitted  -> "<image>:<tag>". "none" -> nothing is installed
+#             (the CRDs come from an operator, not a Crossplane provider).
+#   modules   cloud modules whose Compositions render against it; [] means the
+#             schemas are generated and available but not wired into an XRD yet
+#   notes     why this row looks the way it does
+version: 1
+
+providers:
+  # ── aws ─────────────────────────────────────────────────────────────────────
+  - name: aws-apigatewayv2
+    cloud: aws
+    service: apigatewayv2
+    image: ghcr.io/crossplane-contrib/provider-aws-apigatewayv2
+    tag: v2.6.0
+    modules: [apigateway]
+
+  - name: aws-codebuild
+    cloud: aws
+    service: codebuild
+    image: ghcr.io/crossplane-contrib/provider-aws-codebuild
+    tag: v2.6.0
+    modules: []
+
+  - name: aws-ec2
+    cloud: aws
+    service: ec2
+    image: ghcr.io/crossplane-contrib/provider-aws-ec2
+    tag: v2.6.0
+    modules: [vm]
+
+  - name: aws-ecr
+    cloud: aws
+    service: ecr
+    image: ghcr.io/crossplane-contrib/provider-aws-ecr
+    tag: v2.6.0
+    modules: [registry]
+    notes: >-
+      The registry Composition uses the per-repository resources only
+      (Repository, LifecyclePolicy, RepositoryPolicy). The account-wide ones
+      this family also ships (RegistryScanningConfiguration,
+      ReplicationConfiguration) are deliberately not composed: one XR would
+      silently overwrite every other XR's settings.
+
+  - name: aws-eks
+    cloud: aws
+    service: eks
+    image: ghcr.io/crossplane-contrib/provider-aws-eks
+    tag: v2.6.0
+    modules: [cluster]
+
+  - name: aws-elasticache
+    cloud: aws
+    service: elasticache
+    image: ghcr.io/crossplane-contrib/provider-aws-elasticache
+    tag: v2.6.0
+    modules: [redis]
+
+  - name: aws-iam
+    cloud: aws
+    service: iam
+    image: ghcr.io/crossplane-contrib/provider-aws-iam
+    tag: v2.6.0
+    modules: [cluster, iam, serverless, workload-identity]
+    notes: >-
+      Shared: EKS clusters cannot exist without their IAM roles, and Lambda
+      needs an execution role, so cluster and serverless compose IAM too.
+
+  - name: aws-kms
+    cloud: aws
+    service: kms
+    image: ghcr.io/crossplane-contrib/provider-aws-kms
+    tag: v2.6.0
+    modules: [kms]
+
+  - name: aws-lambda
+    cloud: aws
+    service: lambda
+    image: ghcr.io/crossplane-contrib/provider-aws-lambda
+    tag: v2.6.0
+    modules: [serverless]
+
+  - name: aws-rds
+    cloud: aws
+    service: rds
+    image: ghcr.io/crossplane-contrib/provider-aws-rds
+    tag: v2.6.0
+    modules: [postgres]
+
+  - name: aws-route53
+    cloud: aws
+    service: route53
+    image: ghcr.io/crossplane-contrib/provider-aws-route53
+    tag: v2.6.0
+    modules: [dns]
+    notes: >-
+      DNS is global on AWS, but upjet still routes calls through a region, so
+      the dns XRD keeps `region` required.
+
+  - name: aws-s3
+    cloud: aws
+    service: s3
+    image: ghcr.io/crossplane-contrib/provider-aws-s3
+    tag: v2.6.0
+    modules: [bucket]
+    notes: >-
+      Also backs the rustfs bucket backend: an in-cluster S3-compatible server
+      driven through this provider with an endpoint-overriding ProviderConfig.
+
+  - name: aws-sesv2
+    cloud: aws
+    service: sesv2
+    image: ghcr.io/crossplane-contrib/provider-aws-sesv2
+    tag: v2.6.0
+    install: xpkg.crossplane.io/crossplane-contrib/provider-aws-sesv2:v2.6.0
+    modules: [email]
+    notes: >-
+      Installed from xpkg.crossplane.io, not ghcr.io: its provider-family-aws
+      dependency is declared against xpkg, and rbac-manager only shares family
+      RBAC between packages from the same registry/org
+      (crossplane/crossplane#6320). From ghcr.io the provider never gets the
+      family (Cluster)ProviderConfig CRDs and every SESv2 MR sits with no
+      status conditions at all. The schemas are identical either way.
+
+  - name: aws-sqs
+    cloud: aws
+    service: sqs
+    image: ghcr.io/crossplane-contrib/provider-aws-sqs
+    tag: v2.6.0
+    modules: [queue]
+
+  # ── gcp ─────────────────────────────────────────────────────────────────────
+  - name: gcp-apigee
+    cloud: gcp
+    service: apigee
+    image: ghcr.io/crossplane-contrib/provider-gcp-apigee
+    tag: v2.6.0
+    modules: [apigateway]
+    notes: >-
+      The apigateway Composition composes the per-API slice only (Environment,
+      Envgroup, EnvgroupAttachment, TargetServer, and the InstanceAttachment
+      when an instance is named). Organization and Instance are deliberately
+      not composed: both are project-wide singletons (one org per project, a
+      regional paid runtime per org), so one XR would fight every other XR in
+      the project over the same external-name. This family ships no APIProxy
+      resource either, so the proxy bundle that binds a path to the composed
+      TargetServer is deployed out of band.
+
+  - name: gcp-artifact
+    cloud: gcp
+    service: artifact
+    image: ghcr.io/crossplane-contrib/provider-gcp-artifact
+    tag: v2.6.0
+    modules: [registry]
+    notes: >-
+      Artifact Registry ships in the `artifact` family (CRD group
+      artifact.gcp.m.upbound.io, kind RegistryRepository) — there is no
+      provider-gcp-artifactregistry image.
+
+  - name: gcp-cloudbuild
+    cloud: gcp
+    service: cloudbuild
+    image: ghcr.io/crossplane-contrib/provider-gcp-cloudbuild
+    tag: v2.6.0
+    modules: []
+
+  - name: gcp-cloudplatform
+    cloud: gcp
+    service: cloudplatform
+    image: ghcr.io/crossplane-contrib/provider-gcp-cloudplatform
+    tag: v2.6.0
+    modules: [iam, workload-identity]
+    notes: >-
+      GCP has no standalone iam provider — service accounts and IAM members
+      live in cloudplatform.
+
+  - name: gcp-cloudrun
+    cloud: gcp
+    service: cloudrun
+    image: ghcr.io/crossplane-contrib/provider-gcp-cloudrun
+    tag: v2.6.0
+    modules: [serverless]
+
+  - name: gcp-compute
+    cloud: gcp
+    service: compute
+    image: ghcr.io/crossplane-contrib/provider-gcp-compute
+    tag: v2.6.0
+    modules: [vm]
+
+  - name: gcp-container
+    cloud: gcp
+    service: container
+    image: ghcr.io/crossplane-contrib/provider-gcp-container
+    tag: v2.6.0
+    modules: [cluster]
+
+  - name: gcp-dns
+    cloud: gcp
+    service: dns
+    image: ghcr.io/crossplane-contrib/provider-gcp-dns
+    tag: v2.6.0
+    modules: [dns]
+
+  - name: gcp-kms
+    cloud: gcp
+    service: kms
+    image: ghcr.io/crossplane-contrib/provider-gcp-kms
+    tag: v2.6.0
+    modules: [kms]
+
+  - name: gcp-pubsub
+    cloud: gcp
+    service: pubsub
+    image: ghcr.io/crossplane-contrib/provider-gcp-pubsub
+    tag: v2.6.0
+    modules: [queue]
+
+  - name: gcp-redis
+    cloud: gcp
+    service: redis
+    image: ghcr.io/crossplane-contrib/provider-gcp-redis
+    tag: v2.6.0
+    modules: [redis]
+
+  - name: gcp-sql
+    cloud: gcp
+    service: sql
+    image: ghcr.io/crossplane-contrib/provider-gcp-sql
+    tag: v2.6.0
+    modules: [postgres]
+
+  - name: gcp-storage
+    cloud: gcp
+    service: storage
+    image: ghcr.io/crossplane-contrib/provider-gcp-storage
+    tag: v2.6.0
+    modules: [bucket]
+
+  # ── azure ───────────────────────────────────────────────────────────────────
+  - name: azure-apimanagement
+    cloud: azure
+    service: apimanagement
+    image: ghcr.io/crossplane-contrib/provider-azure-apimanagement
+    tag: v2.6.0
+    modules: [apigateway]
+
+  - name: azure-authorization
+    cloud: azure
+    service: authorization
+    image: ghcr.io/crossplane-contrib/provider-azure-authorization
+    tag: v2.6.0
+    modules: [iam, workload-identity]
+    notes: >-
+      Azure splits the identity (managedidentity) from its role assignments
+      (authorization), so the iam Composition needs both.
+
+  - name: azure-compute
+    cloud: azure
+    service: compute
+    image: ghcr.io/crossplane-contrib/provider-azure-compute
+    tag: v2.6.0
+    modules: [vm]
+
+  - name: azure-containerapp
+    cloud: azure
+    service: containerapp
+    image: ghcr.io/crossplane-contrib/provider-azure-containerapp
+    tag: v2.6.0
+    modules: [serverless]
+
+  - name: azure-containerregistry
+    cloud: azure
+    service: containerregistry
+    image: ghcr.io/crossplane-contrib/provider-azure-containerregistry
+    tag: v2.6.0
+    modules: [registry]
+
+  - name: azure-containerservice
+    cloud: azure
+    service: containerservice
+    image: ghcr.io/crossplane-contrib/provider-azure-containerservice
+    tag: v2.6.0
+    modules: [cluster]
+
+  - name: azure-dbforpostgresql
+    cloud: azure
+    service: dbforpostgresql
+    image: ghcr.io/crossplane-contrib/provider-azure-dbforpostgresql
+    tag: v2.6.0
+    modules: [postgres]
+
+  - name: azure-keyvault
+    cloud: azure
+    service: keyvault
+    image: ghcr.io/crossplane-contrib/provider-azure-keyvault
+    tag: v2.6.0
+    modules: [kms]
+    notes: >-
+      Key Vault is both the KMS and its container: the kms Composition creates
+      a Vault per EncryptionKey and the Key inside it, with RBAC authorization
+      (the provider identity needs "Key Vault Crypto Officer").
+
+  - name: azure-managedidentity
+    cloud: azure
+    service: managedidentity
+    image: ghcr.io/crossplane-contrib/provider-azure-managedidentity
+    tag: v2.6.0
+    modules: [iam, workload-identity]
+
+  - name: azure-network
+    cloud: azure
+    service: network
+    image: ghcr.io/crossplane-contrib/provider-azure-network
+    tag: v2.6.0
+    modules: [vm]
+    notes: The VM's NIC and public IP live in the network family, not compute.
+
+  - name: azure-storage
+    cloud: azure
+    service: storage
+    image: ghcr.io/crossplane-contrib/provider-azure-storage
+    tag: v2.6.0
+    modules: [bucket]
+
+  # ── kubernetes (in-cluster backends) ────────────────────────────────────────
+  - name: helm
+    cloud: kubernetes
+    service: helm
+    image: ghcr.io/crossplane-contrib/provider-helm
+    tag: v1.3.0
+    modules: [email, kms, postgres, redis, registry]
+    notes: >-
+      Must be v1.x — the first line that ships the namespaced
+      helm.m.crossplane.io CRDs the Compositions render. Backs the stalwart
+      (email), valkey (redis) and zot (registry) charts, installs the
+      CloudNativePG operator for the cnpg postgres backend, and installs the
+      OpenBao server the openbao kms backend keys live in. Its manifests in
+      xrd/providers.yaml carry the extra ServiceAccount / ClusterRoleBinding /
+      DeploymentRuntimeConfig the chart installs need.
+
+  - name: vault
+    cloud: kubernetes
+    service: vault,transit
+    image: xpkg.upbound.io/upbound/provider-vault
+    tag: v4.0.3
+    modules: [kms]
+    notes: >-
+      The only Crossplane provider for the Vault/OpenBao API, and it is
+      upbound's, not crossplane-contrib's — hence xpkg.upbound.io. v4.x is the
+      first line with namespaced *.vault.m.upbound.io CRDs; the kms Composition
+      renders Mount (the transit engine) and transit SecretBackendKey (the
+      key). It manages keys in an OpenBao that already exists: the server,
+      its `operator init` and its unseal are prerequisites, exactly like the
+      cnpg operator (see kms/xrd/providerconfigs.yaml). `kcl import` buckets
+      the v1alpha1 schemas under models/unknown/.
+
+  - name: cnpg
+    cloud: kubernetes
+    service: postgresql
+    repo: cloudnative-pg/cloudnative-pg
+    ref: v1.27.1
+    crdPath: config/crd/bases
+    scope: cluster
+    install: none
+    modules: [postgres]
+    notes: >-
+      Operator CRDs, not a Crossplane provider: the cnpg backend composes a
+      postgresql.cnpg.io/v1 Cluster directly. The operator itself is installed
+      through provider-helm by postgres/xrd/providerconfigs.yaml — keep `ref`
+      in step with the chart version pinned there.
+
+  - name: knative
+    cloud: kubernetes
+    service: service,configuration,revision,route,domain-mapping
+    repo: knative/serving
+    ref: knative-v1.23.0
+    crdPath: config/core/300-resources
+    scope: cluster
+    install: none
+    modules: [serverless]
+    notes: >-
+      Operator CRDs, not a Crossplane provider: the knative backend composes a
+      namespaced serving.knative.dev/v1 Service directly, so the cluster must
+      have Knative Serving installed at this ref. The CRD list is explicit
+      because the other files in that directory are git symlinks into vendor/
+      (unreadable via raw.githubusercontent) or internal API groups.

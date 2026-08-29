@@ -16,7 +16,9 @@ USAGE (no local main.k / kcl.mod in your app dir — just values files):
 
 Values files are `Release`s: a `workload:` (backend/frontend) or `task:` (CLI),
 plus optional `config:` (→ ConfigMap) and `externalSecret:`. The merged result is
-validated against the typed schema — unknown/mistyped/missing fields fail the build.
+validated against the typed schema — unknown/mistyped fields fail the build.
+`image` is the only field you must supply; `name` defaults to "app" and a
+workload's `port` to 8080.
 
 Overlay model (like kustomize overlays / helm -f base -f env):
   values.yaml         base, shared across envs
@@ -45,7 +47,7 @@ assert (not _explicit) or _hasValues, "values file not found: '${_valuesPath}' (
 
 # `-D env=<name>` selects an overlay next to the base: <stem>.<env>.yaml.
 _env = option("env", default="")
-_overlayPath = _valuesPath[0:len(_valuesPath) - 5] + ".${_env}.yaml" if _env else ""
+_overlayPath = _valuesPath[0:len(_valuesPath) - 5:] + ".${_env}.yaml" if _env else ""
 _hasOverlay = _env and file.exists(_overlayPath)
 assert (not _env) or _hasOverlay, "env overlay not found: '${_overlayPath}' for -D env=${_env} (relative to ${file.workdir()})."
 

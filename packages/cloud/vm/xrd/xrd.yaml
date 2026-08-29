@@ -1,0 +1,140 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: virtualmachines.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: VirtualMachine
+    plural: virtualmachines
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable virtual machine. Every field below is a COMMON
+                parameter mapped to each cloud's native resources (AWS EC2
+                Instance + KeyPair, GCP Compute Instance, Azure
+                LinuxVirtualMachine + NetworkInterface + optional PublicIP).
+                Fields a backend cannot express make the render FAIL with a
+                clear message rather than silently changing the machine.
+              properties:
+                region:
+                  type: string
+                  description: Cloud region for the machine. GCP places it in a zone within the region (see zone).
+                zone:
+                  type: string
+                  description: GCP-only — the zone within region (e.g. us-central1-a). Defaults to "<region>-a". AWS/Azure pick availability themselves.
+                size:
+                  type: string
+                  enum: [small, medium, large, xlarge]
+                  default: small
+                  description: 'Abstract machine shape, mapped per cloud: small 2vCPU/4-8GB (t3.medium / e2-medium / Standard_B2s), medium 2/8 (m5.large / e2-standard-2 / Standard_D2s_v5), large 4/16 (m5.xlarge / e2-standard-4 / Standard_D4s_v5), xlarge 8/32 (m5.2xlarge / e2-standard-8 / Standard_D8s_v5).'
+                machineType:
+                  type: string
+                  description: Native instance/machine/VM type that overrides the size mapping.
+                image:
+                  type: string
+                  enum: [ubuntu-24-04, ubuntu-22-04, debian-12]
+                  default: ubuntu-24-04
+                  description: Abstract OS image, mapped to each cloud's image family. AWS has no account-independent image families, so the aws backend requires imageId instead and fails the render without it.
+                imageId:
+                  type: string
+                  description: 'Native image override. AWS: AMI ID (REQUIRED there). GCP: full image/family self-link. Azure: source image resource ID.'
+                diskGb:
+                  type: integer
+                  default: 30
+                  minimum: 10
+                  description: Root/OS disk size in GiB.
+                spot:
+                  type: boolean
+                  default: false
+                  description: Run on spot/preemptible capacity. AWS instanceMarketOptions=spot / GCP provisioningModel=SPOT / Azure priority=Spot with Deallocate eviction.
+                network:
+                  type: object
+                  description: Existing network to attach to.
+                  properties:
+                    subnetId:
+                      type: string
+                      description: 'Subnet for the primary interface. AWS: subnet ID (default VPC when omitted). GCP: subnetwork self-link or name (default network when omitted). Azure: full subnet resource ID, REQUIRED (the composed NIC cannot exist without it).'
+                    securityGroupIds:
+                      type: array
+                      items: {type: string}
+                      description: AWS-only — VPC security group IDs for the instance.
+                    publicIp:
+                      type: boolean
+                      default: false
+                      description: Give the machine a public address. AWS associatePublicIpAddress / GCP accessConfig / Azure a composed PublicIP.
+                sshKey:
+                  type: object
+                  description: SSH access. AWS composes a KeyPair; GCP writes metadata ssh-keys; Azure sets the admin user's key (REQUIRED there — Azure Linux VMs disable passwords).
+                  properties:
+                    user:
+                      type: string
+                      description: Login user the key is authorized for (Azure adminUsername / GCP metadata user; AWS key pairs are user-agnostic — the AMI picks the login user).
+                    publicKey:
+                      type: string
+                      description: OpenSSH public key material.
+                  required: [user, publicKey]
+                userData:
+                  type: string
+                  description: Boot script/cloud-init. AWS userData / GCP metadata startup-script / Azure customData (base64-encoded by the composition).
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the Resource Group the machine (and its NIC/PublicIP) lives in. Required by the azure backend.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the cloud machine when this resource is deleted; maps to Crossplane managementPolicies (Orphan keeps the external machine).
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS/Azure tags, GCP labels.
+              required:
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the machine is provisioned.
+                provider:
+                  type: string
+                  description: Cloud backend that fulfilled the claim (aws | gcp | azure).
+                privateIp:
+                  type: string
+                  description: Primary private IP address.
+                publicIp:
+                  type: string
+                  description: Public IP address, when requested.
+                name:
+                  type: string
+                  description: Provider-side machine name.
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the machine.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: PRIVATE-IP
+          type: string
+          jsonPath: .status.privateIp
+        - name: PUBLIC-IP
+          type: string
+          jsonPath: .status.publicIp

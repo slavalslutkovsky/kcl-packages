@@ -1,0 +1,75 @@
+# ProviderConfigs and cluster prerequisites for the Queue backends.
+#
+# Kept out of providers.yaml on purpose: these are instances of CRDs that a
+# Provider installs, so a single `kubectl apply` of both files fails with
+# `no matches for kind "ClusterProviderConfig"`. Apply this only once the
+# Providers report Healthy (`just e2e-providerconfigs` does that ordering).
+#
+# The AWS and GCP backends need real cloud credentials — add a ProviderConfig
+# of your own with `credentials.source: Secret` (or IRSA / Workload Identity)
+# before using them.
+#
+# The in-cluster (nats) backend needs a NATS server with JetStream and the
+# NACK controller, installed here as pinned Helm Releases through provider-helm.
+# Both are cluster-wide singletons serving XRs in every namespace, so they live
+# with the platform prerequisites rather than inside a per-XR Composition. The
+# Composition's status reports the server at
+# nats://nats.nats-system.svc.cluster.local:4222 — keep the namespace and
+# release name below in step with that.
+apiVersion: helm.m.crossplane.io/v1beta1
+kind: ClusterProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: InjectedIdentity
+---
+apiVersion: helm.m.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: nats
+  namespace: crossplane-system
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    namespace: nats-system
+    chart:
+      repository: https://nats-io.github.io/k8s/helm/charts
+      name: nats
+      version: 2.14.5
+    values:
+      config:
+        jetstream:
+          enabled: true
+          fileStore:
+            pvc:
+              size: 10Gi
+    wait: true
+    waitTimeout: 10m
+---
+# Chart 0.35.0 installs NACK v0.24.0 — the version the nats-jetstream schema
+# package (packages/providers/nats-jetstream) was generated from. Keep them in
+# step (`just seed-queue-providers` pins the same ref).
+apiVersion: helm.m.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: nack
+  namespace: crossplane-system
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    namespace: nats-system
+    chart:
+      repository: https://nats-io.github.io/k8s/helm/charts
+      name: nack
+      version: 0.35.0
+    values:
+      jetstream:
+        nats:
+          url: nats://nats.nats-system.svc.cluster.local:4222
+    wait: true
+    waitTimeout: 10m

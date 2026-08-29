@@ -1,0 +1,24 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: kms-aws
+  labels:
+    provider: aws
+spec:
+  compositeTypeRef:
+    apiVersion: cloud.example.org/v1alpha1
+    kind: EncryptionKey
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-kcl
+      input:
+        apiVersion: krm.kcl.dev/v1alpha1
+        kind: KCLInput
+        spec:
+          # Pin a release with ?tag=<version> once published via `nx release`.
+          source: oci://docker.io/yurikrupnik/kms-aws?tag=0.1.0
+    - step: ready
+      functionRef:
+        name: function-auto-ready

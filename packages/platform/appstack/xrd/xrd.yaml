@@ -1,0 +1,331 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: appstacks.platform.example.org
+spec:
+  scope: Namespaced
+  group: platform.example.org
+  names:
+    kind: AppStack
+    plural: appstacks
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                One deployable application group: a private network, two
+                serverless workloads (a public API and a private worker), a
+                PostgreSQL instance and a Redis cache, in one region on one
+                cloud.
+
+                Unlike the cloud.example.org capabilities, this XR composes
+                CHILD COMPOSITE RESOURCES (Network, ServerlessApp x2,
+                PostgresInstance, RedisInstance) rather than managed resources.
+                Each capability keeps owning its own cloud mapping, so nothing
+                about VPCs, Cloud Run, RDS or ElastiCache is repeated here; this
+                XRD only decides how the five are sized and wired to each other.
+
+                Wiring is done from OBSERVED child status, not from guesses: the
+                Network's subnet groups / VPC self link are handed to the data
+                services once published, and the database and cache coordinates
+                are injected into both apps' environment once published. Fields
+                a backend cannot express are documented as ignored rather than
+                silently dropped.
+              properties:
+                provider:
+                  type: string
+                  enum: [aws, gcp]
+                  description: |
+                    Backend for the whole stack. Stamped onto every child as
+                    spec.crossplane.compositionSelector.matchLabels.provider, so
+                    all five resolve to the same cloud's Composition.
+
+                    Only aws and gcp are offered even though ServerlessApp and
+                    PostgresInstance also have azure backends: there is no azure
+                    RedisInstance backend, so an azure stack could never be
+                    completed. Add the value here once that backend exists.
+                region:
+                  type: string
+                  description: Cloud region for the stack. Forwarded verbatim as spec.region to all five children, which is what keeps the apps, the database, the cache and the subnets co-located.
+                network:
+                  type: object
+                  description: Sizing of the child Network. The network itself is always created — the data services need somewhere to attach — so this block only tunes it.
+                  properties:
+                    cidr:
+                      type: string
+                      default: 10.0.0.0/16
+                      description: 'Network spec.cidr. AWS carves the VPC address space into one private and one public subnet per availability zone; GCP makes it the primary range of the single regional subnetwork.'
+                    availabilityZones:
+                      type: array
+                      items: {type: string}
+                      description: Network spec.availabilityZones, as full zone names (e.g. us-east-1a). REQUIRED by the aws Network backend, because a multi-AZ subnet group is what RDS and ElastiCache demand — an aws stack without it will not render. Ignored by GCP, whose subnetworks are regional.
+                    natGateway:
+                      type: boolean
+                      default: true
+                      description: Network spec.natGateway — outbound internet access for private workloads. AWS creates a NAT Gateway in the first public subnet; GCP creates a Cloud Router plus Cloud NAT.
+                    serviceRange:
+                      type: string
+                      description: 'Network spec.serviceRange — GCP-only CIDR reserved for private service access, i.e. where Cloud SQL private IP and Memorystore take their addresses from. Also forwarded to the cache as network.reservedIpRange once the Network publishes it. Ignored by AWS, where subnet groups play this role.'
+                api:
+                  type: object
+                  description: |
+                    The public workload: a ServerlessApp rendered with
+                    public: true, so it is reachable by unauthenticated internet
+                    traffic and its URL is published as status.apiUrl. That flag
+                    is the ONLY difference between api and worker; both get the
+                    same region, tags, deletion policy and injected database and
+                    cache coordinates.
+
+                    Injected environment variables carry non-secret coordinates
+                    plus the NAMES of the credential Secrets
+                    (DATABASE_PASSWORD_SECRET / REDIS_AUTH_SECRET and their key
+                    fields). ServerlessApp deliberately manages no secret
+                    material, so the workload reads those Secrets itself.
+                  properties:
+                    image:
+                      type: string
+                      description: ServerlessApp spec.image. AWS Lambda container images must live in ECR in the same account and region; GCP Cloud Run accepts any reachable registry.
+                    port:
+                      type: integer
+                      default: 8080
+                      minimum: 1
+                      maximum: 65535
+                      description: ServerlessApp spec.port. GCP containerPort. Ignored by AWS, whose Lambda images speak the Runtime API instead of listening on a port.
+                    cpu:
+                      type: number
+                      minimum: 0.25
+                      description: ServerlessApp spec.cpu — vCPUs per instance. GCP Cloud Run cpu limit. Ignored by AWS, which allocates CPU proportionally to memoryMb. Unset leaves the ServerlessApp default.
+                    memoryMb:
+                      type: integer
+                      minimum: 128
+                      description: ServerlessApp spec.memoryMb — memory per instance in MiB. AWS Lambda memorySize (clamped to 10240); GCP Cloud Run memory limit. Unset leaves the ServerlessApp default.
+                    minInstances:
+                      type: integer
+                      minimum: 0
+                      description: ServerlessApp spec.minInstances — instances kept warm at zero traffic. GCP scaling.minInstanceCount. Ignored by AWS (provisioned concurrency needs versions and aliases, which the ServerlessApp XR does not model).
+                    maxInstances:
+                      type: integer
+                      minimum: 1
+                      description: ServerlessApp spec.maxInstances. GCP scaling.maxInstanceCount / AWS reservedConcurrentExecutions. Unset leaves each backend's own default.
+                    timeoutSeconds:
+                      type: integer
+                      minimum: 1
+                      maximum: 3600
+                      description: ServerlessApp spec.timeoutSeconds — max duration of one request. AWS Lambda timeout (clamped to 900); GCP Cloud Run template.timeout.
+                    env:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Plain environment variables for the container. Merged UNDER the injected database and cache coordinates, so a key such as DATABASE_HOST set here is overwritten once the composed database publishes its own host — the composed resource is the live truth. Not for secrets; mount those into the workload.
+                    serviceAccount:
+                      type: string
+                      description: ServerlessApp spec.serviceAccount — runtime identity. GCP a service account email; AWS an EXISTING execution role ARN, which skips creating one.
+                  required:
+                    - image
+                worker:
+                  type: object
+                  description: |
+                    The private workload: a ServerlessApp rendered with
+                    public: false, so AWS gates its Function URL with AWS_IAM and
+                    GCP omits the allUsers run.invoker binding. Its URL is still
+                    published, as status.workerUrl, because the api typically
+                    calls it. Every other field behaves exactly as under api,
+                    including the injected coordinates and the fact that no
+                    secret material is managed here — only Secret names and keys
+                    are passed in.
+                  properties:
+                    image:
+                      type: string
+                      description: ServerlessApp spec.image. AWS Lambda container images must live in ECR in the same account and region; GCP Cloud Run accepts any reachable registry.
+                    port:
+                      type: integer
+                      default: 8080
+                      minimum: 1
+                      maximum: 65535
+                      description: ServerlessApp spec.port. GCP containerPort. Ignored by AWS, whose Lambda images speak the Runtime API instead of listening on a port.
+                    cpu:
+                      type: number
+                      minimum: 0.25
+                      description: ServerlessApp spec.cpu — vCPUs per instance. GCP Cloud Run cpu limit. Ignored by AWS, which allocates CPU proportionally to memoryMb. Unset leaves the ServerlessApp default.
+                    memoryMb:
+                      type: integer
+                      minimum: 128
+                      description: ServerlessApp spec.memoryMb — memory per instance in MiB. AWS Lambda memorySize (clamped to 10240); GCP Cloud Run memory limit. Unset leaves the ServerlessApp default.
+                    minInstances:
+                      type: integer
+                      minimum: 0
+                      description: ServerlessApp spec.minInstances — instances kept warm at zero traffic. GCP scaling.minInstanceCount. Ignored by AWS (provisioned concurrency needs versions and aliases, which the ServerlessApp XR does not model).
+                    maxInstances:
+                      type: integer
+                      minimum: 1
+                      description: ServerlessApp spec.maxInstances. GCP scaling.maxInstanceCount / AWS reservedConcurrentExecutions. Unset leaves each backend's own default.
+                    timeoutSeconds:
+                      type: integer
+                      minimum: 1
+                      maximum: 3600
+                      description: ServerlessApp spec.timeoutSeconds — max duration of one request. AWS Lambda timeout (clamped to 900); GCP Cloud Run template.timeout.
+                    env:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Plain environment variables for the container. Merged UNDER the injected database and cache coordinates, so a key such as REDIS_HOST set here is overwritten once the composed cache publishes its own host — the composed resource is the live truth. Not for secrets; mount those into the workload.
+                    serviceAccount:
+                      type: string
+                      description: ServerlessApp spec.serviceAccount — runtime identity. GCP a service account email; AWS an EXISTING execution role ARN, which skips creating one.
+                  required:
+                    - image
+                database:
+                  type: object
+                  description: Sizing of the child PostgresInstance. Its placement is not configurable here — it is taken from the composed Network (AWS DB subnet group plus security groups, GCP VPC self link) once the Network publishes it.
+                  properties:
+                    engineVersion:
+                      type: string
+                      description: 'PostgresInstance spec.engineVersion — PostgreSQL major version, e.g. "16". AWS engineVersion; GCP POSTGRES_16. Unset leaves the PostgresInstance default.'
+                    memoryGb:
+                      type: number
+                      minimum: 1
+                      description: PostgresInstance spec.memoryGb. AWS picks the smallest RDS machine that fits; GCP derives a db-custom tier. Unset leaves the PostgresInstance default.
+                    storageGb:
+                      type: integer
+                      minimum: 1
+                      description: PostgresInstance spec.storageGb. AWS allocatedStorage; GCP diskSize. Unset leaves the PostgresInstance default.
+                    name:
+                      type: string
+                      default: app
+                      description: PostgresInstance spec.database — the initial database. AWS dbName; GCP a companion Database resource. Also injected into both apps as DATABASE_NAME.
+                    username:
+                      type: string
+                      default: app
+                      description: PostgresInstance spec.username — owner of the initial database. AWS master username; GCP a companion User resource. Also injected into both apps as DATABASE_USER.
+                    highAvailability:
+                      type: boolean
+                      description: PostgresInstance spec.highAvailability. AWS multiAz; GCP availabilityType REGIONAL. Unset leaves the PostgresInstance default (off).
+                    snapshotRetentionDays:
+                      type: integer
+                      minimum: 0
+                      maximum: 35
+                      description: PostgresInstance spec.snapshotRetentionDays; 0 disables automatic backups. AWS backupRetentionPeriod; GCP retainedBackups. Unset leaves the PostgresInstance default.
+                    passwordSecret:
+                      type: object
+                      description: |
+                        PostgresInstance spec.passwordSecret — an EXISTING Secret
+                        in this namespace holding the password for username. AWS
+                        reads it; GCP creates its User from it. When unset AWS
+                        auto-generates and publishes a password, while GCP cannot
+                        generate one server-side and leaves credentials to be
+                        managed out of band. Either way the apps only ever
+                        receive the Secret's name and key, never its contents.
+                      properties:
+                        name:
+                          type: string
+                          description: Secret name.
+                        key:
+                          type: string
+                          default: password
+                          description: Key within the Secret that holds the password.
+                      required: [name]
+                cache:
+                  type: object
+                  description: Sizing of the child RedisInstance. Like the database, its placement comes from the composed Network (AWS ElastiCache subnet group plus security groups, GCP VPC self link plus the reserved service range).
+                  properties:
+                    engineVersion:
+                      type: string
+                      description: 'RedisInstance spec.engineVersion — Redis wire-protocol version, "<major>.<minor>". AWS engineVersion; GCP redisVersion (REDIS_7_0). Unset leaves the RedisInstance default.'
+                    memoryGb:
+                      type: number
+                      minimum: 0.5
+                      description: RedisInstance spec.memoryGb — usable memory per node. GCP memorySizeGb verbatim; AWS picks the smallest node type that fits. Unset leaves the RedisInstance default.
+                    replicas:
+                      type: integer
+                      minimum: 0
+                      maximum: 5
+                      description: RedisInstance spec.replicas — read replicas per shard, excluding the primary. AWS numCacheClusters = replicas + 1; GCP replicaCount, which forces the STANDARD_HA tier. Unset leaves the RedisInstance default.
+                    highAvailability:
+                      type: boolean
+                      description: RedisInstance spec.highAvailability. AWS multiAzEnabled plus automaticFailoverEnabled; GCP tier STANDARD_HA. Unset leaves the RedisInstance default (off).
+                    authEnabled:
+                      type: boolean
+                      description: RedisInstance spec.authEnabled — require AUTH. Both backends publish the credential to a Secret whose name and key are injected into the apps as REDIS_AUTH_SECRET and REDIS_AUTH_SECRET_KEY. Unset leaves the RedisInstance default (on).
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: Forwarded as spec.deletionPolicy to all five children, which each translate it into Crossplane managementPolicies. Orphan keeps every backing cloud resource — network, apps, database and cache — when the AppStack is deleted.
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata forwarded as spec.tags to all five children, which map it onto AWS tags or GCP labels as their resources allow.
+              required:
+                - provider
+                - region
+                - api
+                - worker
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True only when all five children report status.ready — network, api, worker, database and cache. Anything short of that leaves the stack incomplete, since the apps depend on the data services and the data services on the network.
+                provider:
+                  type: string
+                  description: Backend the stack was placed on (aws | gcp).
+                apiUrl:
+                  type: string
+                  description: HTTPS endpoint of the public api app, copied from its ServerlessApp status.url.
+                workerUrl:
+                  type: string
+                  description: HTTPS endpoint of the private worker app, copied from its ServerlessApp status.url. Reachable only with credentials (AWS_IAM on AWS, IAM-gated invoker on GCP).
+                databaseEndpoint:
+                  type: string
+                  description: host:port of the database primary, copied from the PostgresInstance status.endpoint.
+                databaseUrl:
+                  type: string
+                  description: Credential-free PostgreSQL connection URI, copied from the PostgresInstance status.url. The password lives in the Secret named by that child's status.authSecret.
+                cacheEndpoint:
+                  type: string
+                  description: host:port of the cache primary, copied from the RedisInstance status.endpoint.
+                cacheUrl:
+                  type: string
+                  description: Redis connection URI (rediss:// when transit encryption is on), copied from the RedisInstance status.url.
+                networkId:
+                  type: string
+                  description: Provider-assigned id of the composed network (VPC id on AWS, network name on GCP), copied from the Network status.id.
+                components:
+                  type: object
+                  description: Per-child readiness, so a stack that is stuck can be diagnosed without listing five other resource kinds. Each field is the corresponding child's status.ready, false while it has not been observed yet.
+                  properties:
+                    network:
+                      type: boolean
+                      description: Network readiness.
+                    api:
+                      type: boolean
+                      description: Public api ServerlessApp readiness.
+                    worker:
+                      type: boolean
+                      description: Private worker ServerlessApp readiness.
+                    database:
+                      type: boolean
+                      description: PostgresInstance readiness.
+                    cache:
+                      type: boolean
+                      description: RedisInstance readiness.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: API
+          type: string
+          jsonPath: .status.apiUrl
+        - name: DB
+          type: string
+          jsonPath: .status.databaseEndpoint

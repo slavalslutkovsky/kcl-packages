@@ -1,0 +1,174 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: emaildomains.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: EmailDomain
+    plural: emaildomains
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable transactional-email sending domain. Every field below
+                is a COMMON parameter mapped onto each backend's native
+                resources (AWS SESv2 EmailIdentity + ConfigurationSet [+ MAIL
+                FROM attributes], in-cluster Stalwart mail server via a Helm
+                Release). Fields a backend cannot express are documented as
+                ignored rather than silently dropped.
+
+                Provisioning a domain identity is only half of email: the
+                records reported in status.dnsRecords must be published in the
+                domain's DNS zone before mail is deliverable. Self-hosted
+                outbound mail from cloud infrastructure is additionally at the
+                mercy of port-25 egress blocks and shared-IP reputation; the
+                in-cluster backend is intended for internal mail, dev/e2e, and
+                on-prem clusters with clean IPs.
+              properties:
+                region:
+                  type: string
+                  description: Cloud region the identity is managed in (SESv2 region). Ignored by the in-cluster backend, which runs where the XR lives.
+                domain:
+                  type: string
+                  description: The sending domain to provision (e.g. mail.example.com). AWS SESv2 EmailIdentity (external-name); in-cluster it becomes the Stalwart server hostname (mail.<domain>).
+                mailFromSubdomain:
+                  type: string
+                  description: Custom MAIL FROM subdomain, joined as <sub>.<domain>. AWS EmailIdentityMailFromAttributes (adds the MX + SPF rows to status.dnsRecords). Ignored in-cluster, where the envelope domain is the domain itself.
+                dkimKeyLength:
+                  type: integer
+                  enum: [1024, 2048]
+                  default: 2048
+                  description: RSA key length for Easy DKIM signing. AWS dkimSigningAttributes.nextSigningKeyLength (RSA_1024_BIT / RSA_2048_BIT). The in-cluster backend generates and manages its own DKIM keys, so this is ignored.
+                tlsRequired:
+                  type: boolean
+                  default: true
+                  description: Refuse delivery over unencrypted connections. AWS ConfigurationSet deliveryOptions.tlsPolicy REQUIRE (vs OPTIONAL). The in-cluster backend always offers STARTTLS; ignored.
+                sendingEnabled:
+                  type: boolean
+                  default: true
+                  description: Whether sending is enabled for the domain. AWS ConfigurationSet sendingOptions.sendingEnabled — flip to false to pause sending without deleting anything. Ignored in-cluster.
+                reputationMetrics:
+                  type: boolean
+                  default: false
+                  description: Track bounce/complaint reputation metrics in CloudWatch. AWS ConfigurationSet reputationOptions.reputationMetricsEnabled. Ignored in-cluster.
+                suppressedReasons:
+                  type: array
+                  items:
+                    type: string
+                    enum: [BOUNCE, COMPLAINT]
+                  default: [BOUNCE, COMPLAINT]
+                  description: Which events add recipients to the account-level suppression list. AWS ConfigurationSet suppressionOptions.suppressedReasons. An empty list disables suppression. Ignored in-cluster.
+                persistenceSizeGb:
+                  type: integer
+                  default: 10
+                  minimum: 1
+                  description: In-cluster only — PVC size for the Stalwart mail store. Ignored by the managed backend, which stores nothing.
+                adminPasswordSecret:
+                  type: object
+                  description: In-cluster only — Secret (in this namespace) holding the Stalwart fallback admin password. Without it the chart's default password applies; set this anywhere the admin HTTP port is reachable. Ignored by the managed backend.
+                  properties:
+                    name:
+                      type: string
+                      description: Name of the Secret.
+                    key:
+                      type: string
+                      default: password
+                      description: Key within the Secret that holds the password.
+                  required: [name]
+                certificateSecret:
+                  type: string
+                  description: In-cluster only — name of an existing kubernetes.io/tls Secret (in this namespace) mounted as the Stalwart TLS certificate. Without it the server uses its own self-signed certificate, which is fine for internal mail and dev/e2e. Ignored by the managed backend.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the backing resources when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them).
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS tags on every composed resource / in-cluster pod labels.
+              required:
+                - region
+                - domain
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the backing resources exist (NOT once DNS is verified — see verified).
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | stalwart).
+                verified:
+                  type: boolean
+                  description: True once the backend considers the domain verified for sending. AWS verifiedForSendingStatus (requires the DKIM CNAMEs to be live in DNS); the in-cluster backend has no external verification gate, so it reports true as soon as the server is deployed.
+                verificationStatus:
+                  type: string
+                  description: Raw backend verification state (AWS PENDING / SUCCESS / FAILED / TEMPORARY_FAILURE / NOT_STARTED). Absent in-cluster.
+                dkimTokens:
+                  type: array
+                  items: {type: string}
+                  description: Easy-DKIM tokens (AWS only); already expanded into dnsRecords. The in-cluster backend manages DKIM internally — fetch its records from the Stalwart admin UI or `stalwart-cli dns records`.
+                dnsRecords:
+                  type: array
+                  description: DNS records to publish in the domain's zone before mail is deliverable. Deterministically computed from observed state; empty until the backend reports the inputs.
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        description: Record type (CNAME, MX, TXT).
+                      name:
+                        type: string
+                        description: Fully-qualified record name.
+                      value:
+                        type: string
+                        description: Record value.
+                      priority:
+                        type: integer
+                        description: MX preference; only set on MX rows.
+                    required: [type, name, value]
+                smtpHost:
+                  type: string
+                  description: SMTP submission host. AWS email-smtp.<region>.amazonaws.com; in-cluster the Release's ClusterIP service DNS name.
+                smtpPort:
+                  type: integer
+                  description: SMTP submission port (587 on both backends).
+                smtpEndpoint:
+                  type: string
+                  description: smtpHost:smtpPort.
+                configurationSet:
+                  type: string
+                  description: Name of the SESv2 ConfigurationSet bound to the identity (AWS only); pass it per-message to override.
+                arn:
+                  type: string
+                  description: AWS ARN of the EmailIdentity (AWS only).
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+                cloud-url:
+                  type: string
+                  description: Cloud-console (or in-cluster workload) URL for the identity.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: VERIFIED
+          type: boolean
+          jsonPath: .status.verified
+        - name: SMTP
+          type: string
+          jsonPath: .status.smtpEndpoint

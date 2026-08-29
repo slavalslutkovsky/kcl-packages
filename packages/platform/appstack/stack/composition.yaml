@@ -1,0 +1,26 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: appstack
+  # Deliberately no `provider` label. The cloud.example.org Compositions carry
+  # one because a claim picks between their backends; this Composition is the
+  # only implementation of AppStack and is backend-agnostic — it selects a
+  # backend for each of its five children instead, from spec.provider.
+spec:
+  compositeTypeRef:
+    apiVersion: platform.example.org/v1alpha1
+    kind: AppStack
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-kcl
+      input:
+        apiVersion: krm.kcl.dev/v1alpha1
+        kind: KCLInput
+        spec:
+          # Pin a release with ?tag=<version> once published via `nx release`.
+          source: oci://docker.io/yurikrupnik/appstack?tag=0.1.0
+    - step: ready
+      functionRef:
+        name: function-auto-ready

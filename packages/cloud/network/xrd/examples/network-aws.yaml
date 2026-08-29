@@ -1,0 +1,24 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Network
+metadata:
+  namespace: default
+  name: my-aws-network
+spec:
+  region: us-east-1                # every MR's forProvider.region
+  cidr: 10.0.0.0/16                # -> VPC cidrBlock, then carved into subnets
+  subnetPrefixLength: 20           # each Subnet cidrBlock: 10.0.0.0/20, 10.0.16.0/20, ...
+  availabilityZones:               # one private + one public Subnet per zone
+    - us-east-1a
+    - us-east-1b
+    - us-east-1c
+  publicSubnets: true              # public Subnets + InternetGateway + public RouteTable/Route
+  natGateway: true                 # EIP + NATGateway in the first public subnet, private default Route
+  databaseSubnetGroups: true       # rds.SubnetGroup + elasticache.SubnetGroup over the private subnets
+  allowInternalIngress: true       # SecurityGroupIngressRule for all protocols from cidr
+  deletionPolicy: Orphan           # Delete | Orphan — Orphan keeps the VPC and everything in it
+  tags:                            # AWS tags on every taggable MR, next to the console Name tag
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws              # the flag: picks the backend (aws | gcp)

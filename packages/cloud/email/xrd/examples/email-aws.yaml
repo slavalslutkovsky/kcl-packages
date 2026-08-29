@@ -1,0 +1,21 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: EmailDomain
+metadata:
+  namespace: default
+  name: transactional-mail
+spec:
+  region: us-east-1
+  domain: mail.example.com        # SESv2 EmailIdentity; verify via status.dnsRecords
+  mailFromSubdomain: bounce       # MAIL FROM = bounce.mail.example.com (adds MX + SPF rows)
+  dkimKeyLength: 2048             # Easy DKIM RSA_2048_BIT
+  tlsRequired: true               # ConfigurationSet deliveryOptions.tlsPolicy REQUIRE
+  sendingEnabled: true            # flip to false to pause sending without deleting anything
+  reputationMetrics: true         # bounce/complaint metrics in CloudWatch
+  suppressedReasons: [BOUNCE, COMPLAINT]
+  deletionPolicy: Delete          # Orphan keeps the identity and configuration set
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws             # the flag: picks the backend (aws | stalwart)

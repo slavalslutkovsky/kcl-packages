@@ -1,0 +1,130 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: kubernetesclusters.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: KubernetesCluster
+    plural: kubernetesclusters
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable managed Kubernetes cluster. Every field below is a
+                COMMON parameter mapped to each cloud's native resources (AWS
+                EKS Cluster + NodeGroup + the IAM roles they require, GCP GKE
+                Cluster + NodePool, Azure AKS KubernetesCluster). Fields a
+                backend cannot express make the render FAIL with a clear
+                message rather than silently changing the cluster shape.
+              properties:
+                region:
+                  type: string
+                  description: Cloud region/location for the control plane and nodes.
+                version:
+                  type: string
+                  description: Kubernetes minor version, e.g. "1.32". EKS version / GKE minMasterVersion / AKS kubernetesVersion. Omit for the provider default.
+                nodeCount:
+                  type: integer
+                  default: 2
+                  minimum: 1
+                  description: Worker nodes when autoscaling is off; the initial/desired size when it is on.
+                autoscaling:
+                  type: object
+                  description: Node autoscaling bounds. EKS scalingConfig / GKE NodePool autoscaling / AKS enableAutoScaling+minCount+maxCount.
+                  properties:
+                    min:
+                      type: integer
+                      minimum: 0
+                      description: Minimum node count.
+                    max:
+                      type: integer
+                      minimum: 1
+                      description: Maximum node count.
+                  required: [min, max]
+                nodeSize:
+                  type: string
+                  enum: [small, medium, large, xlarge]
+                  default: small
+                  description: 'Abstract node shape, mapped per cloud: small 2vCPU/4-8GB (t3.medium / e2-medium / Standard_B2s), medium 2/8 (m5.large / e2-standard-2 / Standard_D2s_v5), large 4/16 (m5.xlarge / e2-standard-4 / Standard_D4s_v5), xlarge 8/32 (m5.2xlarge / e2-standard-8 / Standard_D8s_v5).'
+                machineType:
+                  type: string
+                  description: Native instance/machine/VM type that overrides the nodeSize mapping (e.g. m5.large, e2-standard-4, Standard_D4s_v5).
+                spot:
+                  type: boolean
+                  default: false
+                  description: Run workers on spot/preemptible capacity. EKS capacityType=SPOT / GKE nodeConfig.spot. AKS cannot run its default node pool on Spot, so the azure backend fails the render if set.
+                network:
+                  type: object
+                  description: Existing network to attach to.
+                  properties:
+                    id:
+                      type: string
+                      description: 'Network to place the cluster in. GCP: network self-link or name. Azure: ignored (the subnet ID pins the VNet). AWS: ignored (subnets pin the VPC).'
+                    subnets:
+                      type: array
+                      items: {type: string}
+                      description: 'Subnets for control plane and nodes. AWS: subnet IDs, REQUIRED (EKS cannot exist without them). GCP: a single subnetwork self-link or name. Azure: a single subnet ID for the default node pool.'
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the Resource Group the cluster lives in. Required by the azure backend.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the cloud cluster when this resource is deleted; maps to Crossplane managementPolicies (Orphan keeps the external cluster).
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS/Azure tags, GCP resourceLabels.
+              required:
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the control plane is reachable.
+                provider:
+                  type: string
+                  description: Cloud backend that fulfilled the claim (aws | gcp | azure).
+                endpoint:
+                  type: string
+                  description: Kubernetes API server endpoint.
+                version:
+                  type: string
+                  description: Kubernetes version actually running.
+                kubeconfigSecret:
+                  type: string
+                  description: Name of the namespace-local connection Secret carrying the kubeconfig/credentials.
+                name:
+                  type: string
+                  description: Provider-side cluster name.
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the cluster.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: VERSION
+          type: string
+          jsonPath: .status.version
+        - name: ENDPOINT
+          type: string
+          jsonPath: .status.endpoint

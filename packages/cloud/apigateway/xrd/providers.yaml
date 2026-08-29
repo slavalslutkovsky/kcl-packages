@@ -1,0 +1,29 @@
+# Providers the ApiGateway Compositions drive. Versions are pinned to the
+# images the packages/providers schema packages were generated from
+# (`just seed-apigateway-providers`).
+#
+# provider-gcp-apigee ships no APIProxy resource, so the gcp Composition builds
+# the Apigee runtime slice a proxy needs (Environment, Envgroup + attachment,
+# TargetServer) and leaves the proxy bundle itself to an out-of-band deploy.
+# GCP API Gateway is no substitute: it is google-beta-only, so upjet-gcp never
+# generated it.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-apigatewayv2
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-apigatewayv2:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-apimanagement
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-apimanagement:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-apigee
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-apigee:v2.6.0

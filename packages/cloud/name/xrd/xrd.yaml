@@ -1,0 +1,36 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: names.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: Name
+    plural: names
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                region:
+                  type: string
+                  description: Cloud region/location for the Name.
+                storageClass:
+                  type: string
+                  enum: [standard, nearline, cold, archive]
+                  default: standard
+                  description: Abstract storage tier (portable across providers); mapped to each cloud's native value.
+              required:
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean

@@ -1,0 +1,93 @@
+# ProviderConfigs for the EncryptionKey backends, plus the OpenBao server the
+# self-hosted backend keys live in.
+#
+# Kept out of providers.yaml on purpose: these are instances of CRDs that a
+# Provider installs, so a single `kubectl apply` of both files fails with
+# `no matches for kind "ProviderConfig"`. Apply this only once the Providers
+# report Healthy (`just e2e-providerconfigs kms` does that ordering).
+#
+# The AWS, GCP and Azure backends need real cloud credentials — add a
+# ProviderConfig of your own with `credentials.source: Secret` (or IRSA /
+# Workload Identity / a federated Azure identity) before using them.
+#
+# ─── The OpenBao server ───────────────────────────────────────────────────────
+#
+# provider-vault talks to an existing OpenBao (or Vault) API; it cannot install
+# one, exactly as provider-kubernetes cannot install CloudNativePG for the cnpg
+# postgres backend. The Helm release below is that server, installed through
+# provider-helm (pinned by `seed-redis-providers`).
+#
+# A fresh OpenBao is SEALED and has no token, and neither state can be created
+# declaratively — auto-unseal needs a cloud KMS, which is the very thing this
+# module provisions. So after the release is deployed, once:
+#
+#   kubectl exec -n openbao openbao-0 -- bao operator init \
+#     -key-shares=1 -key-threshold=1 -format=json > init.json
+#   kubectl exec -n openbao openbao-0 -- bao operator unseal "$(jq -r .unseal_keys_b64[0] init.json)"
+#   kubectl create secret generic openbao-token -n crossplane-system \
+#     --from-literal=credentials="{\"token\":\"$(jq -r .root_token init.json)\"}"
+#
+# The Secret value is a JSON OBJECT, not a bare token: provider-vault feeds it
+# straight into the Terraform provider setup and fails with `cannot unmarshal
+# vault credentials as JSON` on a raw string.
+#
+# Keep init.json somewhere real: losing the unseal key loses every key in the
+# transit engine. Use a scoped token rather than the root token for anything
+# beyond a sandbox — the provider needs create/update/delete on
+# `sys/mounts/<mountPath>` and `<mountPath>/keys/*` only.
+apiVersion: helm.m.crossplane.io/v1beta1
+kind: ClusterProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: InjectedIdentity
+---
+apiVersion: helm.m.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: openbao
+  namespace: openbao
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    namespace: openbao
+    chart:
+      name: openbao
+      repository: https://openbao.github.io/openbao-helm
+      version: 0.29.3
+    values:
+      # Standalone with file storage on a PVC: HA needs raft/Consul and a
+      # multi-node unseal ceremony, which is not what a KMS sandbox is for.
+      server:
+        standalone:
+          enabled: true
+        dataStorage:
+          enabled: true
+          size: 8Gi
+        service:
+          enabled: true
+      # The agent injector rewrites pods to fetch secrets; irrelevant here,
+      # where the only client is provider-vault talking to the API.
+      injector:
+        enabled: false
+    wait: true
+    waitTimeout: 10m
+---
+# provider-vault reads the token from a Secret you create with the init output
+# above. `address` is the in-cluster service of the release.
+apiVersion: vault.m.upbound.io/v1beta1
+kind: ClusterProviderConfig
+metadata:
+  name: default
+spec:
+  address: http://openbao.openbao.svc.cluster.local:8200
+  skip_tls_verify: true
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: openbao-token
+      key: credentials

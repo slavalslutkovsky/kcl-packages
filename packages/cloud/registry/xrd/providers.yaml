@@ -1,0 +1,79 @@
+# Crossplane providers the Registry Compositions render against. Install only
+# the ones whose backends you intend to use; each Composition references exactly
+# one.
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-registry-providers`) — keep them in step, or
+# the rendered manifests can reference fields the installed provider does not
+# have.
+#
+# GCP's Artifact Registry lives in the `artifact` provider family (CRD group
+# artifact.gcp.m.upbound.io), not a `gcp-artifactregistry` provider — that
+# image does not exist.
+#
+# The `zot` backend needs no cloud provider: it installs an in-cluster registry
+# through provider-helm (pinned by `seed-redis-providers`, shared with the other
+# self-hosted backends) using the ClusterProviderConfig in providerconfigs.yaml.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-ecr
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-artifact
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-containerregistry
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-containerregistry:v2.6.0
+---
+# The in-cluster (zot) backend installs a Helm chart, so it needs provider-helm
+# v1.x — that is the first line that ships the namespaced
+# `helm.m.crossplane.io` CRDs the Composition renders.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-helm
+spec:
+  package: ghcr.io/crossplane-contrib/provider-helm:v1.3.0
+  runtimeConfigRef:
+    name: provider-helm
+---
+# provider-helm needs in-cluster RBAC to install charts. This binds its
+# ServiceAccount to cluster-admin, which is what the upstream quickstart does;
+# scope it down before using this outside a sandbox.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provider-helm
+  namespace: crossplane-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: provider-helm-cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: provider-helm
+    namespace: crossplane-system
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-helm
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-helm

@@ -1,0 +1,23 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Network
+metadata:
+  namespace: default
+  name: my-gcp-network
+spec:
+  region: us-central1              # Subnetwork / Cloud Router / Cloud NAT region
+  cidr: 10.0.0.0/16                # primary ipCidrRange of the one regional Subnetwork
+  natGateway: true                 # Cloud Router + Cloud NAT (ALL_SUBNETWORKS_ALL_IP_RANGES, AUTO_ONLY)
+  privateGoogleAccess: true        # Subnetwork privateIpGoogleAccess
+  serviceRange: 10.240.0.0/16      # VPC_PEERING GlobalAddress; the servicenetworking peering itself is out of band
+  allowInternalIngress: true       # ingress Firewall allowing all protocols from cidr
+  deletionPolicy: Orphan           # Delete | Orphan — Orphan keeps the network, subnetwork, router, NAT and rules
+  tags:                            # GlobalAddress labels only; Network, Subnetwork, Router, RouterNAT and Firewall take no labels
+    team: platform
+  # AWS-only and ignored here: subnetPrefixLength and availabilityZones (GCP
+  # subnetworks are regional), publicSubnets (reachability is routes + NAT, not
+  # subnet kind), databaseSubnetGroups (Cloud SQL and Memorystore attach to the
+  # network via the serviceRange above).
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp              # the flag: picks the backend (aws | gcp)

@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: analytic
+    app.kubernetes.io/name: analytic
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: zerg
+    app.kubernetes.io/version: '0.1.0'
+  name: analytic
+  namespace: zerg
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: analytic
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8080'
+        prometheus.io/path: /metrics
+      labels:
+        app: analytic
+        app.kubernetes.io/name: analytic
+        app.kubernetes.io/component: server
+        app.kubernetes.io/part-of: zerg
+        app.kubernetes.io/version: '0.1.0'
+    spec:
+      containers:
+      - image: nginx
+        imagePullPolicy: IfNotPresent
+        name: analytic
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        resources:
+          limits:
+            memory: '512Mi'
+          requests:
+            memory: '128Mi'
+            cpu: '250m'
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+        volumeMounts:
+        - mountPath: /tmp
+          name: tmp
+      restartPolicy: Always
+      securityContext:
+        fsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - emptyDir: {}
+        name: tmp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytic
+  namespace: zerg
+spec:
+  ports:
+  - name: http
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: analytic
+  type: ClusterIP

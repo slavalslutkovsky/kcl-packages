@@ -1,0 +1,165 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: identities.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: Identity
+    plural: identities
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable cloud IAM identity: a principal that workloads can
+                assume, plus the access it is granted. Maps onto AWS IAM Role
+                (+ policy attachments), GCP Service Account (+ IAM members),
+                Azure User Assigned Identity (+ role assignments). Fields whose
+                meaning a backend cannot honour make the render FAIL with a
+                clear message rather than silently granting more or less access
+                than was asked for.
+              properties:
+                displayName:
+                  type: string
+                  description: Human-readable description of the identity. GCP displayName / AWS role description / Azure tag.
+                region:
+                  type: string
+                  description: Azure-only — the location of the User Assigned Identity. AWS IAM and GCP service accounts are global; both ignore it.
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the Resource Group the identity (and its federated credentials) lives in. Required by the azure backend.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the cloud identity when this resource is deleted; maps to Crossplane managementPolicies (Orphan keeps the external identity and its grants).
+                accessPolicies:
+                  type: array
+                  description: |
+                    Access-control grants for this identity — the permissions it
+                    holds. AWS: one RolePolicyAttachment per entry (role is a
+                    managed policy ARN or name). GCP: one ProjectIAMMember per
+                    entry (role like roles/storage.objectViewer, scope is a
+                    project id). Azure: one RoleAssignment per entry (role is a
+                    built-in role name or a role definition ID, scope is
+                    REQUIRED).
+                  items:
+                    type: object
+                    properties:
+                      role:
+                        type: string
+                        description: 'What is granted. AWS: managed policy ARN, or a name resolved to arn:aws:iam::aws:policy/<name>. GCP: an IAM role (roles/…). Azure: built-in role name, or a scoped role definition ID (starts with /).'
+                      scope:
+                        type: string
+                        description: 'Where the grant applies. GCP: project id (defaults to the ProviderConfig project). Azure: full scope ID (/subscriptions/…), required. AWS: not expressible on a managed-policy attachment — set it inside inlinePolicy instead; a value here fails the render.'
+                      condition:
+                        type: object
+                        description: 'Conditional (attribute-based) access. GCP: IAM condition (title required by the API; defaulted when omitted). Azure: role-assignment condition, version 2.0. AWS: not expressible on an attachment — a value here fails the render; use inlinePolicy.'
+                        properties:
+                          expression:
+                            type: string
+                            description: Condition expression (GCP CEL / Azure ABAC).
+                          title:
+                            type: string
+                            description: Short name for the condition (GCP; ignored by Azure).
+                          description:
+                            type: string
+                            description: What the condition restricts (GCP; ignored by Azure).
+                        required: [expression]
+                    required: [role]
+                inlinePolicy:
+                  type: string
+                  description: AWS-only — a raw JSON IAM policy document attached as an inline RolePolicy, for scoped/conditional access that attachments cannot express. Other backends fail the render if set.
+                permissionsBoundary:
+                  type: string
+                  description: AWS-only — ARN of the policy used as the role's permissions boundary (an upper bound on what accessPolicies/inlinePolicy can grant). Other backends fail the render if set.
+                trust:
+                  type: object
+                  description: Who may assume or impersonate this identity. Omitting it yields an identity nobody can assume (AWS requires at least one entry and fails the render otherwise).
+                  properties:
+                    services:
+                      type: array
+                      items: {type: string}
+                      description: AWS-only — service principals allowed to assume the role (e.g. ec2.amazonaws.com, eks.amazonaws.com).
+                    identities:
+                      type: array
+                      items: {type: string}
+                      description: 'Principals allowed to assume/impersonate. AWS: principal ARNs in the trust policy. GCP: IAM members (serviceAccount:…, user:…, principal://…) granted roles/iam.serviceAccountTokenCreator on the service account. Azure: not expressible; fails the render.'
+                    federated:
+                      type: object
+                      description: 'Workload-identity federation (OIDC). AWS: sts:AssumeRoleWithWebIdentity from an OIDC provider (issuer is the provider ARN). Azure: one FederatedIdentityCredential per subject. GCP: not expressible here — pass principal:// members via identities instead.'
+                      properties:
+                        issuer:
+                          type: string
+                          description: 'OIDC issuer. AWS: the IAM OIDC provider ARN. Azure: the issuer URL.'
+                        subjects:
+                          type: array
+                          items: {type: string}
+                          description: Subject claims allowed to federate (e.g. system:serviceaccount:ns:name).
+                        audiences:
+                          type: array
+                          items: {type: string}
+                          description: Accepted audiences. Azure defaults to api://AzureADTokenExchange; AWS omits the audience condition when unset.
+                      required: [issuer, subjects]
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS tags / Azure tags. GCP service accounts have no labels; ignored there.
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the backing cloud identity exists.
+                provider:
+                  type: string
+                  description: Cloud backend that fulfilled the claim (aws | gcp | azure).
+                principal:
+                  type: string
+                  description: 'The string other systems use to refer to this identity: AWS role ARN, GCP serviceAccount:<email> member, Azure principal (object) ID.'
+                name:
+                  type: string
+                  description: Provider-side name of the identity.
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+                arn:
+                  type: string
+                  description: AWS role ARN (AWS only).
+                email:
+                  type: string
+                  description: Service account e-mail (GCP only).
+                clientId:
+                  type: string
+                  description: Client (app) ID of the identity (Azure only).
+                principalId:
+                  type: string
+                  description: Service principal object ID (Azure only).
+                tenantId:
+                  type: string
+                  description: Tenant the identity belongs to (Azure only).
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the identity.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: PRINCIPAL
+          type: string
+          jsonPath: .status.principal
+        - name: CLOUD-URL
+          type: string
+          jsonPath: .status.cloud-url

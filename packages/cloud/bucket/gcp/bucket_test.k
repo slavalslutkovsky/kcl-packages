@@ -48,14 +48,12 @@ test_storage_class = lambda {
 }
 
 # ---- render: versioning -----------------------------------------------------
-
 test_versioning = lambda {
     assert _fp({region = "us-central1"}).versioning.enabled == True, "versioning defaults to enabled"
     assert _fp({region = "us-central1", versioning = False}).versioning.enabled == False, "versioning=false -> disabled"
 }
 
 # ---- render: public access / uniform access ---------------------------------
-
 test_block_public_access = lambda {
     assert _fp({region = "us-central1"}).publicAccessPrevention == "enforced", "default blockPublicAccess -> enforced"
     assert _fp({region = "us-central1", blockPublicAccess = True}).publicAccessPrevention == "enforced", "true -> enforced"
@@ -68,7 +66,6 @@ test_uniform_access = lambda {
 }
 
 # ---- render: encryption -----------------------------------------------------
-
 test_encryption = lambda {
     fp = _fp({region = "us-central1", encryptionKmsKeyId = "projects/p/locations/l/keyRings/r/cryptoKeys/k"})
     assert fp.encryption.defaultKmsKeyName == "projects/p/locations/l/keyRings/r/cryptoKeys/k", "kms key -> defaultKmsKeyName"
@@ -77,7 +74,6 @@ test_encryption = lambda {
 }
 
 # ---- render: retention ------------------------------------------------------
-
 test_retention = lambda {
     fp = _fp({region = "us-central1", retention = {days = 7, mode = "compliance"}})
     assert fp.retentionPolicy.retentionPeriod == 7 * 86400, "days -> seconds"
@@ -88,7 +84,6 @@ test_retention = lambda {
 }
 
 # ---- render: deletion policy ------------------------------------------------
-
 test_deletion_policy = lambda {
     mr = bucket.render(_build({region = "us-central1", deletionPolicy = "Orphan"}))[0]
     assert mr.spec.managementPolicies == ["Observe", "Create", "Update", "LateInitialize"], "Orphan -> orphan management policies"
@@ -98,7 +93,6 @@ test_deletion_policy = lambda {
 }
 
 # ---- render: tags -----------------------------------------------------------
-
 test_tags = lambda {
     tags = {env = "prod", team = "core"}
     assert _fp({region = "us-central1", tags = tags}).labels == tags, "tags -> forProvider.labels"
@@ -106,7 +100,6 @@ test_tags = lambda {
 }
 
 # ---- render: lifecycle rules + cors -----------------------------------------
-
 test_lifecycle_rules = lambda {
     # No storageClass tier here, so the only native rules come from lifecycleRules.
     fp = _fp({region = "us-central1", lifecycleRules = [
@@ -147,13 +140,21 @@ test_status_pending = lambda {
 
 # Observed: provider has reconciled the bucket.
 test_status_ready = lambda {
-    ocds = {managed = {Resource = {status = {atProvider = {
-        url = "gs://demo"
-        selfLink = "https://www.googleapis.com/storage/v1/b/demo"
-        id = "demo"
-        location = "US-CENTRAL1"
-        storageClass = "ARCHIVE"
-    }}}}}
+    ocds = {
+        managed = {
+            Resource = {
+                status = {
+                    atProvider = {
+                        url = "gs://demo"
+                        selfLink = "https://www.googleapis.com/storage/v1/b/demo"
+                        id = "demo"
+                        location = "US-CENTRAL1"
+                        storageClass = "ARCHIVE"
+                    }
+                }
+            }
+        }
+    }
     dxr = bucket.status(_build({region = "us-central1"}), ocds)
     assert dxr.status.ready == True, "ready once observed with an id"
     assert dxr.status.url == "gs://demo", "url from atProvider"

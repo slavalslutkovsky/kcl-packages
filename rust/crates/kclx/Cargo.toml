@@ -1,0 +1,28 @@
+[package]
+name = "kclx"
+description = "Render KCL to JSON/YAML from the CLI, or serve it as a Crossplane composition function"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "kclx"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+kcl-render = { path = "../kcl-render" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+
+# Crossplane composition function server: vendored, pre-generated protobuf for
+# apiextensions.fn.proto.v1 (no protoc at build time), spec-compliant flags,
+# mTLS, health/reflection.
+function-sdk-rust = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tonic = "0.14"
+rustls.workspace = true

@@ -1,0 +1,29 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: EncryptionKey
+metadata:
+  namespace: default
+  # Key Vault names are 3-24 characters, alphanumerics and dashes, and must be
+  # globally unique: the vault is reachable at <name>.vault.azure.net.
+  name: app-data-key
+spec:
+  region: westeurope
+  resourceGroup: platform-rg    # azure-only, REQUIRED: an existing resource group
+  tenantId: 11111111-2222-3333-4444-555555555555  # azure-only, REQUIRED: the Entra ID tenant
+  purpose: encrypt-decrypt      # encrypt-decrypt | sign-verify
+  # Key Vault has no software symmetric key type, so `symmetric` becomes a
+  # 4096-bit RSA wrap key. Ask for rsa-*/ec-* explicitly to be unambiguous.
+  algorithm: rsa-4096
+  protectionLevel: software     # software -> standard sku + RSA; hsm -> premium sku + RSA-HSM
+  rotationDays: 180             # rotationPolicy.automatic.timeAfterCreation (with a derived expiry)
+  deletionWindowDays: 30        # softDeleteRetentionDays (7-90); purge protection is always on
+  deletionPolicy: Delete        # Delete | Orphan — Orphan leaves the vault and key alive
+  tags:
+    team: platform
+  # The vault is created with RBAC authorization: the provider identity needs
+  # the "Key Vault Crypto Officer" role on it, and so does anything that later
+  # encrypts with the key.
+  # Ignored by this backend: multiRegion, exportable, mountPath.
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure         # the flag: picks the backend (aws | gcp | azure | openbao)

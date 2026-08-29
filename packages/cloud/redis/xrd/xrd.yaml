@@ -1,0 +1,186 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: redisinstances.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: RedisInstance
+    plural: redisinstances
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable Redis-protocol cache instance. Every field below is a
+                COMMON parameter mapped onto each backend's native resources
+                (AWS ElastiCache ReplicationGroup + ParameterGroup, GCP
+                Memorystore Redis Instance, in-cluster Valkey via a Helm
+                Release). Fields a backend cannot express are documented as
+                ignored rather than silently dropped.
+              properties:
+                region:
+                  type: string
+                  description: Cloud region for the instance (ElastiCache region / Memorystore region). Ignored by the in-cluster backend, which runs where the XR lives.
+                engineVersion:
+                  type: string
+                  default: "7.0"
+                  description: 'Redis wire-protocol version, "<major>.<minor>". AWS engineVersion / GCP redisVersion (REDIS_7_0). The in-cluster backend ignores it and tracks the chart default.'
+                memoryGb:
+                  type: number
+                  default: 1
+                  minimum: 0.5
+                  description: Usable memory per node in GiB. GCP memorySizeGb verbatim; AWS picks the smallest node type that fits (override with nodeType); in-cluster becomes the container memory limit and maxmemory.
+                nodeType:
+                  type: string
+                  description: AWS-only escape hatch — an explicit ElastiCache node type (e.g. cache.r7g.large) that overrides the memoryGb mapping. Ignored by other backends.
+                replicas:
+                  type: integer
+                  default: 0
+                  minimum: 0
+                  maximum: 5
+                  description: Read replicas per shard, excluding the primary. AWS numCacheClusters = replicas + 1; GCP replicaCount (requires highAvailability); in-cluster replica.replicaCount.
+                highAvailability:
+                  type: boolean
+                  default: false
+                  description: Run a failover-capable topology. AWS multiAzEnabled + automaticFailoverEnabled; GCP tier STANDARD_HA; in-cluster architecture=replication.
+                authEnabled:
+                  type: boolean
+                  default: true
+                  description: Require AUTH. AWS auto-generates an auth token (requires transitEncryption); GCP authEnabled; in-cluster auth.enabled with a chart-generated password.
+                transitEncryption:
+                  type: boolean
+                  default: true
+                  description: Encrypt client connections. AWS transitEncryptionEnabled; GCP transitEncryptionMode=SERVER_AUTHENTICATION; in-cluster tls.enabled with self-signed certs.
+                atRestEncryption:
+                  type: boolean
+                  default: true
+                  description: Encrypt data at rest. AWS atRestEncryptionEnabled; GCP is always encrypted at rest, so only encryptionKmsKeyId is meaningful there; ignored in-cluster.
+                encryptionKmsKeyId:
+                  type: string
+                  description: CMEK for at-rest encryption. AWS kmsKeyId (implies atRestEncryption); GCP customerManagedKey. Ignored in-cluster.
+                persistence:
+                  type: boolean
+                  default: true
+                  description: Persist the dataset to durable storage. AWS keeps at least one daily snapshot; GCP persistenceConfig RDB; in-cluster PVC-backed persistence.
+                persistenceSizeGb:
+                  type: integer
+                  default: 8
+                  minimum: 1
+                  description: In-cluster only — PVC size for the persistent volume. Ignored by the managed backends, which size storage from memoryGb.
+                snapshotRetentionDays:
+                  type: integer
+                  default: 0
+                  minimum: 0
+                  maximum: 35
+                  description: Days of automatic backups to keep. AWS snapshotRetentionLimit; GCP switches the RDB snapshot period (>=1 day keeps RDB on); ignored in-cluster.
+                maintenanceWindow:
+                  type: object
+                  description: Weekly two-hour window for provider-driven maintenance. Ignored in-cluster.
+                  properties:
+                    day:
+                      type: string
+                      enum: [mon, tue, wed, thu, fri, sat, sun]
+                      description: Day the window opens.
+                    hour:
+                      type: integer
+                      minimum: 0
+                      maximum: 23
+                      description: UTC hour the window opens; the window is two hours long.
+                  required: [day, hour]
+                parameters:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Redis config overrides (e.g. maxmemory-policy). AWS creates a companion ParameterGroup; GCP redisConfigs; in-cluster commonConfiguration.
+                network:
+                  type: object
+                  description: Where the instance attaches. Each field targets one cloud; the in-cluster backend needs none of them.
+                  properties:
+                    id:
+                      type: string
+                      description: GCP authorized VPC network (self link or name).
+                    reservedIpRange:
+                      type: string
+                      description: GCP CIDR range reserved for the instance.
+                    subnetGroupName:
+                      type: string
+                      description: AWS ElastiCache subnet group the replication group is placed in.
+                    securityGroupIds:
+                      type: array
+                      items: {type: string}
+                      description: AWS security groups attached to the replication group.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the backing resource when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps it).
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS tags / GCP labels / in-cluster commonLabels.
+              required:
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the backing instance reports an endpoint.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp | valkey).
+                host:
+                  type: string
+                  description: Primary (write) hostname.
+                port:
+                  type: integer
+                  description: Primary port.
+                endpoint:
+                  type: string
+                  description: host:port for the primary.
+                readEndpoint:
+                  type: string
+                  description: host:port for reads (reader endpoint / read replica endpoint); equals endpoint when there is no separate reader.
+                url:
+                  type: string
+                  description: Connection URI (redis:// or rediss:// when transit encryption is on).
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the instance.
+                version:
+                  type: string
+                  description: Engine version actually running.
+                authSecret:
+                  type: string
+                  description: Name of the Secret in this namespace holding the AUTH credential, when authEnabled.
+                authSecretKey:
+                  type: string
+                  description: Key within authSecret that holds the credential. Each backend names it differently, so read it from here rather than hard-coding.
+                arn:
+                  type: string
+                  description: AWS ARN (AWS only).
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: ENDPOINT
+          type: string
+          jsonPath: .status.endpoint
+        - name: URL
+          type: string
+          jsonPath: .status.url

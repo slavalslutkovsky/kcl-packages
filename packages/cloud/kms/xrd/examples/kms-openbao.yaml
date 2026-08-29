@@ -1,0 +1,26 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: EncryptionKey
+metadata:
+  namespace: default
+  name: app-data-key
+spec:
+  # No cloud account involved: the key lives in the transit secrets engine of
+  # the in-cluster OpenBao installed by xrd/providerconfigs.yaml. `region` stays
+  # required by the XRD, so give it something honest.
+  region: in-cluster
+  purpose: encrypt-decrypt      # encrypt-decrypt | sign-verify
+  algorithm: symmetric          # transit aes256-gcm96
+  rotationDays: 30              # autoRotatePeriod — the ONLY backend that also rotates asymmetric keys
+  mountPath: transit            # self-hosted only: the transit mount the key lives in
+  exportable: false             # self-hosted only: true lets the raw key material be read back out
+  deletionPolicy: Delete        # Orphan also clears deletionAllowed, so the key cannot be destroyed
+  # Ignored by this backend: protectionLevel (software barrier only),
+  # deletionWindowDays (transit deletes immediately), multiRegion, tags.
+  #
+  # The transit MOUNT is shared: every EncryptionKey on this mountPath composes
+  # it with Observe/Create/Update/LateInitialize only, so deleting one XR never
+  # unmounts the engine out from under the others.
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: openbao       # the flag: picks the backend (aws | gcp | azure | openbao)

@@ -1,6 +1,6 @@
-## 0.0.6 (2026-07-01)
+## 0.1.0 (2026-08-27)
 
-### 🚀 Features
+This was a version bump only for cluster to align it with other projects, there were no code changes.
 
 - **app-module:** add typed schemas and renderers for Kubernetes workloads and tasks ([4834f18](https://github.com/slavalslutkovsky/kcl-packages/commit/4834f18))
 

@@ -1,0 +1,51 @@
+apiVersion: platform.example.org/v1alpha1
+kind: AppStack
+metadata:
+  namespace: default
+  name: my-gcp-stack
+spec:
+  provider: gcp                    # the flag: stamped onto all five children (aws | gcp)
+  region: us-central1              # every child is placed here
+  network:
+    cidr: 10.0.0.0/16              # primary range of the regional Subnetwork
+    natGateway: true               # Cloud Router + Cloud NAT for private egress
+    serviceRange: 10.9.0.0/20      # private service access — Cloud SQL and Memorystore take addresses here
+  api:                             # public: true is set by the Composition, not here
+    image: us-central1-docker.pkg.dev/my-project/apps/api:v1
+    port: 8080                     # Cloud Run containerPort
+    cpu: 1
+    memoryMb: 512
+    minInstances: 1                # keep one warm; scaling.minInstanceCount
+    maxInstances: 20
+    timeoutSeconds: 60
+    serviceAccount: api@my-project.iam.gserviceaccount.com
+    env:
+      LOG_LEVEL: info              # DATABASE_* / REDIS_* are injected, do not set them here
+  worker:                          # public: false is set by the Composition
+    image: us-central1-docker.pkg.dev/my-project/apps/worker:v1
+    cpu: 2
+    memoryMb: 1024
+    maxInstances: 5
+    timeoutSeconds: 600
+    serviceAccount: worker@my-project.iam.gserviceaccount.com
+  database:
+    engineVersion: "16"            # -> Cloud SQL POSTGRES_16
+    memoryGb: 8                    # -> a db-custom tier
+    storageGb: 100                 # diskSize
+    name: app                      # a companion Database resource
+    username: app                  # a companion User resource, built from passwordSecret
+    highAvailability: true         # availabilityType REGIONAL
+    snapshotRetentionDays: 7       # retainedBackups
+    passwordSecret:
+      name: app-db-password        # must already exist in this namespace
+      key: password
+  cache:
+    engineVersion: "7.0"           # -> Memorystore REDIS_7_0
+    memoryGb: 4                    # memorySizeGb verbatim
+    replicas: 1                    # implies the STANDARD_HA tier
+    highAvailability: true         # tier STANDARD_HA
+    authEnabled: true              # AUTH string published to a Secret, whose name is injected into both apps
+  deletionPolicy: Orphan           # Delete | Orphan — Orphan keeps network, apps, database and cache
+  tags:
+    team: platform
+    env: prod

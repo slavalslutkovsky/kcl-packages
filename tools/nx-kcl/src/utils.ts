@@ -111,3 +111,112 @@ export function pinCompositionSource(
   });
   return { content, matched };
 }
+
+/** Annotation that tells `crossplane render` to call a locally running Function. */
+const RUNTIME_ANNOTATION = 'render.crossplane.io/runtime';
+
+/**
+ * Split a multi-document YAML string, rewrite documents via `fn` (returning
+ * `null` leaves a document untouched), and rejoin it byte-for-byte. The
+ * separators are captured so comments and spacing survive the round trip.
+ */
+function mapYamlDocuments(
+  yaml: string,
+  fn: (doc: string) => string | null
+): { content: string; matched: boolean } {
+  const parts = yaml.split(/^(---[ \t]*(?:\r?\n|$))/m);
+  let matched = false;
+  for (let i = 0; i < parts.length; i += 2) {
+    const updated = fn(parts[i]);
+    if (updated !== null) {
+      parts[i] = updated;
+      matched = true;
+    }
+  }
+  return { content: parts.join(''), matched };
+}
+
+/** Does this YAML document declare `name: <resourceName>`? */
+function declaresName(doc: string, resourceName: string): boolean {
+  return new RegExp(`^\\s*name:\\s*["']?${escapeRegExp(resourceName)}["']?\\s*$`, 'm').test(doc);
+}
+
+/**
+ * Read the `spec.package` image of a named Function from a Crossplane functions
+ * manifest, so a local render runs the same pinned image the cluster would.
+ */
+export function readFunctionPackage(
+  functionsYaml: string,
+  functionName: string
+): string | undefined {
+  for (const doc of functionsYaml.split(/^---[ \t]*$/m)) {
+    if (!declaresName(doc, functionName)) continue;
+    const pkg = doc.match(/^\s*package:\s*(\S+)\s*$/m)?.[1];
+    if (pkg) return pkg.replace(/^["']|["']$/g, '');
+  }
+  return undefined;
+}
+
+/**
+ * Repoint a Composition's KCL `source:` at a local directory instead of an OCI
+ * image. The inverse of `pinCompositionSource`: that one pins what consumers
+ * pull, this one makes a local render read the working tree.
+ *
+ * Only lines whose OCI path ends with the given project name are touched.
+ */
+export function localizeCompositionSource(
+  yaml: string,
+  projectName: string,
+  localPath: string
+): { content: string; matched: boolean } {
+  const lineRe = new RegExp(
+    `^(\\s*source:\\s*)oci://\\S+?/${escapeRegExp(projectName)}(?:[?:][^\\s]*)?\\s*$`,
+    'gm'
+  );
+  let matched = false;
+  const content = yaml.replace(lineRe, (_full, prefix) => {
+    matched = true;
+    return `${prefix}${localPath}`;
+  });
+  return { content, matched };
+}
+
+/**
+ * Annotate a named Function with the Development runtime, so `crossplane render`
+ * dials a Function we started ourselves rather than running one in Docker with
+ * no way to mount the working tree. Idempotent.
+ */
+export function withDevelopmentRuntime(
+  functionsYaml: string,
+  functionName: string
+): { content: string; matched: boolean } {
+  return mapYamlDocuments(functionsYaml, (doc) => {
+    if (!declaresName(doc, functionName)) return null;
+    if (new RegExp(`^\\s*${escapeRegExp(RUNTIME_ANNOTATION)}:`, 'm').test(doc)) return doc;
+
+    const lines = doc.split('\n');
+    const metaIdx = lines.findIndex((l) => /^\s*metadata:\s*$/.test(l));
+    if (metaIdx === -1) return null;
+    const metaIndent = lines[metaIdx].match(/^\s*/)![0];
+    const fieldIndent = `${metaIndent}  `;
+
+    // Stay inside the metadata block: stop at the first line indented no
+    // further than `metadata:` itself.
+    let end = metaIdx + 1;
+    while (end < lines.length) {
+      const line = lines[end];
+      if (line.trim() !== '' && !line.startsWith(fieldIndent)) break;
+      end++;
+    }
+    const existing = lines
+      .slice(metaIdx + 1, end)
+      .findIndex((l) => new RegExp(`^${fieldIndent}annotations:\\s*$`).test(l));
+
+    if (existing === -1) {
+      lines.splice(metaIdx + 1, 0, `${fieldIndent}annotations:`, `${fieldIndent}  ${RUNTIME_ANNOTATION}: Development`);
+    } else {
+      lines.splice(metaIdx + 1 + existing + 1, 0, `${fieldIndent}  ${RUNTIME_ANNOTATION}: Development`);
+    }
+    return lines.join('\n');
+  });
+}

@@ -1,0 +1,20 @@
+# IRSA: the role's trust policy names this cluster's OIDC provider and this
+# ServiceAccount only; the composed ServiceAccount carries the role ARN.
+apiVersion: cloud.example.org/v1alpha1
+kind: WorkloadIdentity
+metadata:
+  name: external-secrets
+  namespace: external-secrets
+spec:
+  displayName: External Secrets Operator
+  serviceAccount:
+    name: external-secrets
+  identity:
+    name: external-secrets
+  cluster:
+    # The cluster's IAM OIDC provider ARN (the issuer URL works too).
+    oidcIssuer: arn:aws:iam::123456789012:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE1234567890
+  accessPolicies:
+    - role: SecretsManagerReadWrite
+  tags:
+    team: platform

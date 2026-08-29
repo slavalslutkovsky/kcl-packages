@@ -1,0 +1,39 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "nx-kcl",
+  "projectType": "library",
+  "tags": ["lang:ts", "area:tools"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/src/**/*",
+        "{projectRoot}/generators.json",
+        "{projectRoot}/executors.json",
+        "{projectRoot}/package.json",
+        "{projectRoot}/tsconfig.json",
+        "{projectRoot}/README.md",
+        "{projectRoot}/scripts/prepare-dist.mjs",
+        "{workspaceRoot}/tsconfig.base.json"
+      ],
+      "outputs": ["{workspaceRoot}/dist/tools/nx-kcl"],
+      "options": {
+        "cwd": "{workspaceRoot}",
+        "parallel": false,
+        "commands": [
+          "tsc -p tools/nx-kcl/tsconfig.json",
+          "node tools/nx-kcl/scripts/prepare-dist.mjs"
+        ]
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "cwd": "{workspaceRoot}",
+        "command": "tsc -p tools/nx-kcl/tsconfig.json --noEmit"
+      }
+    }
+  }
+}

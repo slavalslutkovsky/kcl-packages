@@ -1,0 +1,212 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: workloadidentities.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: WorkloadIdentity
+    plural: workloadidentities
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Keyless identity for a workload running in a Kubernetes
+                cluster: a Kubernetes ServiceAccount is bound to a cloud
+                identity, so pods using that KSA get cloud credentials from
+                the cluster's token issuer instead of a mounted secret.
+                GCP: Service Account + roles/iam.workloadIdentityUser member
+                serviceAccount:<pool>[ns/ksa] (GKE Workload Identity).
+                AWS: IAM Role whose trust policy allows
+                sts:AssumeRoleWithWebIdentity for system:serviceaccount:ns:ksa
+                from the cluster's OIDC provider (IRSA).
+                Azure: User Assigned Identity + FederatedIdentityCredential
+                for system:serviceaccount:ns:ksa (Workload Identity).
+                Fields a backend cannot honour make the render FAIL with a
+                clear message rather than silently binding a different
+                principal or granting different access than was asked for.
+              properties:
+                displayName:
+                  type: string
+                  description: Human-readable description of the workload. GCP displayName / AWS role description / Azure tag.
+                serviceAccount:
+                  type: object
+                  description: The Kubernetes side of the binding — the ServiceAccount pods use.
+                  properties:
+                    name:
+                      type: string
+                      description: Name of the Kubernetes ServiceAccount allowed to impersonate the cloud identity.
+                    namespace:
+                      type: string
+                      description: Namespace of that ServiceAccount. Defaults to the namespace of this resource; when create is true it MUST equal it, because a namespaced composite can only compose into its own namespace.
+                    create:
+                      type: boolean
+                      default: true
+                      description: |
+                        Also compose the Kubernetes ServiceAccount, carrying the
+                        annotation the cloud's webhook/library reads
+                        (GCP iam.gke.io/gcp-service-account,
+                        AWS eks.amazonaws.com/role-arn,
+                        Azure azure.workload.identity/client-id +
+                        azure.workload.identity/use label). Set false when the
+                        ServiceAccount is owned by a Helm chart or GitOps and
+                        only the cloud-side trust is wanted here. The composed
+                        ServiceAccount appears once the cloud identity is
+                        observed, since the annotation carries its identifier.
+                  required: [name]
+                identity:
+                  type: object
+                  description: The cloud side of the binding.
+                  properties:
+                    name:
+                      type: string
+                      description: 'Name of the cloud identity to create. GCP: accountId (6-30 chars, lowercase letters/digits/hyphens). AWS: IAM role name. Azure: identity name. Defaults to the name of this resource.'
+                    existing:
+                      type: string
+                      description: |
+                        Bind to an identity that already exists instead of
+                        creating one — GCP service-account e-mail, AWS role ARN.
+                        The caller owns its permissions, so accessPolicies must
+                        be empty; only the trust binding (and the annotated
+                        ServiceAccount) is created here. Azure fails the render:
+                        a federated credential needs the identity as its parent.
+                cluster:
+                  type: object
+                  description: Where the workload runs — how the cluster's tokens are trusted.
+                  properties:
+                    project:
+                      type: string
+                      description: 'GCP-only — project whose workload identity pool the cluster belongs to; the member becomes serviceAccount:<project>.svc.id.goog[ns/ksa]. Other backends fail the render if set.'
+                    workloadIdentityPool:
+                      type: string
+                      description: 'GCP-only — the pool itself, for fleet/cross-project pools (e.g. my-fleet-host.svc.id.goog). Takes precedence over project; one of the two is required.'
+                    oidcIssuer:
+                      type: string
+                      description: 'The cluster''s OIDC issuer. AWS: the IAM OIDC provider ARN (or its issuer URL) — required. Azure: the AKS OIDC issuer URL — required. GCP fails the render if set; GKE trust goes through the workload identity pool, not an issuer.'
+                    audiences:
+                      type: array
+                      items: {type: string}
+                      description: Accepted token audiences. AWS defaults to sts.amazonaws.com, Azure to api://AzureADTokenExchange. Ignored by GCP.
+                accessPolicies:
+                  type: array
+                  description: |
+                    Access the workload gets through this identity. GCP: one
+                    Project/Folder/OrganizationIAMMember per entry, picked by
+                    scopeType. AWS: one RolePolicyAttachment per entry (role is
+                    a managed policy ARN or name). Azure: one RoleAssignment per
+                    entry (scope REQUIRED).
+                  items:
+                    type: object
+                    properties:
+                      role:
+                        type: string
+                        description: 'What is granted. GCP: an IAM role (roles/…). AWS: managed policy ARN, or a name resolved to arn:aws:iam::aws:policy/<name>. Azure: built-in role name, or a role definition ID (starts with /).'
+                      scope:
+                        type: string
+                        description: 'Where the grant applies. GCP: project id (defaults to the ProviderConfig project), folder id or organization id, per scopeType. Azure: full scope ID (/subscriptions/…), required. AWS: not expressible on a managed-policy attachment; a value here fails the render.'
+                      scopeType:
+                        type: string
+                        enum: [project, folder, organization]
+                        default: project
+                        description: 'GCP-only — the resource level scope names: project (default), folder or organization. folder and organization require scope. Other backends fail the render if set.'
+                      condition:
+                        type: object
+                        description: 'Conditional (attribute-based) access. GCP: IAM condition (title required by the API; defaulted when omitted). Azure: role-assignment condition, version 2.0. AWS: not expressible on an attachment; a value here fails the render.'
+                        properties:
+                          expression:
+                            type: string
+                            description: Condition expression (GCP CEL / Azure ABAC).
+                          title:
+                            type: string
+                            description: Short name for the condition (GCP; ignored by Azure).
+                          description:
+                            type: string
+                            description: What the condition restricts (GCP; ignored by Azure).
+                        required: [expression]
+                    required: [role]
+                region:
+                  type: string
+                  description: Azure-only — the location of the User Assigned Identity. AWS roles and GCP service accounts are global; both fail the render if set.
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the Resource Group the identity and its federated credential live in. Required by the azure backend; the others fail the render if set.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the cloud identity when this resource is deleted; maps to Crossplane managementPolicies (Orphan keeps the external identity, its grants and its trust binding).
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS tags / Azure tags. GCP service accounts have no labels; ignored there.
+              required: [serviceAccount]
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the cloud identity exists and the binding can be resolved.
+                provider:
+                  type: string
+                  description: Cloud backend that fulfilled the claim (aws | gcp | azure).
+                principal:
+                  type: string
+                  description: 'The string other systems use to refer to the cloud identity: GCP serviceAccount:<email> member, AWS role ARN, Azure principal (object) ID.'
+                subject:
+                  type: string
+                  description: 'The Kubernetes-side principal that is trusted: GCP serviceAccount:<pool>[ns/ksa] member, AWS/Azure system:serviceaccount:<ns>:<name> subject.'
+                serviceAccount:
+                  type: string
+                  description: The bound Kubernetes ServiceAccount, as <namespace>/<name>.
+                annotation:
+                  type: string
+                  description: Value the workload's ServiceAccount must carry for the binding to work (GCP service-account e-mail, AWS role ARN, Azure client ID) — already set when spec.serviceAccount.create is true.
+                name:
+                  type: string
+                  description: Provider-side name of the identity.
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+                arn:
+                  type: string
+                  description: AWS role ARN (AWS only).
+                email:
+                  type: string
+                  description: Service account e-mail (GCP only).
+                clientId:
+                  type: string
+                  description: Client (app) ID of the identity (Azure only).
+                principalId:
+                  type: string
+                  description: Service principal object ID (Azure only).
+                tenantId:
+                  type: string
+                  description: Tenant the identity belongs to (Azure only).
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the identity.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: SERVICEACCOUNT
+          type: string
+          jsonPath: .status.serviceAccount
+        - name: ANNOTATION
+          type: string
+          jsonPath: .status.annotation
+        - name: CLOUD-URL
+          type: string
+          jsonPath: .status.cloud-url

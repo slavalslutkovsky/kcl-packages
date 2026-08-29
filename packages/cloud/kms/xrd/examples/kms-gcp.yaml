@@ -1,0 +1,25 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: EncryptionKey
+metadata:
+  namespace: default
+  name: app-data-key
+spec:
+  region: us-central1           # Cloud KMS location; use a multi-region (e.g. "us") for multi-region keys
+  purpose: encrypt-decrypt      # encrypt-decrypt | sign-verify
+  algorithm: symmetric          # GOOGLE_SYMMETRIC_ENCRYPTION
+  protectionLevel: software     # software | hsm -> versionTemplate.protectionLevel
+  rotationDays: 90              # rotationPeriod (symmetric keys only)
+  deletionWindowDays: 30        # destroyScheduledDuration
+  deletionPolicy: Delete        # Delete | Orphan — Orphan leaves the CryptoKey alive
+  tags:                         # rendered as Cloud KMS labels
+    team: platform
+  # A key ring is composed alongside the key and named after the XR: Cloud KMS
+  # key rings and keys can never be deleted, only their versions destroyed, so
+  # deleting this XR schedules the key material for destruction and leaves the
+  # (empty, free) ring behind.
+  # Ignored by this backend: multiRegion (choose a multi-regional `region`
+  # instead), exportable (Cloud KMS never exports key material), mountPath.
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp           # the flag: picks the backend (aws | gcp | azure | openbao)

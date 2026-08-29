@@ -1,0 +1,19 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: ApiGateway
+metadata:
+  namespace: default
+  name: my-gcp-gateway
+spec:
+  backendUrl: https://backend.example.com   # -> Apigee TargetServer host+port (no path allowed)
+  region: europe-west1                      # ignored on gcp (the runtime region is the instance's)
+  project: my-project                       # must already host an Apigee organization
+  hostname: api.example.com                 # the envgroup hostname = the serving endpoint
+  apigeeInstance: my-runtime                # optional; existing instance the env is attached to
+  description: Edge for the example backend
+  # cors is rejected on gcp: Apigee CORS is a policy in the proxy bundle.
+  deletionPolicy: Delete                    # Delete | Orphan — Orphan keeps env/envgroup/target
+  # tags are ignored on gcp: no Apigee resource in this family carries labels.
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp                       # the flag: picks the backend (aws | azure | gcp)

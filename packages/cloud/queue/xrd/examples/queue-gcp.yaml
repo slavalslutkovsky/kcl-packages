@@ -1,0 +1,20 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Queue
+metadata:
+  namespace: default
+  name: orders
+spec:
+  region: europe-west1
+  visibilityTimeoutSeconds: 60    # -> ackDeadlineSeconds (GCP clamps to 10-600)
+  retentionDays: 7                # subscription retention (GCP max 7d)
+  fifo: false                     # true -> enableMessageOrdering (producers set an ordering key)
+  deadLetter:                     # orders-dlq topic + subscription, wired via deadLetterPolicy;
+    enabled: true                 # the Pub/Sub service agent still needs IAM grants on the pair
+    maxReceives: 5                # GCP floor is 5
+  deletionPolicy: Delete
+  tags:                           # -> labels on topic + subscriptions
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp             # the flag: picks the backend (aws | gcp | nats)

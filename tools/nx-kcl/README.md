@@ -25,6 +25,7 @@ anywhere under the workspace and the project appears automatically.
 
 - The [KCL CLI](https://kcl-lang.io/docs/user_docs/getting-started/install) (`kcl`) on `PATH`.
 - Node.js and Nx (the plugin runs as TypeScript via `@swc-node/register`).
+- For the `render` target only: the [Crossplane CLI](https://docs.crossplane.io/latest/cli/) (`crossplane`) and a running Docker daemon.
 
 ## Setup
 
@@ -62,6 +63,65 @@ Optionally pass an OCI registry prefix used by the publish executor:
 > depended on). The workspace itself is defined in `pnpm-workspace.yaml`
 > (`packages:` globs) — pnpm ignores the `workspaces` field in `package.json`.
 
+## Using the plugin in another Nx workspace
+
+The plugin is published as a compiled npm package. The source `package.json`
+stays `private` and points at TypeScript (that is what the in-repo workspace
+link and the `./tools/nx-kcl/src/index.ts` entry above use); `nx build nx-kcl`
+emits a self-contained package to `dist/tools/nx-kcl`:
+
+```bash
+nx build nx-kcl              # tsc + scripts/prepare-dist.mjs
+npm publish dist/tools/nx-kcl
+```
+
+`prepare-dist.mjs` copies `generators.json`, `executors.json` and every schema
+next to the emitted JS, and writes a public `package.json` with `main`,
+`generators`, `executors`, `@nx/devkit` as a dependency and `nx` as a peer. The
+emitted layout keeps the `src/` prefix, so the manifests' relative paths resolve
+unchanged.
+
+In the consuming workspace:
+
+```bash
+pnpm add -D nx-kcl           # or: npm i -D nx-kcl
+```
+
+```jsonc
+// nx.json
+{
+  "plugins": [
+    { "plugin": "nx-kcl", "options": { "registryPrefix": "oci://ghcr.io/your-org" } }
+  ]
+}
+```
+
+Every `kcl.mod` in that workspace is then a project with the targets below — no
+other wiring. The package name **must** stay `nx-kcl` for the consumer, because
+the inferred targets reference `nx-kcl:remove` / `nx-kcl:publish` /
+`nx-kcl:render` by package name.
+
+For `nx release` on KCL packages, point `versionActions` at the installed
+package instead of a repo-relative path:
+
+```jsonc
+// nx.json
+"release": {
+  "projects": ["tag:lang:kcl"],
+  "projectsRelationship": "independent",
+  "registry": "docker.io/your-org",
+  "version": {
+    "versionActions": "nx-kcl/src/release/version-actions.js",
+    "fallbackCurrentVersionResolver": "disk"
+  }
+}
+```
+
+Two layout notes: the `area:<segment>` tag is derived from the path segment
+after `packages/`, so release scoping by `tag:area:*` only works under a
+`packages/<area>/…` layout; and the `composition` generator defaults
+`--directory` to `packages/cloud`, so pass `--directory` explicitly elsewhere.
+
 ## Project targets
 
 Each KCL package gets these targets:
@@ -76,12 +136,55 @@ Each KCL package gets these targets:
 | `remove`            | `nx-kcl:remove`                  | no     | Remove a dependency + reconcile the lock. |
 | `pkg`               | `kcl mod pkg --target .`         | yes    | Builds a `.tar`; depends on `test`, `lint`. |
 | `nx-release-publish` | `nx-kcl:publish`                 | no     | `kcl mod push` to OCI; depends on `test`, `lint`. Run via `nx release`. |
+| `render`            | `nx-kcl:render`                  | no     | Only on Composition packages. `crossplane render` against the working tree — no publish, no cluster. |
 
 ```bash
 nx build cluster
 nx test cluster
 nx run-many -t build test lint        # across all KCL packages
 ```
+
+## Rendering a Composition locally
+
+Composition packages (those with a `composition.yaml`) also get a `render`
+target. It shows the managed resources the Composition would compose, in about
+a second, with **no cluster and no publish step**:
+
+```bash
+nx run bucket-gcp:render                       # renders xrd/examples/bucket-gcp.yaml
+nx run bucket-gcp:render --example=bucket-aws  # a different example XR
+nx run bucket-gcp:render --functionResults     # also print function results
+just render bucket-gcp                         # same thing
+```
+
+The example XR defaults to `<module>/xrd/examples/<project>.yaml` — the name the
+`composition` generator scaffolds. `functions.yaml` comes from the same `xrd/`
+dir, so renders use the same pinned function images the cluster would.
+
+### How it renders the working tree
+
+A committed `composition.yaml` points its KCL `source:` at a published image
+(`oci://.../bucket-gcp?tag=0.0.6`), so a plain `crossplane render` would show you
+the *last release*, not your edits. Instead the executor:
+
+1. starts `function-kcl` itself — the image pinned in `functions.yaml` — with the
+   workspace mounted read-only at `/workspace`, and annotates the Function with
+   `render.crossplane.io/runtime: Development` so `crossplane render` dials it
+   instead of running its own container;
+2. rewrites the `source:` to `/workspace/<projectRoot>` in a temp copy of
+   `composition.yaml` (the committed file is never touched);
+3. runs `crossplane render`.
+
+Because the whole workspace is mounted, the relative path deps on the provider
+schema packages resolve as they do on disk — no vendoring and no registry, unlike
+publishing.
+
+The container is named `nx-kcl-render` and is left running so later renders reuse
+it (~6s cold, ~1.5s warm). Stop it with `just render-stop`, or render with
+`--keepContainer=false`.
+
+> `render` is deliberately **not cached**: its output also depends on the provider
+> schema packages, which nx does not track as inputs of the Composition package.
 
 ## Dependency management
 
@@ -258,6 +361,8 @@ packages/cloud/bucket/
   `nx release` — the publish executor embeds each path-dep schema into the
   artifact (see below), so the pushed image is self-contained. Then pin `?tag=`
   in each `composition.yaml` and `crossplane render` against the published modules.
+  Before publishing, `nx run bucket-<provider>:render` renders the working tree
+  directly (see [Rendering a Composition locally](#rendering-a-composition-locally)).
 
 | Option       | Default               | Description |
 | ------------ | --------------------- | ----------- |
@@ -274,6 +379,7 @@ packages/cloud/bucket/
 | ----------------- | ------- |
 | `nx-kcl:publish`  | `kcl mod push` a package to an OCI registry. Used by `nx-release-publish`. |
 | `nx-kcl:remove`   | Remove a dependency from `kcl.mod` and reconcile `kcl.mod.lock`. Backs the `remove` target. |
+| `nx-kcl:render`   | `crossplane render` a Composition against the working tree. Backs the `render` target. |
 
 The publish target defaults to `oci://$KCL_REGISTRY/<project>`. The registry can
 be set per invocation via the executor `registry` option, the plugin
@@ -365,11 +471,18 @@ tools/nx-kcl/
     utils.ts               # kcl.mod parse / version / dependency helpers
     generators/
       package/             # `nx g nx-kcl:package`
+      search/              # `nx g nx-kcl:search`
+      import-crd/          # `nx g nx-kcl:import-crd`
+      composition/         # `nx g nx-kcl:composition`
     remove/                # `nx-kcl:remove` executor
+    render/                # `nx-kcl:render` executor (crossplane render)
     release/
       version-actions.ts   # nx release version actions for kcl.mod
       publish-executor.ts  # `nx-kcl:publish` executor (kcl mod push)
+  scripts/
+    prepare-dist.mjs       # builds the publishable package into dist/tools/nx-kcl
   generators.json
   executors.json
-  package.json
+  project.json             # `build` (tsc + prepare-dist) and `typecheck` targets
+  package.json             # private; the published manifest is generated by prepare-dist
 ```

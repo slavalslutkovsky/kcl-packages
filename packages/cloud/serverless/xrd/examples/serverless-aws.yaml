@@ -1,0 +1,26 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: ServerlessApp
+metadata:
+  namespace: default
+  name: my-app
+spec:
+  image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app:v1  # Lambda needs an ECR image in the same account and region
+  region: us-east-1
+  memoryMb: 1024                 # Lambda memorySize, clamped to 10240 (CPU scales with it)
+  # cpu: 1                       # ignored on AWS — Lambda allocates CPU from memoryMb
+  # port: 8080                   # ignored on AWS — Lambda images speak the Runtime API
+  timeoutSeconds: 120            # Lambda timeout, clamped to 900
+  # minInstances: 1              # ignored on AWS — provisioned concurrency is beyond this XR
+  maxInstances: 20               # reservedConcurrentExecutions; unset keeps concurrency unreserved
+  env:                           # plain env vars; mount secrets in the consumer instead
+    LOG_LEVEL: info
+  public: true                   # Function URL authType NONE + public invoke permission
+  # serviceAccount: arn:aws:iam::123456789012:role/my-role  # existing execution role ARN, skips composing one
+  deletionPolicy: Delete         # Delete | Orphan — Orphan keeps the function, role, and URL
+  tags:
+    team: platform
+    cost-center: "42"
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws            # the flag: picks the backend (aws | gcp | azure | knative)

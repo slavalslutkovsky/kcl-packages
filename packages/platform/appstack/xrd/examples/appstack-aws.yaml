@@ -1,0 +1,47 @@
+apiVersion: platform.example.org/v1alpha1
+kind: AppStack
+metadata:
+  namespace: default
+  name: my-aws-stack
+spec:
+  provider: aws                    # the flag: stamped onto all five children (aws | gcp)
+  region: us-east-1                # every child is placed here
+  network:
+    cidr: 10.0.0.0/16              # VPC cidrBlock, carved into one private + one public subnet per zone
+    availabilityZones:             # REQUIRED on aws: the RDS and ElastiCache subnet groups must span zones
+      - us-east-1a
+      - us-east-1b
+    natGateway: true               # one NAT Gateway (plus its Elastic IP) in the first public subnet
+  api:                             # public: true is set by the Composition, not here
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/apps/api:v1  # Lambda container images must live in ECR
+    cpu: 1                         # ignored by Lambda, which scales CPU with memoryMb
+    memoryMb: 512                  # Lambda memorySize
+    maxInstances: 20               # reservedConcurrentExecutions
+    timeoutSeconds: 30             # Lambda timeout
+    env:
+      LOG_LEVEL: info              # DATABASE_* / REDIS_* are injected, do not set them here
+  worker:                          # public: false -> Function URL authType AWS_IAM
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/apps/worker:v1
+    memoryMb: 1024
+    timeoutSeconds: 900            # the Lambda ceiling
+  database:
+    engineVersion: "16"            # RDS engineVersion
+    memoryGb: 8                    # -> the smallest RDS machine that fits
+    storageGb: 100                 # allocatedStorage
+    name: app                      # RDS dbName
+    username: app                  # RDS master username
+    highAvailability: true         # multiAz
+    snapshotRetentionDays: 14      # backupRetentionPeriod
+    passwordSecret:
+      name: app-db-password        # must already exist in this namespace
+      key: password
+  cache:
+    engineVersion: "7.0"           # ElastiCache engineVersion
+    memoryGb: 4                    # -> the smallest node type that fits
+    replicas: 1                    # numCacheClusters = replicas + 1
+    highAvailability: true         # multiAzEnabled + automaticFailoverEnabled
+    authEnabled: true              # auth token published to a Secret, whose name is injected into both apps
+  deletionPolicy: Delete           # Delete | Orphan — Orphan keeps network, apps, database and cache
+  tags:
+    team: platform
+    env: staging

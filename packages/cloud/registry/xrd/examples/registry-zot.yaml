@@ -1,0 +1,34 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Registry
+metadata:
+  namespace: default
+  name: my-local-images
+spec:
+  # No cloud account involved: the zot chart is installed into this XR's own
+  # namespace by provider-helm. `region` stays required by the XRD, so give it
+  # something honest.
+  region: in-cluster
+  storageGb: 50                  # self-hosted only: PVC the images live on
+  scanOnPush: true               # enables zot's CVE search extension
+  untaggedRetentionDays: 14      # storage.retention: delete untagged images after 14 days
+  keepLastImages: 30             # storage.retention: keep the 30 most recently pushed tags
+  publicAccess: false
+  # Without htpasswdSecret zot serves anonymous read/write, reachable only from
+  # inside the cluster (ClusterIP service, no ingress) — which is what makes
+  # this example apply cleanly with no prerequisites. Set it to require
+  # credentials for push (and for pull too, unless publicAccess is true); the
+  # Secret must exist in this namespace with an `htpasswd` key, and the zot pod
+  # blocks on it:
+  #   htpasswd -Bbn ci 'ci-password' > /tmp/htpasswd
+  #   kubectl create secret generic my-registry-htpasswd \
+  #     --from-file=htpasswd=/tmp/htpasswd -n default
+  # htpasswdSecret: my-registry-htpasswd
+  deletionPolicy: Delete         # Orphan leaves the Helm release (and the images) installed
+  tags:                          # rendered as pod labels
+    team: platform
+  # Ignored by this backend: immutableTags (zot has no tag immutability),
+  # encryptionKeyId (disk encryption is the storage class's job) and forceDestroy.
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: zot            # the flag: picks the backend (aws | gcp | azure | zot)

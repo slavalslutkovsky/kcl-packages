@@ -1,0 +1,75 @@
+# Git hooks for this workspace. Install them once per clone with `just hooks`.
+#
+# Every job below is a `just` recipe and nothing else: the hook decides WHEN a
+# check runs and over WHICH files, the justfile decides WHAT it does. So each
+# failure is reproducible by hand (`just mod-check`, `just fmt-check`, …) and
+# there is exactly one definition of every check.
+#
+# Run a whole hook over the tree without committing: `just hooks-run pre-commit`.
+# Skip the hooks for one command: `LEFTHOOK=0 git commit …` (or `git commit -n`,
+# which skips pre-commit and commit-msg only).
+
+assert_lefthook_installed: true
+
+# Staged-file scoped and a couple of seconds at most — this runs on every
+# commit. Sequential on purpose: `fmt-files` rewrites the very files
+# `lint-files` then reads, and parallel jobs would race on them.
+pre-commit:
+  parallel: false
+  jobs:
+    # kcl fmt the staged KCL, then re-stage what it rewrote, so the commit
+    # contains the formatted file rather than failing on it.
+    - name: kcl-fmt
+      glob: '*.k'
+      exclude:
+        - 'packages/providers/**'
+      run: just fmt-files {staged_files}
+      stage_fixed: true
+
+    # kcl lint each package that owns a staged .k file (not the whole tree).
+    - name: kcl-lint
+      glob: '*.k'
+      exclude:
+        - 'packages/providers/**'
+      run: just lint-files {staged_files}
+
+    # XRDs, Compositions, providers.yaml, examples: a YAML typo here otherwise
+    # only surfaces as a failed `kubectl apply` halfway through `just up`.
+    - name: yaml-syntax
+      glob: '*.{yaml,yml}'
+      run: just yaml-check {staged_files}
+
+    # Cheap whole-workspace invariants (unique package names, path deps that
+    # resolve, Composition source == package name). Only when the files that
+    # can break them are touched.
+    - name: package-integrity
+      glob: '*.{mod,yaml}'
+      run: just mod-check
+
+    # Three clouds' worth of credentials are one careless `git add` away.
+    - name: secrets
+      run: just secrets-check {staged_files}
+
+    # The plugin behind every nx target and generator in the justfile.
+    - name: typecheck
+      glob: 'tools/**/*.ts'
+      run: just typecheck
+
+# `nx release` writes the changelogs from these; a "wip" subject line lands in
+# a published CHANGELOG.md.
+commit-msg:
+  jobs:
+    - name: conventional-commit
+      run: just commit-msg {1}
+
+# The slow gate, and the same thing CI runs: build + test + lint every
+# hand-written package (providers excluded). nx caches per project, so a push
+# that changes nothing new is a run of cache hits.
+pre-push:
+  parallel: false
+  jobs:
+    - name: check
+      run: just check
+
+    - name: typecheck
+      run: just typecheck

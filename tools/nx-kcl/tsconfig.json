@@ -1,7 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "../../dist/tools/nx-kcl"
+    "outDir": "../../dist/tools/nx-kcl",
+    // rootDir is the package dir, not `src`, so emitted JS keeps the `src/`
+    // prefix: `dist/tools/nx-kcl/src/release/publish-executor.js`. That lets
+    // generators.json / executors.json be copied verbatim — their `./src/...`
+    // relative paths resolve identically in the source tree and in the
+    // published package.
+    "rootDir": "."
   },
   "include": ["src/**/*.ts"]
 }
