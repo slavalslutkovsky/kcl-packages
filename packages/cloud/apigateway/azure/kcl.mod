@@ -1,7 +1,7 @@
 [package]
 name = "apigateway-azure"
 edition = "v0.12.3"
-version = "0.1.1"
+version = "0.1.2"
 
 [dependencies]
 azure-apimanagement = { path = "../../../providers/azure-apimanagement" }
