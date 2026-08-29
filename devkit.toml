@@ -34,6 +34,14 @@ ingress = true        # binds host ports 80/443 on the control plane
 config = ".vals.yaml"       # vals config file
 output = ".env"
 
+
+[flux]
+# owner = "my-org"          # GitHub user/org; leave unset to derive from `gh api user`
+repository = "gitops-v1"
+branch = "main"
+path = "clusters/mgmt"
+personal = true
+
 # Cluster dependencies, installed by `devkit cluster deps` (justfile `e2e-up`)
 # once the cluster is up. Helm rows: name, repo, chart (default: name),
 # version, namespace (default: "default"), timeout (default: "10m"), values

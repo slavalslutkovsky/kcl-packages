@@ -9,6 +9,6 @@ oci/
 
 # scratch dir: `just seed-queue-providers` downloads CRDs here
 tmp/
-
+.task
 # Rust build output (`rust/Cargo.lock` is committed on purpose)
 rust/target/

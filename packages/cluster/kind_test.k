@@ -56,9 +56,57 @@ test_db_workers_only = lambda {
     assert len(cluster.nodes[1].kubeadmConfigPatches) == 1
 }
 
+# Test that no issuer patch is emitted by default
+test_no_issuer_by_default = lambda {
+    cluster = kind.Cluster {}
+    assert len(cluster.nodes[0].kubeadmConfigPatches or []) == 0, "Plain cluster should carry no kubeadm patches"
+}
+
+# Test the service-account issuer patch
+test_oidc_issuer = lambda {
+    cluster = kind.Cluster {
+        _oidc_bucket: "paidevo-local-oidc"
+        _oidc_id: "yurik"
+    }
+    patches = cluster.nodes[0].kubeadmConfigPatches
+    assert len(patches) == 1, "Should have only the issuer patch"
+    assert "kind: ClusterConfiguration" in patches[0]
+    assert "value: https://storage.googleapis.com/paidevo-local-oidc/yurik" in patches[0]
+    assert "- name: service-account-issuer" in patches[0], "extraArgs uses the native kubeadm v1beta4 list shape"
+}
+
+# Test issuer + ingress coexisting on the control-plane node
+test_oidc_issuer_with_ingress = lambda {
+    cluster = kind.Cluster {
+        _ingress: True
+        _oidc_bucket: "bucket"
+        _oidc_id: "id"
+    }
+    cp_node = cluster.nodes[0]
+    assert len(cp_node.kubeadmConfigPatches) == 2, "ingress patch + issuer patch"
+    assert "ingress-ready=true" in cp_node.kubeadmConfigPatches[0]
+    assert "service-account-issuer" in cp_node.kubeadmConfigPatches[1]
+    assert len(cp_node.extraPortMappings) == 2, "ingress ports survive the extra patch"
+}
+
+# Test that db workers keep only their taint patch
+test_oidc_issuer_leaves_workers_alone = lambda {
+    cluster = kind.Cluster {
+        _db_workers: 1
+        _oidc_bucket: "bucket"
+        _oidc_id: "id"
+    }
+    assert len(cluster.nodes[1].kubeadmConfigPatches) == 1, "Issuer patch is control-plane only"
+    assert "JoinConfiguration" in cluster.nodes[1].kubeadmConfigPatches[0]
+}
+
 # Run tests
 test_default_cluster()
 test_cluster_with_workers()
 test_ingress_config()
 test_db_workers()
 test_db_workers_only()
+test_no_issuer_by_default()
+test_oidc_issuer()
+test_oidc_issuer_with_ingress()
+test_oidc_issuer_leaves_workers_alone()

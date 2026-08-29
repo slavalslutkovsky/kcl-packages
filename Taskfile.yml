@@ -3,14 +3,26 @@
 version: '3'
 
 vars:
+#  GREETING: '{{.GREETING | default "Hello, world!"}}'
   GREETING: Hello, world!
-
+  ARIS: Hello, Aris!
 tasks:
   default:
     desc: Print a greeting message
     cmds:
-      - echo "{{.GREETING}}"
+      - echo "{{.ARIS}}"
     silent: true
   nir:
     cmds:
       - task --taskfile https://raw.githubusercontent.com/go-task/task/main/website/src/public/Taskfile.yml hello
+  clus:
+    desc: Create the kind cluster from the gitops repo's remote Taskfile
+    cmds:
+      # --yes auto-accepts the remote-Taskfile trust prompt (checksum changes on every upstream edit)
+      - task --yes --taskfile https://raw.githubusercontent.com/yurikrupnik/gitops/refs/heads/main/cluster/Taskfile.yml create
+      - echo "running task {{.TASK}}"
+  desa:
+    desc: Create the kind cluster from the gitops repo's remote Taskfile
+    cmds:
+      # --yes auto-accepts the remote-Taskfile trust prompt (checksum changes on every upstream edit)
+      - task --yes --taskfile https://raw.githubusercontent.com/yurikrupnik/gitops/refs/heads/main/cluster/Taskfile.yml delete
