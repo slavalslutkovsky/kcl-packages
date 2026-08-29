@@ -77,23 +77,34 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      # `kcl registry login` cannot be used: it validates the credentials, then
-      # fails to persist them. kpm builds its store over its OWN config file
-      # (kpm pkg/client/login.go:22) which declares no credsStore, so oras falls
-      # back to a FileStore with puts disabled -> "putting plaintext credentials
-      # is disabled". `docker login` does not help either: it stores Docker Hub
-      # under "https://index.docker.io/v1/", while `kcl mod push` looks up the
-      # raw "docker.io" and oras normalises the stored key to "index.docker.io",
-      # so the lookup misses. Writing kpm's own config with a literal "docker.io"
-      # key is what the read path (pkg/downloader/credential.go) actually finds.
+      # `kcl mod push oci://docker.io/...` looks the credential up under the
+      # LITERAL url host, "docker.io" (kpm pkg/downloader/source.go sets
+      # oci.Reg = u.Host, pkg/client/client.go passes it straight to the oras
+      # store). Neither login helper produces that key:
+      #   * `kcl registry login docker.io` pings the registry, then fails to
+      #     persist - it opens the store with AllowPlaintextPut=false for https
+      #     registries, so the write dies with "putting plaintext credentials is
+      #     disabled" (oras FileStore.Put).
+      #   * `docker login` / docker/login-action store Docker Hub under
+      #     "https://index.docker.io/v1/" (oras ServerAddressFromRegistry). The
+      #     read path never normalises, and oras' legacy fallback only strips
+      #     scheme and path, leaving "index.docker.io" != "docker.io" -> the
+      #     lookup misses and Docker Hub answers 401 "authentication required".
+      # So write kpm's own config file with a literal "docker.io" key. No
+      # credsStore/credHelpers entries: they would divert the lookup to a
+      # docker-credential-* helper binary that does not exist on the runner.
+      # KCL_PKG_PATH is pinned (and exported for the publish step) because
+      # kpm's own default home moved from ~/.kcl/kpm to the XDG data dir in
+      # 0.12.5 and the CLI install script above is unpinned - resolving the
+      # default here would silently break auth on the next kpm home change.
       - name: Configure kpm credentials
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          # kpm resolves its credential file to $KCL_PKG_PATH/.kpm/config/config.json,
-          # falling back to the XDG data home when KCL_PKG_PATH is unset.
-          cred_dir="${KCL_PKG_PATH:-${XDG_DATA_HOME:-$HOME/.local/share}/kcl/modules}/.kpm/config"
+          KCL_PKG_PATH="$RUNNER_TEMP/kcl"
+          echo "KCL_PKG_PATH=$KCL_PKG_PATH" >> "$GITHUB_ENV"
+          cred_dir="$KCL_PKG_PATH/.kpm/config"
           mkdir -p "$cred_dir"
           auth=$(printf '%s:%s' "$DOCKERHUB_USERNAME" "$DOCKERHUB_TOKEN" | base64 -w0)
           printf '{"auths":{"docker.io":{"auth":"%s"}}}' "$auth" > "$cred_dir/config.json"
