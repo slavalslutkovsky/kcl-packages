@@ -1,0 +1,28 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: ServerlessApp
+metadata:
+  namespace: default
+  name: my-hello-app
+spec:
+  # No cloud account involved: the app becomes a Knative Service in this XR's
+  # own namespace. `region` stays required by the XRD, so give it something
+  # honest — the knative backend ignores it and runs where the XR lives.
+  image: ghcr.io/acme/hello:1.2.0  # any reachable registry (no ECR restriction)
+  region: in-cluster
+  port: 8080                       # containerPort the queue-proxy forwards to
+  cpu: 0.5                         # -> resources.limits.cpu "0.5"
+  memoryMb: 256                    # -> resources.limits.memory 256Mi
+  minInstances: 1                  # -> autoscaling.knative.dev/min-scale "1" (no cold starts)
+  maxInstances: 5                  # -> autoscaling.knative.dev/max-scale "5"
+  timeoutSeconds: 30               # queue-proxy request timeout
+  env:                             # plain env vars, rendered in sorted order
+    LOG_LEVEL: info
+  public: false                    # -> networking.knative.dev/visibility=cluster-local
+  serviceAccount: hello-runtime    # -> template.spec.serviceAccountName
+  deletionPolicy: Delete           # ignored: the Service lives and dies with the XR
+  tags:                            # -> Service labels
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: knative          # the flag: picks the backend (aws | gcp | azure | knative)

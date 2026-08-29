@@ -1,0 +1,20 @@
+# Crossplane providers the DnsZone Compositions render against. Install only
+# the ones whose backends you intend to use; each Composition references
+# exactly one of them.
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-dns-providers`) — keep them in step, or the
+# rendered manifests can reference fields the installed provider does not have.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-route53
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-route53:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-dns
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-dns:v2.6.0

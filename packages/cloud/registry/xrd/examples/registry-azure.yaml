@@ -1,0 +1,28 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Registry
+metadata:
+  namespace: default
+  # ACR names are 5-50 alphanumeric characters: no dashes, no dots.
+  name: myimages
+spec:
+  region: westeurope
+  resourceGroup: platform-rg     # azure-only, REQUIRED: an existing resource group
+  tier: premium                  # standard | premium — premium adds zone redundancy
+  publicAccess: false            # true sets anonymousPullEnabled
+  untaggedRetentionDays: 14      # retentionPolicyInDays (Premium-only; upgrades the sku on its own)
+  replicationRegions:            # georeplications (Premium-only); the primary region is ignored here
+    - northeurope
+  # Customer-managed keys need BOTH the Key Vault key and the user-assigned
+  # identity ACR reads it with; supply neither to use the Microsoft-managed key.
+  encryptionKeyId: https://my-kv.vault.azure.net/keys/acr/0123456789abcdef
+  encryptionIdentityClientId: 11111111-2222-3333-4444-555555555555
+  deletionPolicy: Delete         # Delete | Orphan — Orphan keeps the registry
+  tags:
+    team: platform
+  # Ignored by this backend: immutableTags (ACR has no registry-wide tag
+  # immutability), scanOnPush (Microsoft Defender, not a registry field),
+  # keepLastImages (no image-count retention) and forceDestroy.
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure          # the flag: picks the backend (aws | gcp | azure | zot)

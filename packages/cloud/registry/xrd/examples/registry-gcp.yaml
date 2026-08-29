@@ -1,0 +1,20 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Registry
+metadata:
+  namespace: default
+  name: my-images
+spec:
+  region: us-central1            # Artifact Registry location
+  immutableTags: true            # dockerConfig.immutableTags
+  scanOnPush: true               # vulnerabilityScanningConfig INHERITED (follows the project setting)
+  publicAccess: false            # true binds allUsers to roles/artifactregistry.reader
+  untaggedRetentionDays: 14      # cleanup policy: DELETE untagged versions older than 14 days
+  keepLastImages: 30             # cleanup policy: KEEP the 30 most recent versions
+  encryptionKeyId: projects/my-project/locations/us-central1/keyRings/kr/cryptoKeys/artifacts  # optional CMEK
+  deletionPolicy: Delete         # Delete | Orphan — Orphan keeps the repository
+  tags:                          # rendered as Artifact Registry labels
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp            # the flag: picks the backend (aws | gcp | azure | zot)

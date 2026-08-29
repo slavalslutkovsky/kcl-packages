@@ -1,0 +1,27 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: ServerlessApp
+metadata:
+  namespace: default
+  name: my-app
+spec:
+  image: ghcr.io/acme/hello:1.0.0  # any reachable registry works on Azure
+  region: westeurope               # Container App Environment location
+  resourceGroup: my-app-rg         # azure-only, REQUIRED: an existing resource group
+  port: 8080                       # ingress targetPort
+  cpu: 0.5                         # rounded UP to a supported cpu/memory pair
+  memoryMb: 1024                   # 0.5 vCPU + 1024 MiB -> the 0.5/1Gi pair
+  minInstances: 0                  # minReplicas (0 = scale to zero)
+  maxInstances: 5                  # maxReplicas; omit to keep Azure's default cap
+  # timeoutSeconds is ignored: Container Apps has no request-timeout knob.
+  # serviceAccount is ignored: identity is a Container Apps managed identity.
+  env:
+    LOG_LEVEL: info
+  public: true                     # false keeps the ingress Environment-internal
+  deletionPolicy: Delete           # Delete | Orphan — Orphan keeps app + environment
+  tags:
+    team: platform
+    cost-center: "42"
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure            # the flag: picks the backend

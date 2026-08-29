@@ -1,0 +1,64 @@
+# Crossplane providers the EmailDomain Compositions render against. Install
+# only the ones whose backends you intend to use; each Composition references
+# exactly one of them.
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-email-providers`) — keep them in step, or the
+# rendered manifests can reference fields the installed provider does not have.
+#
+# provider-aws-sesv2 MUST come from xpkg.crossplane.io, not ghcr.io: its
+# provider-family-aws dependency is declared against xpkg.crossplane.io, and
+# Crossplane's rbac-manager only shares family RBAC between packages from the
+# same registry/org (crossplane/crossplane#6320). Installed from ghcr.io the
+# provider never gets access to the family's (Cluster)ProviderConfig CRDs, its
+# informers never sync, and every SESv2 MR sits with no status conditions at
+# all — silently, with nothing in the provider log.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-sesv2
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/provider-aws-sesv2:v2.6.0
+---
+# The in-cluster (stalwart) backend installs a Helm chart, so it needs
+# provider-helm v1.x — that is the first line that ships the namespaced
+# `helm.m.crossplane.io` CRDs the Composition renders.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-helm
+spec:
+  package: ghcr.io/crossplane-contrib/provider-helm:v1.3.0
+  runtimeConfigRef:
+    name: provider-helm
+---
+# provider-helm needs in-cluster RBAC to install charts. This binds its
+# ServiceAccount to cluster-admin, which is what the upstream quickstart does;
+# scope it down before using this outside a sandbox.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provider-helm
+  namespace: crossplane-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: provider-helm-cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: provider-helm
+    namespace: crossplane-system
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-helm
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-helm

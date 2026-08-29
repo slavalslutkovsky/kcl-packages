@@ -6,3 +6,9 @@ oci/
 .env
 
 .claude/worktrees
+
+# scratch dir: `just seed-queue-providers` downloads CRDs here
+tmp/
+
+# Rust build output (`rust/Cargo.lock` is committed on purpose)
+rust/target/

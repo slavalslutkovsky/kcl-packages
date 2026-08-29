@@ -1,0 +1,25 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: ServerlessApp
+metadata:
+  namespace: default
+  name: my-gcp-app
+spec:
+  image: us-docker.pkg.dev/cloudrun/container/hello  # any reachable registry
+  region: us-central1            # Cloud Run location
+  port: 8080                     # containerPort the image listens on
+  cpu: 1                         # vCPU limit, rendered as the "1" quantity
+  memoryMb: 512                  # -> memory limit 512Mi
+  minInstances: 0                # scale to zero when idle
+  maxInstances: 3                # scaling.maxInstanceCount; omit for Cloud Run's default
+  timeoutSeconds: 60             # -> template.timeout "60s"
+  env:                           # plain env vars; mount secrets yourself
+    LOG_LEVEL: info
+  public: true                   # allUsers roles/run.invoker + open ingress
+  serviceAccount: app@my-proj.iam.gserviceaccount.com  # optional runtime identity
+  deletionPolicy: Delete         # Delete | Orphan — Orphan keeps the service
+  tags:                          # -> Cloud Run labels
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp            # the flag: picks the backend (aws | gcp | azure | knative)

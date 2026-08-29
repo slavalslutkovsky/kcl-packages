@@ -1,0 +1,19 @@
+# GKE Workload Identity: the external-secrets controller reads Secret Manager
+# with no key material anywhere — the composed ServiceAccount is annotated with
+# the service account's e-mail, and the service account trusts exactly that KSA.
+apiVersion: cloud.example.org/v1alpha1
+kind: WorkloadIdentity
+metadata:
+  name: external-secrets
+  namespace: external-secrets
+spec:
+  displayName: External Secrets Operator
+  serviceAccount:
+    name: external-secrets
+  identity:
+    name: external-secrets
+  cluster:
+    project: my-project
+  accessPolicies:
+    - role: roles/secretmanager.secretAccessor
+      scope: my-project

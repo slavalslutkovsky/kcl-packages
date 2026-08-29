@@ -1,0 +1,151 @@
+# The platform workloads a GKE cluster normally needs keyless credentials for,
+# ported from the Pulumi component that provisioned them imperatively
+# (iac: packages/gcp-gke/src/platform-workloads.ts). One WorkloadIdentity per
+# controller, each in the namespace its ServiceAccount lives in — a namespaced
+# composite composes the ServiceAccount into its own namespace.
+#
+# Replace my-project with the project that owns each resource: the identities
+# live in the cluster's project (spec.cluster.project), while grants can point
+# at whichever project holds the secrets, DNS zones or datasets.
+---
+# Crossplane's GCP provider: manages cloud resources from inside the cluster.
+# Least-privilege per managed project, not org-wide.
+apiVersion: cloud.example.org/v1alpha1
+kind: WorkloadIdentity
+metadata:
+  name: crossplane-controller
+  namespace: crossplane-system
+spec:
+  displayName: Crossplane for managing GCP resources via K8s CRDs
+  serviceAccount:
+    name: crossplane-gcp-provider
+    # The provider's ServiceAccount is created by the Crossplane
+    # ControllerConfig/DeploymentRuntimeConfig, not here.
+    create: false
+  identity:
+    name: crossplane-controller
+  cluster:
+    project: my-project
+  accessPolicies:
+    - {role: roles/cloudsql.admin, scope: my-project}
+    - {role: roles/redis.admin, scope: my-project}
+    - {role: roles/compute.networkAdmin, scope: my-project}
+    - {role: roles/container.admin, scope: my-project}
+    - {role: roles/iam.serviceAccountAdmin, scope: my-project}
+    - {role: roles/iam.serviceAccountUser, scope: my-project}
+    - {role: roles/artifactregistry.admin, scope: my-project}
+    - {role: roles/bigquery.admin, scope: my-project}
+    - {role: roles/servicenetworking.networksAdmin, scope: my-project}
+    - {role: roles/dns.admin, scope: my-project}
+    - {role: roles/storage.admin, scope: my-project}
+    - {role: roles/resourcemanager.projectIamAdmin, scope: my-project}
+---
+# External Secrets Operator: sync secrets from Secret Manager into the cluster.
+apiVersion: cloud.example.org/v1alpha1
+kind: WorkloadIdentity
+metadata:
+  name: external-secrets
+  namespace: external-secrets
+spec:
+  displayName: Sync secrets from GCP Secret Manager to K8s
+  serviceAccount:
+    name: external-secrets
+  identity:
+    name: external-secrets
+  cluster:
+    project: my-project
+  accessPolicies:
+    - {role: roles/secretmanager.secretAccessor, scope: my-project}
+---
+# cert-manager: DNS01 challenge solver for Let's Encrypt certificates.
+apiVersion: cloud.example.org/v1alpha1
+kind: WorkloadIdentity
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  displayName: DNS01 challenge solver for Let's Encrypt certificates
+  serviceAccount:
+    name: cert-manager
+  identity:
+    name: cert-manager
+  cluster:
+    project: my-project
+  accessPolicies:
+    - {role: roles/dns.admin, scope: my-project}
+---
+# FluxCD source-controller: pulls OCI artifacts and Helm charts.
+apiVersion: cloud.example.org/v1alpha1
+kind: WorkloadIdentity
+metadata:
+  name: fluxcd
+  namespace: flux-system
+spec:
+  displayName: GitOps deployment controller
+  serviceAccount:
+    name: source-controller
+    # Owned by the Flux install manifests.
+    create: false
+  identity:
+    name: fluxcd
+  cluster:
+    project: my-project
+  accessPolicies:
+    - {role: roles/container.viewer, scope: my-project}
+    - {role: roles/storage.objectViewer, scope: my-project}
+---
+# Monitoring stack: read Cloud Monitoring and Logging.
+apiVersion: cloud.example.org/v1alpha1
+kind: WorkloadIdentity
+metadata:
+  name: monitoring
+  namespace: monitoring
+spec:
+  displayName: Prometheus and Grafana monitoring
+  serviceAccount:
+    name: prometheus
+    # Owned by the kube-prometheus-stack chart.
+    create: false
+  identity:
+    name: monitoring
+  cluster:
+    project: my-project
+  accessPolicies:
+    - {role: roles/monitoring.viewer, scope: my-project}
+    - {role: roles/logging.viewer, scope: my-project}
+---
+# Platform events: publish to and consume from Pub/Sub.
+apiVersion: cloud.example.org/v1alpha1
+kind: WorkloadIdentity
+metadata:
+  name: pubsub
+  namespace: pubsub
+spec:
+  displayName: Publish and consume platform events via PubSub
+  serviceAccount:
+    name: pubsub-sa
+  identity:
+    name: pubsub
+  cluster:
+    project: my-project
+  accessPolicies:
+    - {role: roles/pubsub.publisher, scope: my-project}
+    - {role: roles/pubsub.subscriber, scope: my-project}
+---
+# Analytics sink: write cluster events and metrics to BigQuery.
+apiVersion: cloud.example.org/v1alpha1
+kind: WorkloadIdentity
+metadata:
+  name: bigquery
+  namespace: bigquery
+spec:
+  displayName: Write cluster events and metrics to BigQuery
+  serviceAccount:
+    name: bigquery-sa
+  identity:
+    name: bigquery
+  cluster:
+    project: my-project
+  accessPolicies:
+    - {role: roles/bigquery.dataEditor, scope: my-project}
+    - {role: roles/bigquery.jobUser, scope: my-project}

@@ -1,0 +1,22 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: EncryptionKey
+metadata:
+  namespace: default
+  name: app-data-key
+spec:
+  region: us-east-1
+  purpose: encrypt-decrypt      # encrypt-decrypt | sign-verify
+  algorithm: symmetric          # AWS SYMMETRIC_DEFAULT
+  rotationDays: 365             # enableKeyRotation + rotationPeriodInDays (AWS floor is 90; symmetric keys only)
+  deletionWindowDays: 30        # AWS caps the pending-deletion window at 30 days
+  multiRegion: false            # aws-only: a multi-region primary key
+  deletionPolicy: Delete        # Delete | Orphan — Orphan leaves the KMS key alive
+  tags:
+    team: platform
+    cost-center: "42"
+  # Ignored by this backend: protectionLevel (KMS keys are always HSM-backed),
+  # exportable (KMS never exports key material) and mountPath (self-hosted only).
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws           # the flag: picks the backend (aws | gcp | azure | openbao)

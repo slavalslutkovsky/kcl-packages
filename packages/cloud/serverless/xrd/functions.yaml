@@ -1,0 +1,19 @@
+# Functions the ServerlessApp Compositions run.
+#
+# Pinned, and sourced from ghcr.io: `xpkg.upbound.io/crossplane-contrib/
+# function-auto-ready:latest` does not exist (the registry 404s with
+# MANIFEST_UNKNOWN), and a floating `:latest` on a Function lets Crossplane roll
+# the rendering engine forward underneath a pinned Composition.
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-kcl
+spec:
+  package: ghcr.io/crossplane-contrib/function-kcl:v0.12.2
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-auto-ready
+spec:
+  package: ghcr.io/crossplane-contrib/function-auto-ready:v0.7.0

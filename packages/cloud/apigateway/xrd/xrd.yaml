@@ -1,0 +1,153 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: apigateways.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: ApiGateway
+    plural: apigateways
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable managed API gateway: one HTTPS endpoint that proxies
+                every request to an existing HTTP(S) backend. Every field below
+                is a COMMON parameter mapped onto each backend's native
+                resources (AWS API Gateway v2 HTTP API via quick create, Azure
+                API Management Consumption service + catch-all API, GCP Apigee
+                environment + environment group + TargetServer). Fields a
+                backend cannot express are documented as ignored rather than
+                silently dropped; a request a backend cannot fulfil at all
+                (cors on gcp) is rejected by its Composition rather than left
+                quietly unmet.
+
+                The gcp backend is the one incomplete endpoint:
+                provider-gcp-apigee ships no APIProxy resource, so the proxy
+                bundle binding a path to the composed TargetServer must be
+                deployed out of band — status.environment and
+                status.targetServer name what it has to target. GCP API
+                Gateway is not an alternative: it is google-beta-only and
+                absent from upjet-gcp.
+              properties:
+                backendUrl:
+                  type: string
+                  description: Full URL of the existing HTTP(S) backend all traffic is proxied to. AWS HTTP_PROXY integration target / Azure API serviceUrl / GCP Apigee TargetServer host+port (the gcp backend rejects a URL carrying a path — an Apigee target server has no path component).
+                region:
+                  type: string
+                  description: Cloud region for the gateway (AWS region / Azure location). Ignored by the gcp backend — an Apigee environment has no location of its own, its runtime region is the instance's.
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the existing resource group the API Management service is created in. Required by the azure backend, ignored elsewhere.
+                publisherEmail:
+                  type: string
+                  description: Azure-only — API Management requires a publisher contact email. Required by the azure backend, ignored elsewhere.
+                publisherName:
+                  type: string
+                  description: Azure-only — API Management publisher display name. Defaults to the XR name. Ignored elsewhere.
+                project:
+                  type: string
+                  description: GCP-only — the project whose Apigee organization ("organizations/<project>") the environment, environment group and target server are created in. Required by the gcp backend, ignored elsewhere. The organization itself is referenced, never created — it is one singleton per project.
+                hostname:
+                  type: string
+                  description: GCP-only — the hostname the Apigee environment group serves, and the host of status.url. Required by the gcp backend, ignored elsewhere.
+                apigeeInstance:
+                  type: string
+                  description: GCP-only — name of an existing Apigee runtime instance the environment is attached to, giving it runtime capacity. Omit when the environment is attached to an instance out of band. Instances are regional paid singletons, so this XR references one rather than creating it. Ignored elsewhere.
+                description:
+                  type: string
+                  description: Human-readable description of the API, carried onto the backend's API resource.
+                cors:
+                  type: object
+                  description: Browser cross-origin access. AWS renders the API's native corsConfiguration; Azure renders an inbound cors policy on the API. REJECTED by the gcp backend — Apigee applies CORS from a policy inside the proxy bundle, which provider-gcp-apigee cannot manage, so the request would go unmet. Omit to leave CORS to the backend.
+                  properties:
+                    allowOrigins:
+                      type: array
+                      items:
+                        type: string
+                      description: Origins allowed to call the API (e.g. https://app.example.com; AWS also accepts "*").
+                    allowMethods:
+                      type: array
+                      items:
+                        type: string
+                      description: HTTP methods allowed in CORS requests. Unset allows every method the gateway serves.
+                    allowHeaders:
+                      type: array
+                      items:
+                        type: string
+                      description: Request headers browsers may send.
+                    exposeHeaders:
+                      type: array
+                      items:
+                        type: string
+                      description: Response headers browsers may read.
+                    allowCredentials:
+                      type: boolean
+                      description: Whether credentialed (cookie/authorization) requests are allowed.
+                    maxAgeSeconds:
+                      type: integer
+                      minimum: 0
+                      description: How long browsers may cache preflight results. AWS corsConfiguration.maxAge / Azure preflight-result-max-age.
+                  required:
+                    - allowOrigins
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the backing resources when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them).
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata set on the backend resources. Ignored by the gcp backend — no resource in the Apigee provider family carries labels.
+              required:
+                - backendUrl
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the gateway reports a serving endpoint.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | azure | gcp).
+                url:
+                  type: string
+                  description: HTTPS endpoint serving proxied traffic.
+                host:
+                  type: string
+                  description: Hostname of the serving endpoint.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the gateway.
+                arn:
+                  type: string
+                  description: AWS API ARN (AWS only).
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+                environment:
+                  type: string
+                  description: Apigee environment the API is served from (GCP only) — the environment an out-of-band proxy bundle must deploy into.
+                targetServer:
+                  type: string
+                  description: Apigee target server describing the backend (GCP only) — the target an out-of-band proxy bundle must route to.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: URL
+          type: string
+          jsonPath: .status.url

@@ -1,0 +1,22 @@
+[package]
+name = "kcl-render"
+description = "Runtime KCL execution + Crossplane desired-state conversion, shared by the CLI and the composition function"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+flate2.workspace = true
+kcl-lang.workspace = true
+oci-client.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tokio.workspace = true
+toml.workspace = true

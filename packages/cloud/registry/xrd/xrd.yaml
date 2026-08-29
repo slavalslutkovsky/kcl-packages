@@ -1,0 +1,147 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: registries.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: Registry
+    plural: registries
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable OCI container registry: one private namespace images
+                are pushed to and pulled from. Every field below is a COMMON
+                parameter mapped onto each backend's native resources (AWS ECR
+                Repository + lifecycle/repository policies, GCP Artifact
+                Registry DOCKER repository + IAM member, Azure Container
+                Registry, self-hosted zot). Fields a backend cannot express are
+                documented as ignored rather than silently dropped.
+
+                The registry/repository is named after the XR (metadata.name),
+                so the name must satisfy the strictest backend you target: ACR
+                accepts only 5-50 alphanumeric characters (no dashes).
+              properties:
+                region:
+                  type: string
+                  description: Cloud region for the registry (ECR region / Artifact Registry location / ACR location). Ignored by the zot backend, which runs where the XR lives.
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the existing resource group the Container Registry is created in. Required by the azure backend, ignored elsewhere.
+                tier:
+                  type: string
+                  enum: [standard, premium]
+                  default: standard
+                  description: Service tier. ACR sku (standard -> Standard, premium -> Premium, plus zone redundancy). AWS and GCP have no registry tiers and ignore it; the azure backend also upgrades itself to Premium when a field requires it (untaggedRetentionDays, replicationRegions).
+                immutableTags:
+                  type: boolean
+                  default: false
+                  description: Reject overwriting an existing tag. ECR imageTagMutability=IMMUTABLE / Artifact Registry dockerConfig.immutableTags. Ignored by the azure and zot backends, which have no registry-wide tag immutability (ACR exposes it only as a per-repository preview API, unsupported by the provider).
+                scanOnPush:
+                  type: boolean
+                  default: true
+                  description: Scan pushed images for vulnerabilities. ECR imageScanningConfiguration.scanOnPush / Artifact Registry vulnerabilityScanningConfig (INHERITED, i.e. follow the project setting, vs DISABLED) / zot CVE search extension. Ignored by the azure backend, where scanning is a Microsoft Defender subscription setting rather than a registry field.
+                publicAccess:
+                  type: boolean
+                  default: false
+                  description: Allow unauthenticated (anonymous) image pulls. ECR repository policy granting * pull actions / Artifact Registry IAM member allUsers:roles/artifactregistry.reader / ACR anonymousPullEnabled / zot anonymous read policy. Pushing always requires credentials.
+                untaggedRetentionDays:
+                  type: integer
+                  minimum: 1
+                  description: Delete untagged images this many days after they were pushed. ECR lifecycle policy rule / Artifact Registry cleanup policy (DELETE, tagState UNTAGGED) / ACR retentionPolicyInDays (forces Premium) / zot retention (deleteUntagged + delay). Omit to keep untagged images forever.
+                keepLastImages:
+                  type: integer
+                  minimum: 1
+                  description: Keep only this many most-recently-pushed images. ECR lifecycle policy rule (imageCountMoreThan) / Artifact Registry cleanup policy (KEEP, mostRecentVersions) / zot retention keepTags.mostRecentlyPushedCount. Ignored by the azure backend, which has no image-count retention.
+                encryptionKeyId:
+                  type: string
+                  description: Customer-managed encryption key for images at rest. ECR SSE-KMS key ARN / Artifact Registry kmsKeyName / ACR Key Vault key id (azure additionally needs encryptionIdentityClientId). Omit for the provider-managed key.
+                encryptionIdentityClientId:
+                  type: string
+                  description: Azure-only — client id of the user-assigned managed identity ACR uses to reach the Key Vault key. Required alongside encryptionKeyId on the azure backend (ACR customer-managed keys cannot use the registry's system identity), ignored elsewhere.
+                replicationRegions:
+                  type: array
+                  items: {type: string}
+                  description: Additional regions the registry content is replicated to. ACR georeplications (forces Premium). Ignored by the aws backend (ECR cross-region replication is an account-wide registry setting, not a per-repository one) and by the gcp and zot backends, which have no per-repository replication.
+                storageGb:
+                  type: integer
+                  default: 8
+                  minimum: 1
+                  description: Self-hosted only — size of the volume zot stores images on. Ignored by the cloud backends, whose storage is elastic and billed by usage.
+                htpasswdSecret:
+                  type: string
+                  description: Self-hosted only — name of a Secret in the XR's namespace holding an `htpasswd` key; zot then requires those credentials for push (and for pull unless publicAccess is true). Omit to run zot with anonymous read/write, reachable only from inside the cluster. Ignored by the cloud backends, which authenticate with cloud IAM.
+                forceDestroy:
+                  type: boolean
+                  default: false
+                  description: Delete the registry even when it still contains images. ECR forceDelete. The other backends always delete their content with the registry and ignore it.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the cloud registry when this resource is deleted; maps to Crossplane managementPolicies (Orphan keeps the external registry).
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value labels applied to the registry. ECR tags / Artifact Registry labels / ACR tags / zot Release commonLabels.
+              required:
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the backing registry exists.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp | azure | zot).
+                registryName:
+                  type: string
+                  description: Name of the provisioned registry/repository.
+                region:
+                  type: string
+                  description: Region/location the registry resides in.
+                endpoint:
+                  type: string
+                  description: Registry host images are pushed to (docker login target).
+                repository:
+                  type: string
+                  description: Fully qualified repository path — `docker push <repository>:<tag>`.
+                url:
+                  type: string
+                  description: OCI URI for the repository (oci://…).
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the registry.
+                arn:
+                  type: string
+                  description: AWS ARN (AWS only).
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+                authSecret:
+                  type: string
+                  description: Secret holding the registry credentials (zot only, when htpasswdSecret is set).
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: REPOSITORY
+          type: string
+          jsonPath: .status.repository
+        - name: CLOUD-URL
+          type: string
+          jsonPath: .status.cloud-url

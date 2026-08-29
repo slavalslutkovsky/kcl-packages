@@ -1,0 +1,24 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: EmailDomain
+metadata:
+  namespace: default
+  name: internal-mail
+spec:
+  # No cloud account involved: the Stalwart chart is installed into this XR's
+  # own namespace by provider-helm. `region` stays required by the XRD, so give
+  # it something honest. Intended for internal mail, dev/e2e, and on-prem
+  # clusters — outbound deliverability from cloud IPs is not a fight you win.
+  region: in-cluster
+  domain: mail.internal.example   # served by Stalwart; DKIM/DNS come from its admin, not the XR
+  persistenceSizeGb: 20           # PVC for the mail store (in-cluster only)
+  adminPasswordSecret:            # fallback admin password; chart default applies without it
+    name: stalwart-admin
+    key: password
+  # certificateSecret: mail-tls    # optional kubernetes.io/tls Secret; self-signed without it
+  deletionPolicy: Delete          # Orphan leaves the Helm release installed
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: stalwart        # the flag: picks the backend (aws | stalwart)

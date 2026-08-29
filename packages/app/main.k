@@ -16,7 +16,9 @@ USAGE (no local main.k / kcl.mod in your app dir — just values files):
 
 Values files are `Release`s: a `workload:` (backend/frontend) or `task:` (CLI),
 plus optional `config:` (→ ConfigMap) and `externalSecret:`. The merged result is
-validated against the typed schema — unknown/mistyped/missing fields fail the build.
+validated against the typed schema — unknown/mistyped fields fail the build.
+`image` is the only field you must supply; `name` defaults to "app" and a
+workload's `port` to 8080.
 
 Overlay model (like kustomize overlays / helm -f base -f env):
   values.yaml         base, shared across envs

@@ -164,7 +164,19 @@ function resolveExample(
         join(examplesDir, `${option}.yaml`),
       ]
     : // Examples are scaffolded as <project>.yaml by the composition generator.
-      [join(examplesDir, `${projectName}.yaml`), join(examplesDir, `${projectName}.yml`)];
+      // A wrapper module is ONE Composition package named after the module
+      // itself (appstack), so its examples are per-backend (appstack-gcp.yaml,
+      // appstack-aws.yaml) and none of them is named after the project. Fall
+      // back to the first of those, so `render-all` covers wrappers too;
+      // --example picks another.
+      [
+        join(examplesDir, `${projectName}.yaml`),
+        join(examplesDir, `${projectName}.yml`),
+        ...available
+          .filter((f) => f.startsWith(`${projectName}-`))
+          .sort()
+          .map((f) => join(examplesDir, f)),
+      ];
 
   const found = candidates.find((c) => existsSync(c));
   if (!found) {

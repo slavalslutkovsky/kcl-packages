@@ -89,15 +89,15 @@ schema Scaler:
 
 schema Workload:
     """A deployable long-running application: Deployment (+ Service, + optional HPA)."""
-    name: str
+    name: str = "app"
     namespace?: str
     component: str = "server"
     partOf: str = "zerg"
     version?: str = "0.1.0"
     image: str
     imagePullPolicy: str = "IfNotPresent"
-    replicas: int = 1
-    port: int
+    replicas: int = 0
+    port: int = 8080
     portName: str = "http"
     runAsUser: int = 65534
     runAsGroup?: int
@@ -127,7 +127,7 @@ schema Workload:
 
 schema Task:
     """A run-to-completion CLI workload: Job, or CronJob when `schedule` is set."""
-    name: str
+    name: str = "app"
     namespace?: str
     component: str = "job"
     partOf: str = "zerg"

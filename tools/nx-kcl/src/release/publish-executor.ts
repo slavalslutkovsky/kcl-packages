@@ -15,7 +15,10 @@ export interface KclPublishExecutorOptions {
   /**
    * OCI registry prefix the package is published under, e.g.
    * "oci://docker.io/<namespace>". Environment variables (e.g. $KCL_REGISTRY)
-   * are expanded at runtime. Defaults to "oci://$KCL_REGISTRY".
+   * are expanded at runtime; $KCL_REGISTRY itself falls back to nx.json's
+   * `release.registry` (the same chain version-actions uses to pin
+   * composition.yaml), so both steps always target the same registry.
+   * Defaults to "oci://$KCL_REGISTRY".
    */
   registry?: string;
   /** Set by `nx release --dry-run`; when true the push is skipped. */
@@ -101,14 +104,21 @@ export default async function kclPublishExecutor(
   const projectRoot = context.projectsConfigurations.projects[projectName].root;
   const absProjectRoot = join(context.root, projectRoot);
 
+  // Same resolution chain as version-actions' resolveRegistry: the env var
+  // (set in CI) wins, nx.json `release.registry` is the in-repo default.
+  const nxRegistry = (
+    context.nxJsonConfiguration as { release?: { registry?: string } } | undefined
+  )?.release?.registry;
   const registry = (options.registry ?? 'oci://$KCL_REGISTRY').replace(
     /\$\{?(\w+)\}?/g,
     (_, name) => {
-      const value = process.env[name];
+      const value =
+        process.env[name] ?? (name === 'KCL_REGISTRY' ? nxRegistry : undefined);
       if (!value) {
         throw new Error(
-          `Cannot publish "${projectName}": environment variable $${name} is not set. ` +
-            `Set it to your OCI namespace, e.g. KCL_REGISTRY=docker.io/<namespace>.`
+          `Cannot publish "${projectName}": environment variable $${name} is not set ` +
+            `and nx.json has no release.registry. Set one of them, e.g. ` +
+            `KCL_REGISTRY=docker.io/<namespace>.`
         );
       }
       return value;
@@ -129,10 +139,29 @@ export default async function kclPublishExecutor(
     return { success: true };
   }
 
+  // `kcl mod push` refuses to overwrite an existing version. For a publish
+  // RETRY (some projects landed, some failed) that refusal is the desired
+  // end state, not an error — treat it as an idempotent success.
+  const push = (cwd: string) => {
+    try {
+      execSync(`kcl mod push ${target}`, { cwd, stdio: 'pipe', encoding: 'utf-8' });
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string; message: string };
+      const output = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+      if (output.includes('already exists')) {
+        console.log(`Already published: ${target} — skipping.`);
+        return;
+      }
+      if (output) console.error(output);
+      throw e;
+    }
+    console.log(`pushed [registry] ${target.replace(/^oci:\/\//, '')}`);
+  };
+
   // No local path deps -> the package is already self-contained; push as-is.
   if (pathDeps.length === 0) {
     console.log(`Publishing ${projectName} to ${target}`);
-    execSync(`kcl mod push ${target}`, { cwd: absProjectRoot, stdio: 'inherit' });
+    push(absProjectRoot);
     return { success: true };
   }
 
@@ -164,7 +193,7 @@ export default async function kclPublishExecutor(
     writeFileSync(join(staging, 'kcl.mod'), rewriteDeps(kclMod, drop, add));
     rmSync(join(staging, 'kcl.mod.lock'), { force: true }); // regenerated on push
     console.log(`Publishing ${projectName} to ${target} (self-contained)`);
-    execSync(`kcl mod push ${target}`, { cwd: staging, stdio: 'inherit' });
+    push(staging);
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }

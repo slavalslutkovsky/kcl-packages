@@ -1,0 +1,164 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: encryptionkeys.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: EncryptionKey
+    plural: encryptionkeys
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable managed encryption key (KMS). One key, managed by a
+                key-management service, that other resources reference for
+                encryption at rest or for signing. Every field below is a COMMON
+                parameter mapped onto each backend's native resources (AWS KMS
+                Key + Alias, GCP Cloud KMS KeyRing + CryptoKey, Azure Key Vault
+                + Key, self-hosted OpenBao transit mount + key). Fields a
+                backend cannot express are documented as ignored rather than
+                silently dropped.
+
+                The key is named after the XR (metadata.name), so the name must
+                satisfy the strictest backend you target: Azure Key Vault names
+                are 3-24 characters, alphanumerics and dashes.
+
+                Key MATERIAL never leaves the backend: this XR creates and
+                rotates keys and reports their identifiers, it never exports
+                them (the `exportable` flag is self-hosted-only, and off by
+                default there too).
+              properties:
+                region:
+                  type: string
+                  description: Cloud region for the key (KMS region / Cloud KMS location / Key Vault location). Ignored by the openbao backend, which runs where the XR lives.
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the existing resource group the Key Vault is created in. Required by the azure backend, ignored elsewhere.
+                tenantId:
+                  type: string
+                  description: Azure-only — the Entra ID tenant that owns the Key Vault. Required by the azure backend (Key Vault has no tenant-less form), ignored elsewhere.
+                purpose:
+                  type: string
+                  enum: [encrypt-decrypt, sign-verify]
+                  default: encrypt-decrypt
+                  description: What the key may be used for. AWS keyUsage / Cloud KMS purpose / Key Vault keyOpts / OpenBao transit key type. sign-verify requires an asymmetric algorithm.
+                algorithm:
+                  type: string
+                  enum: [symmetric, rsa-2048, rsa-3072, rsa-4096, ec-p256, ec-p384]
+                  default: symmetric
+                  description: Key algorithm. symmetric means the backend's native symmetric cipher (AWS SYMMETRIC_DEFAULT / Cloud KMS GOOGLE_SYMMETRIC_ENCRYPTION / OpenBao aes256-gcm96) and is only valid with purpose=encrypt-decrypt; Azure Key Vault has no symmetric software key, so its symmetric keys are RSA-4096 wrap keys instead (documented per backend).
+                protectionLevel:
+                  type: string
+                  enum: [software, hsm]
+                  default: software
+                  description: Where key operations happen. Cloud KMS versionTemplate.protectionLevel / Key Vault sku (standard vs premium). Ignored by AWS, whose KMS keys are always HSM-backed, and by openbao, where the software barrier is the only option without an enterprise seal.
+                rotationDays:
+                  type: integer
+                  minimum: 1
+                  description: Rotate the key automatically this many days after the previous version. AWS enableKeyRotation + rotationPeriodInDays / Cloud KMS rotationPeriod / Key Vault rotationPolicy.automatic.timeAfterCreation / OpenBao autoRotatePeriod. Omit for no automatic rotation. AWS and GCP support automatic rotation for SYMMETRIC keys only; the asymmetric case is documented per backend.
+                deletionWindowDays:
+                  type: integer
+                  minimum: 7
+                  maximum: 90
+                  default: 30
+                  description: Grace period between deleting this resource and the key material being destroyed. AWS deletionWindowInDays (7-30) / Cloud KMS destroyScheduledDuration / Key Vault softDeleteRetentionDays (7-90). Ignored by openbao, which deletes a transit key immediately (and only when deletionAllowed is set).
+                multiRegion:
+                  type: boolean
+                  default: false
+                  description: AWS-only — create a multi-region primary key whose replicas can live in other regions. Cloud KMS expresses this by choosing a multi-regional location instead, Key Vault has no equivalent, and openbao is in-cluster; all three ignore it.
+                exportable:
+                  type: boolean
+                  default: false
+                  description: Self-hosted only — allow the raw key material to be read back out of OpenBao (transit exportable + allowPlaintextBackup). The cloud backends never permit key export and ignore it. Leave off unless you are migrating a key.
+                mountPath:
+                  type: string
+                  default: transit
+                  description: Self-hosted only — path of the OpenBao transit secrets engine the key lives in. The mount is shared by every EncryptionKey using it and is deliberately never deleted by an XR (managementPolicies without Delete). Ignored by the cloud backends.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the key when this resource is deleted; maps to Crossplane managementPolicies (Orphan keeps the external key).
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value labels applied to the key. AWS tags / Cloud KMS labels / Key Vault tags. Ignored by openbao, whose transit keys carry no metadata.
+              required:
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the backing key exists.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp | azure | openbao).
+                keyName:
+                  type: string
+                  description: Name of the provisioned key.
+                region:
+                  type: string
+                  description: Region/location the key resides in.
+                keyId:
+                  type: string
+                  description: Provider-native key identifier (AWS key id, Cloud KMS resource id, Key Vault versionless key id, OpenBao transit key name).
+                keyUri:
+                  type: string
+                  description: Canonical reference to hand to anything that encrypts with this key (AWS key ARN, Cloud KMS resource name, Key Vault key URL, OpenBao transit key path).
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the key.
+                algorithm:
+                  type: string
+                  description: Native algorithm the backend reports for the key.
+                protectionLevel:
+                  type: string
+                  description: Native protection level the backend reports for the key.
+                rotationEnabled:
+                  type: boolean
+                  description: True when the backend rotates the key automatically.
+                arn:
+                  type: string
+                  description: AWS ARN (AWS only).
+                alias:
+                  type: string
+                  description: AWS key alias (AWS only).
+                keyRing:
+                  type: string
+                  description: Cloud KMS key ring holding the key (GCP only).
+                vaultUri:
+                  type: string
+                  description: Key Vault base URI (Azure only).
+                version:
+                  type: string
+                  description: Current key version (Azure only).
+                mountPath:
+                  type: string
+                  description: OpenBao transit mount holding the key (self-hosted only).
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: KEY-URI
+          type: string
+          jsonPath: .status.keyUri
+        - name: CLOUD-URL
+          type: string
+          jsonPath: .status.cloud-url

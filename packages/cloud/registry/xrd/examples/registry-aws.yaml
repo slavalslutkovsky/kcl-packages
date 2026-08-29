@@ -1,0 +1,22 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Registry
+metadata:
+  namespace: default
+  name: my-images
+spec:
+  region: us-east-1
+  immutableTags: true            # ECR imageTagMutability=IMMUTABLE — a tag can never be moved
+  scanOnPush: true               # ECR basic scanning on every push (default true)
+  publicAccess: false            # true adds a repository policy granting anonymous pull
+  untaggedRetentionDays: 14      # lifecycle rule: expire untagged images after 14 days
+  keepLastImages: 30             # lifecycle rule: keep only the 30 most recent images
+  encryptionKeyId: arn:aws:kms:us-east-1:111122223333:key/abcd-ef  # optional SSE-KMS key; omit for AES256
+  forceDestroy: false            # true deletes the repository even when it still holds images
+  deletionPolicy: Delete         # Delete | Orphan — Orphan keeps the ECR repository
+  tags:
+    team: platform
+    cost-center: "42"
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws            # the flag: picks the backend (aws | gcp | azure | zot)

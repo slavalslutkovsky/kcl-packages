@@ -1,20 +1,205 @@
 # devkit configuration — see `devkit config` for the effective merged values.
 #
-# This repo only needs devkit for one thing: a throwaway Kind cluster to run the
-# Crossplane end-to-end tests against (`just e2e`). Everything devkit can do for
-# app monorepos (compose, secrets, gitops, observability) is unused here, so the
-# app/overlay/database sections are deliberately left at their defaults.
+# This repo needs devkit for two things:
 #
-# The Kind topology itself comes from this repo's own `packages/cluster` KCL
-# package, published to OCI — devkit renders it with `kcl run <pkg> --tag <tag>`.
-# Keep `kcl_tag` in step with the released version of that package.
+#   1. the throwaway Kind cluster the Crossplane end-to-end tests run against
+#      (`just e2e`, `just e2e-kclx`), and
+#   2. everything that has to exist on that cluster — charts, composition
+#      functions, XRDs, providers, Compositions and the example composites —
+#      declared once, in dependency order, as `[[deps]]` rows below.
+#
+#      `devkit cluster deps` therefore installs the whole platform *and* the
+#      resources under test. What it cannot do is build: the Rust function
+#      image, its xpkg, and the KCL packages the Compositions pull are produced
+#      by `just kclx-install` / `just e2e-publish` before deps run. See
+#      docs/devkit.md.
+#
+# The app/overlay/database sections devkit offers for app monorepos are left at
+# their defaults.
+
+[namespaces]
+dbs = "dbs"
+monitoring = "monitoring"
+external_secrets = "external-secrets"
+
 
 [cluster]
 name = "kcl-e2e"    # dedicated name: `just e2e-down` must never touch another cluster
-workers = 1         # control-plane + one worker is enough for crossplane + valkey
-db_workers = 0      # no tainted database nodes; nothing here schedules onto them
-ingress = false     # nothing needs host ports 80/443, and binding them often conflicts
-kcl_package = "oci://docker.io/yurikrupnik/cluster"
-kcl_tag = "0.0.6"
+workers = 3                  # worker node count
+db_workers = 1              # tainted db-dedicated workers
+ingress = true        # binds host ports 80/443 on the control plane
+#kcl_package = "oci://docker.io/yurikrupnik/cluster"
+#kcl_tag = "0.0.6"
+[secrets]
+config = ".vals.yaml"       # vals config file
+output = ".env"
 
-#[deps]
+# Cluster dependencies, installed by `devkit cluster deps` (justfile `e2e-up`)
+# once the cluster is up. Helm rows: name, repo, chart (default: name),
+# version, namespace (default: "default"), timeout (default: "10m"), values
+# (a values file path or list of paths — helm -f — resolved against this
+# file's directory). Manifest rows: name + manifest (URL or repo-relative
+# path, kubectl apply). Deps in the same wave (default 0) install in
+# parallel; waves run in ascending order for CRD/controller ordering.
+[[deps]]
+name = "n8n"                 # the chart is `n8n`; `n8s` does not exist in this repo
+repo = "https://community-charts.github.io/helm-charts"
+version = "1.24.33"
+namespace = "n8n"
+
+# community-charts publishes no `web` chart (helm search repo returns nothing),
+# so this row failed every run and aborted the wave — and with it every later
+# wave, including the Crossplane stack. Restore it with a chart that exists.
+#[[deps]]
+#name = "web"
+#repo = "https://community-charts.github.io/helm-charts"
+#version = "1.24.33"
+#namespace = "web"
+
+[[deps]]
+name =  "openbao"
+repo = "https://openbao.github.io/openbao-helm"
+version = "0.29.3"
+namespace = "openbao"
+# The agent injector's own controller writes `caBundle` into its
+# MutatingWebhookConfiguration under the field manager `vault-k8s`, so the
+# second `devkit cluster deps` (helm upgrade, server-side apply) hard-fails on
+# a field-ownership conflict and takes every later wave down with it. Nothing
+# here uses sidecar injection.
+set = ["injector.enabled=false"]
+
+[[deps]]
+name = "crossplane"
+repo = "https://charts.crossplane.io/stable"
+version = "2.3.4"
+namespace = "crossplane-system"
+
+[[deps]]
+name = "pgbouncer"
+repo = "https://icoretech.github.io/helm"
+version = "4.1.9"
+namespace = "pgbouncer"
+# The chart's userlist Secret template hard-errors without an admin password.
+# Throwaway cluster, throwaway credential.
+set = ["config.adminPassword=devkit"]
+
+[[deps]]
+name = "openebs"
+repo = "https://openebs.github.io/openebs"
+version = "4.6"
+namespace = "openebs"
+# Mayastor (replicated engine) needs hugepages + io-engine nodes — not
+# available on kind/macOS; local PV engines are enough for e2e.
+set = ["engines.replicated.mayastor.enabled=false"]
+[[deps]]
+name = "vcluster"
+repo = "https://charts.loft.sh"
+version = "0.37.0-rc.3"
+namespace = "vcluster"
+
+[[deps]]
+name = "external-secrets"
+repo = "https://charts.external-secrets.io"
+version = "2.9.0"
+namespace = "external-secrets"
+
+# KubeBlocks >=1.0 requires its CRDs applied before the chart installs (the
+# chart templates `lookup` them) — CRDs in wave 0, chart in wave 1.
+[[deps]]
+name = "kubeblocks-crds"
+manifest = "https://github.com/apecloud/kubeblocks/releases/download/v1.2.0-alpha.3/kubeblocks_crds.yaml"
+
+[[deps]]
+name = "kubeblocks"
+repo = "https://apecloud.github.io/helm-charts"
+version = "1.2.0-alpha.3"
+namespace = "kubeblocks"
+wave = 1
+
+#[[deps]]
+#name = "ccowley"
+#repo = "https://helm.cowley.tech"
+#version = "0.0.2"
+#namespace = "ccowley"
+[[deps]]
+name = "cert-manager"
+repo = "https://charts.jetstack.io"
+# The chart skips CRDs by default; without them startupapicheck fails.
+set = ["crds.enabled=true"]
+version = "1.21.1"
+namespace = "cert-manager"
+
+[[deps]]
+name = "flagger"
+repo = "https://flagger.app"
+version = "1.44.0"
+namespace = "flagger"
+
+# ─── Crossplane stack under test (waves 2-5) ──────────────────────────────────
+#
+# Wave 0 above brings up the crossplane chart itself (helm --wait), so from
+# wave 2 on the pkg.crossplane.io and apiextensions.crossplane.io APIs exist.
+# The order below is the dependency order Crossplane needs:
+#
+#   2. the composition functions the Compositions run, and the XRD that defines
+#      the composite API,
+#   3. the providers whose CRDs the composed managed resources are instances of,
+#   4. the Compositions themselves (one per backend),
+#   5. the example composites — the "run" part: applying these is what makes
+#      Crossplane call our function and create managed resources.
+#
+# Prerequisites produced by `just kclx-install` (function image + xpkg in the
+# local registry) and `just e2e-publish bucket` (the KCL packages the
+# Compositions pull). Rows are `kubectl apply --server-side`, which does not
+# wait: providers stay Unhealthy for a minute or two while their packages
+# download, and the composites reconcile once the CRDs land. `devkit cluster
+# deps` is idempotent — re-run it if wave 5 races the XRD's composite CRD.
+
+[[deps]]
+name = "crossplane-functions"
+manifest = "manifests/crossplane/functions.yaml"
+wave = 2
+
+[[deps]]
+name = "bucket-xrd"
+manifest = "packages/cloud/bucket/xrd/xrd.yaml"
+wave = 2
+
+[[deps]]
+name = "bucket-providers"
+manifest = "packages/cloud/bucket/xrd/providers.yaml"
+wave = 3
+
+[[deps]]
+name = "bucket-composition-aws"
+manifest = "packages/cloud/bucket/aws/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "bucket-composition-azure"
+manifest = "packages/cloud/bucket/azure/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "bucket-composition-gcp"
+manifest = "packages/cloud/bucket/gcp/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "bucket-composition-rustfs"
+manifest = "packages/cloud/bucket/rustfs/composition.yaml"
+wave = 4
+
+# Every example XR for the module (kubectl applies each file in the directory).
+[[deps]]
+name = "bucket-examples"
+manifest = "packages/cloud/bucket/xrd/examples/"
+wave = 5
+
+[tilt]
+enabled = true
+
+# Endpoints printed after `devkit up`.
+[[endpoints]]
+label = "Tilt UI"
+url = "http://localhost:10350"

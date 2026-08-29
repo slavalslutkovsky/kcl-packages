@@ -1,0 +1,22 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: DnsZone
+metadata:
+  namespace: default
+  name: example-zone
+spec:
+  region: europe-west1            # ignored by Cloud DNS (global); required by the XRD
+  domain: example.com
+  records:
+    - name: "@"
+      type: TXT
+      values: ["v=spf1 include:_spf.google.com ~all"]
+    - name: "*.dev"               # wildcard
+      type: CNAME
+      values: ["ghs.googlehosted.com"]
+  deletionPolicy: Delete
+  tags:                           # -> managed zone labels
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp             # the flag: picks the backend (aws | gcp)

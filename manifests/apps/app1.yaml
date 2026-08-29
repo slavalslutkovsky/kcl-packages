@@ -1,0 +1,18 @@
+#workload:
+#  name: app1
+#  image: nginx
+#  namespace: dev
+#  port: 7979
+#workload:
+workload:
+  name: analytic
+  namespace: zerg
+#  component: migration
+#  component: frontend
+  image: nginx
+#  runAsUser: 101
+#  runAsGroup: 101
+#  prometheus: false
+#  image: yurikrupnik/zerg-api:latest
+#  command: [ "/app/migrate" ]
+#  args: [ "up" ]

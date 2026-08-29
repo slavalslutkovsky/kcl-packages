@@ -1,0 +1,20 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Queue
+metadata:
+  namespace: default
+  name: orders
+spec:
+  region: us-east-1
+  fifo: false                     # true -> orders.fifo + content-based dedup
+  visibilityTimeoutSeconds: 60    # redelivery backoff for slow consumers
+  retentionDays: 7
+  deadLetter:                     # companion orders-dlq queue, wired via redrivePolicy
+    enabled: true
+    maxReceives: 5
+  deletionPolicy: Delete          # Orphan keeps both queues
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws             # the flag: picks the backend (aws | gcp | nats)

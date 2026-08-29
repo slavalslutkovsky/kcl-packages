@@ -1,0 +1,41 @@
+# Crossplane providers the Network Compositions render against. Install only
+# the ones whose backends you intend to use; each Composition references
+# exactly one cloud.
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-network-providers`) — keep them in step, or
+# the rendered manifests can reference fields the installed provider does not
+# have.
+#
+# There is no in-cluster backend: a Kubernetes cluster already has a network,
+# and nothing this XRD describes maps onto it.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-ec2
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0
+---
+# The aws backend also publishes RDS and ElastiCache subnet groups over its
+# private subnets (spec.databaseSubnetGroups), so it needs those two families
+# even though it manages no database or cache itself.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-rds
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-rds:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-elasticache
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-elasticache:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-compute
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0

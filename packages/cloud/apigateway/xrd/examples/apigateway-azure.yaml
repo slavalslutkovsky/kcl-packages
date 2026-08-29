@@ -1,0 +1,24 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: ApiGateway
+metadata:
+  namespace: default
+  name: my-azure-gateway
+spec:
+  backendUrl: https://backend.example.com   # -> the API's serviceUrl
+  region: westeurope                        # API Management location
+  resourceGroup: my-rg                      # existing resource group (azure requires it)
+  publisherEmail: platform@example.com      # APIM mandates a publisher contact
+  publisherName: Platform Team              # optional; defaults to the XR name
+  description: Edge for the example backend
+  cors:                                     # -> inbound cors policy on the API
+    allowOrigins: ["https://app.example.com"]
+    allowMethods: ["GET", "POST"]
+    allowHeaders: ["content-type"]
+    maxAgeSeconds: 300
+  deletionPolicy: Delete                    # Delete | Orphan — Orphan keeps the service
+  tags:                                     # -> Azure tags on the APIM service
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure                     # the flag: picks the backend (aws | azure | gcp)

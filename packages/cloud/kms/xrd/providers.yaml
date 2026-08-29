@@ -1,0 +1,85 @@
+# Crossplane providers the EncryptionKey Compositions render against. Install
+# only the ones whose backends you intend to use; each Composition references
+# exactly one.
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-kms-providers`) — keep them in step, or the
+# rendered manifests can reference fields the installed provider does not have.
+#
+# provider-vault is the odd one out: it comes from upbound (there is no
+# crossplane-contrib vault provider) and from xpkg.upbound.io rather than
+# ghcr.io. v4.x is what matters — that line ships the namespaced
+# `*.vault.m.upbound.io` CRDs (kind Mount, kind SecretBackendKey) the openbao
+# Composition renders. The OpenBao SERVER itself is not a provider: it is
+# installed, initialised and unsealed out-of-band (see providerconfigs.yaml).
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-kms
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-kms:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-kms
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-kms:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-keyvault
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-keyvault:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-vault
+spec:
+  package: xpkg.upbound.io/upbound/provider-vault:v4.0.3
+---
+# The openbao backend does not compose a Helm release, but its prerequisite —
+# the OpenBao server in providerconfigs.yaml — is one, so provider-helm has to
+# be here too. v1.x is the first line with the namespaced
+# helm.m.crossplane.io CRDs.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-helm
+spec:
+  package: ghcr.io/crossplane-contrib/provider-helm:v1.3.0
+  runtimeConfigRef:
+    name: provider-helm
+---
+# provider-helm needs in-cluster RBAC to install charts. This binds its
+# ServiceAccount to cluster-admin, which is what the upstream quickstart does;
+# scope it down before using this outside a sandbox.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provider-helm
+  namespace: crossplane-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: provider-helm-cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: provider-helm
+    namespace: crossplane-system
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-helm
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-helm

@@ -1,0 +1,95 @@
+# Composition functions for the local cluster, installed by
+# `devkit cluster deps` (wave 2).
+#
+# `function-kcl` here is OUR function: the Rust `kclx` binary built from
+# `rust/`, packaged by `just kclx-xpkg` and pushed to the local registry. The
+# name is deliberate — a Composition references a Function by name, and every
+# Composition in `packages/cloud/**` says `functionRef: {name: function-kcl}`.
+# Because `kclx function` accepts the same `krm.kcl.dev/v1alpha1, KCLInput`
+# input and the same `option("params")` contract, installing it under that name
+# swaps the rendering engine for the whole repo without touching a single
+# Composition. To go back to upstream, apply
+# `packages/cloud/<module>/xrd/functions.yaml` over this file.
+#
+# Why the package reference is an IP:port and not `kind-registry`:
+# Crossplane fetches `spec.package` with go-containerregistry, which only
+# speaks plain HTTP to hosts it recognises as local — an RFC1918 address, or a
+# `*.localhost` name. It is also gated by a CEL rule on `spec.package` that
+# requires a dot in the registry authority, which rules out `localhost:5001`
+# and `kind-registry:80` both. An RFC1918 IP satisfies both, hence the pinned
+# `172.18.0.100` from `just registry` (docker `kind` network, registry on :80).
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-kcl
+spec:
+  package: 172.18.0.100:80/function-kclx:v0.1.0
+  # Left at the default `IfNotPresent`: Crossplane copies this policy onto the
+  # runtime container, and `Always` there makes kubelet try to pull the
+  # side-loaded `function-kclx-runtime:dev` from Docker Hub and fail. Bump the
+  # tag (`just kclx-install v0.1.1`) when the package metadata itself changes.
+  packagePullPolicy: IfNotPresent
+  runtimeConfigRef:
+    apiVersion: pkg.crossplane.io/v1beta1
+    kind: DeploymentRuntimeConfig
+    name: function-kclx
+---
+# The xpkg carries only `package.yaml` metadata; the binary comes from the
+# image side-loaded with `kind load docker-image`. That keeps the registry
+# round-trip tiny and makes a rebuild `just kclx-install` plus
+# `kubectl -n crossplane-system delete pod -l pkg.crossplane.io/function=function-kcl`.
+#
+# The environment is the function's configuration surface:
+#   KCLX_SOURCE_REWRITE        — the committed Compositions point at
+#                                `oci://docker.io/yurikrupnik/<pkg>`, which in
+#                                this cluster means the local registry; the
+#                                `k8s` schema package is mirrored there by
+#                                `just registry-seed-k8s`; and packages
+#                                published by `just e2e-publish` record their
+#                                dependencies as `localhost:5001/...`, which
+#                                inside a pod would mean the pod itself.
+#
+#                                The target is the pinned IP, not the
+#                                `kind-registry` name: an OCI reference whose
+#                                first segment has no dot and no port is a
+#                                Docker Hub *namespace*, so `kind-registry/pkg`
+#                                resolves to `index.docker.io/kind-registry/pkg`.
+#                                `kind-registry:80` would work too (it resolves
+#                                in-cluster, since CoreDNS forwards to the node
+#                                and the node's resolver is docker's embedded
+#                                DNS), but one address for both the package
+#                                fetch and `spec.package` is fewer moving parts.
+#   KCLX_PLAIN_HTTP_REGISTRIES — that registry is served without TLS.
+#   KCLX_CACHE_DIR             — pulled packages; the image runs as nonroot, so
+#                                it must be a writable path.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: function-kclx
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            # Must be `package-runtime`; any other name adds a sidecar
+            # instead of configuring the function container.
+            - name: package-runtime
+              image: function-kclx-runtime:dev
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: KCLX_SOURCE_REWRITE
+                  value: docker.io/yurikrupnik=172.18.0.100:80,ghcr.io/kcl-lang=172.18.0.100:80/kcl-lang,localhost:5001=172.18.0.100:80
+                - name: KCLX_PLAIN_HTTP_REGISTRIES
+                  value: 172.18.0.100:80
+                - name: KCLX_CACHE_DIR
+                  value: /tmp/kclx
+---
+# Every Composition's second pipeline step. Upstream, unmodified.
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-auto-ready
+spec:
+  package: ghcr.io/crossplane-contrib/function-auto-ready:v0.7.0

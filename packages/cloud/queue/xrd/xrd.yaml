@@ -1,0 +1,136 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: queues.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: Queue
+    plural: queues
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable point-to-point work queue: producers enqueue, one
+                consumer receives each message, unacknowledged deliveries are
+                retried. Every field below is a COMMON parameter mapped onto
+                each backend's native resources (AWS SQS Queue [+ DLQ], GCP
+                Pub/Sub Topic + Subscription [+ DLQ pair], in-cluster NATS
+                JetStream Stream + Consumer via the NACK operator). Fields a
+                backend cannot express are documented as ignored rather than
+                silently dropped.
+
+                The abstraction is deliberately a WORK QUEUE, not fan-out
+                pub/sub: on GCP exactly one subscription is created per Queue,
+                and the JetStream stream uses workqueue retention.
+              properties:
+                region:
+                  type: string
+                  description: Cloud region (SQS region / implicit Pub/Sub message storage). Ignored by the in-cluster backend, which runs where NATS runs.
+                fifo:
+                  type: boolean
+                  default: false
+                  description: Strict ordering with exactly-once intent. AWS creates a FIFO queue (name gains the mandatory .fifo suffix, content-based deduplication on); GCP enables message ordering on the subscription (producers must set an ordering key); JetStream preserves publish order per subject anyway — ignored in-cluster.
+                visibilityTimeoutSeconds:
+                  type: integer
+                  default: 30
+                  minimum: 0
+                  maximum: 43200
+                  description: How long a delivered message stays invisible before it is retried. AWS visibilityTimeout verbatim; GCP ackDeadlineSeconds (clamped to its 10–600 range); in-cluster consumer ackWait.
+                retentionDays:
+                  type: integer
+                  default: 4
+                  minimum: 1
+                  maximum: 14
+                  description: How long an unconsumed message survives. AWS messageRetentionSeconds (max 14 days); GCP subscription messageRetentionDuration (clamped to its 7-day max); in-cluster stream maxAge.
+                deadLetter:
+                  type: object
+                  description: Route repeatedly-failed messages aside instead of retrying forever. AWS renders a companion <name>-dlq queue wired via redrivePolicy; GCP renders a <name>-dlq topic + subscription wired via deadLetterPolicy (the Pub/Sub service account additionally needs publish/subscribe grants on the pair — see the composition comment); in-cluster maps maxReceives to consumer maxDeliver, after which JetStream stops redelivering (no separate dead-letter store — pair with a MaxDeliveries advisory consumer if you need the messages).
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                      description: Create and wire the dead-letter target.
+                    maxReceives:
+                      type: integer
+                      default: 5
+                      minimum: 1
+                      maximum: 100
+                      description: Delivery attempts before a message is shunted aside (GCP floor is 5; the composition clamps).
+                encryptionKmsKeyId:
+                  type: string
+                  description: CMEK for at-rest encryption. AWS kmsMasterKeyId; GCP topic kmsKeyName (full resource path). Ignored in-cluster.
+                persistence:
+                  type: boolean
+                  default: true
+                  description: In-cluster only — JetStream stream storage (file vs memory). Managed backends are always durable; ignored there.
+                persistenceSizeGb:
+                  type: integer
+                  default: 1
+                  minimum: 1
+                  description: In-cluster only — byte cap (maxBytes) for the stream on the shared JetStream server. Ignored by the managed backends, which impose their own quotas.
+                replicas:
+                  type: integer
+                  default: 1
+                  enum: [1, 3, 5]
+                  description: In-cluster only — JetStream stream replica count (needs an equally sized NATS cluster). Ignored by the managed backends.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the backing resources when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them).
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS tags / GCP labels on topic + subscription. NACK CRs carry none; ignored in-cluster.
+              required:
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the backing queue accepts messages.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp | nats).
+                url:
+                  type: string
+                  description: What a consumer connects to — SQS queue URL, GCP subscription path (projects/<p>/subscriptions/<s>), or the shared NATS server URL.
+                queueName:
+                  type: string
+                  description: The name a consumer receives from — SQS queue name (with .fifo when applicable), GCP subscription name, JetStream durable consumer name.
+                topic:
+                  type: string
+                  description: The name a producer sends to — GCP topic path, JetStream subject. Equals the queue itself on AWS.
+                deadLetterUrl:
+                  type: string
+                  description: Where shunted messages land, when deadLetter is enabled — SQS DLQ URL / GCP DLQ topic path. Absent in-cluster (see deadLetter doc).
+                arn:
+                  type: string
+                  description: AWS ARN of the queue (AWS only).
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+                cloud-url:
+                  type: string
+                  description: Cloud-console (or in-cluster workload) URL for the queue.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: QUEUE
+          type: string
+          jsonPath: .status.queueName

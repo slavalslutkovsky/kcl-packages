@@ -1,0 +1,38 @@
+# Providers the ServerlessApp Compositions drive. Versions are pinned to the
+# images the packages/providers schema packages were generated from
+# (`just seed-serverless-providers`).
+#
+# aws needs two providers: Lambda cannot run without an execution role, so the
+# aws Composition also composes an IAM Role unless spec.serviceAccount hands it
+# an existing one.
+#
+# The knative backend needs no provider at all — it composes the namespaced
+# serving.knative.dev/v1 Service directly (Crossplane v2), so the cluster must
+# have Knative Serving installed (knative-v1.23.0, matching the schema package).
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-lambda
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-lambda:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-iam
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-cloudrun
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-cloudrun:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-containerapp
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-containerapp:v2.6.0

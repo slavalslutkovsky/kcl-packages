@@ -1,0 +1,23 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Bucket
+metadata:
+  namespace: default
+  name: my-rustfs-bucket
+spec:
+  # RustFS is an S3-compatible endpoint reached through the "rustfs"
+  # ProviderConfig, so the composition pins the S3 region itself; this value
+  # only satisfies the XRD's required field.
+  region: us-east-1
+  storageClass: cold             # standard | nearline | cold | archive — non-standard adds a lifecycle transition
+  versioning: true
+  forceDestroy: false
+  deletionPolicy: Delete
+  blockPublicAccess: true
+  uniformAccess: true
+  requesterPays: false
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: rustfs         # the flag: picks the backend (aws | gcp | azure | rustfs)

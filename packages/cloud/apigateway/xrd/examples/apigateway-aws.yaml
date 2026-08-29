@@ -1,0 +1,21 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: ApiGateway
+metadata:
+  namespace: default
+  name: my-aws-gateway
+spec:
+  backendUrl: https://backend.example.com   # everything is proxied here (HTTP_PROXY)
+  region: us-east-1                         # API Gateway region
+  description: Edge for the example backend
+  cors:                                     # -> the HTTP API's corsConfiguration
+    allowOrigins: ["https://app.example.com"]
+    allowMethods: ["GET", "POST"]
+    allowHeaders: ["content-type"]
+    maxAgeSeconds: 300
+  deletionPolicy: Delete                    # Delete | Orphan — Orphan keeps the API
+  tags:                                     # -> AWS resource tags
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws                       # the flag: picks the backend (aws | azure | gcp)

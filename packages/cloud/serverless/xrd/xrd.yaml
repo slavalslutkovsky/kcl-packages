@@ -1,0 +1,128 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: serverlessapps.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: ServerlessApp
+    plural: serverlessapps
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable serverless container runtime: run one container image
+                behind an HTTPS endpoint, scaled on demand. Every field below is
+                a COMMON parameter mapped onto each backend's native resources
+                (AWS Lambda container Function + Function URL, GCP Cloud Run
+                v2 Service, Azure Container App + Environment, self-hosted
+                Knative Service). Fields a backend cannot express are
+                documented as ignored rather than silently dropped.
+              properties:
+                image:
+                  type: string
+                  description: Container image URI to run. AWS requires an ECR image in the same account and region (Lambda container images cannot be pulled from other registries); the other backends accept any reachable registry.
+                region:
+                  type: string
+                  description: Cloud region for the app (Lambda region / Cloud Run location / Container App Environment location). Ignored by the knative backend, which runs where the XR lives.
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the existing resource group the Container App and its Environment are created in. Required by the azure backend, ignored elsewhere.
+                port:
+                  type: integer
+                  default: 8080
+                  minimum: 1
+                  maximum: 65535
+                  description: Port the container listens on. Cloud Run containerPort / Container App ingress targetPort / Knative containerPort. Ignored by Lambda, whose images speak the Lambda Runtime API instead of listening on a port.
+                cpu:
+                  type: number
+                  default: 1
+                  minimum: 0.25
+                  description: vCPUs per instance. Cloud Run cpu limit / Container App cpu (rounded up to a supported cpu-memory pair) / Knative cpu limit. Ignored by Lambda, which allocates CPU proportionally to memoryMb.
+                memoryMb:
+                  type: integer
+                  default: 512
+                  minimum: 128
+                  description: Memory per instance in MiB. Lambda memorySize verbatim (clamped to 10240); Cloud Run memory limit; Container App memory (rounded up to a supported cpu-memory pair); Knative memory limit.
+                minInstances:
+                  type: integer
+                  default: 0
+                  minimum: 0
+                  description: Instances kept warm at zero traffic. Cloud Run scaling.minInstanceCount / Container App minReplicas / Knative min-scale. Ignored by Lambda (provisioned concurrency needs versions and aliases, which are beyond this XR).
+                maxInstances:
+                  type: integer
+                  minimum: 1
+                  description: Upper bound on concurrent instances. Cloud Run scaling.maxInstanceCount / Container App maxReplicas / Knative max-scale / Lambda reservedConcurrentExecutions. Unset leaves each backend's own default (and keeps Lambda concurrency unreserved).
+                timeoutSeconds:
+                  type: integer
+                  default: 60
+                  minimum: 1
+                  maximum: 3600
+                  description: Max duration of one request. Lambda timeout (clamped to 900) / Cloud Run template.timeout / Knative timeoutSeconds. Ignored by Container Apps, which has no request timeout knob.
+                env:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Plain environment variables set on the container. For secrets, mount them into the consuming workload instead — this XR does not manage secret material.
+                public:
+                  type: boolean
+                  default: true
+                  description: Expose the app to unauthenticated internet traffic. AWS Function URL authType NONE (else AWS_IAM); GCP allUsers roles/run.invoker binding (else IAM-gated); Azure external ingress (else Environment-internal); Knative default visibility (else cluster-local).
+                serviceAccount:
+                  type: string
+                  description: Runtime identity escape hatch. GCP service account email (template.serviceAccount); AWS an EXISTING execution role ARN, which skips creating one; Knative serviceAccountName. Ignored by the azure backend.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the backing resources when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them). Ignored by the knative backend, whose CR lives and dies with the XR.
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS/Azure tags, GCP labels, Knative labels.
+              required:
+                - image
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the backing service reports a serving URL.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp | azure | knative).
+                url:
+                  type: string
+                  description: HTTPS endpoint serving traffic.
+                host:
+                  type: string
+                  description: Hostname of the serving endpoint.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the app.
+                arn:
+                  type: string
+                  description: AWS Function ARN (AWS only).
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: URL
+          type: string
+          jsonPath: .status.url

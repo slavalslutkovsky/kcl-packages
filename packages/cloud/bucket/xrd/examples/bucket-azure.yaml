@@ -1,0 +1,20 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Bucket
+metadata:
+  namespace: default
+  name: my-azure-bucket
+spec:
+  region: westeurope             # Azure location for the Storage Account
+  storageClass: archive          # standard | nearline | cold | archive — archive adds a ManagementPolicy
+  versioning: true
+  forceDestroy: false
+  deletionPolicy: Delete
+  blockPublicAccess: true
+  uniformAccess: true
+  requesterPays: false
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure          # the flag: picks the backend (aws | gcp | azure | rustfs)

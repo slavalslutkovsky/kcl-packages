@@ -1,0 +1,115 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: dnszones.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: DnsZone
+    plural: dnszones
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable public DNS zone plus its records. Every field below is
+                a COMMON parameter mapped onto each backend's native resources
+                (AWS Route53 Zone + Record, GCP Cloud DNS ManagedZone +
+                RecordSet). Fields a backend cannot express are documented as
+                ignored rather than silently dropped.
+
+                Public zones only: private zones need VPC/network associations
+                whose shapes differ per cloud and are out of scope here. The
+                zone's NS/SOA apex records are managed by the cloud — do not
+                declare them in records.
+
+                Pairs with EmailDomain: each row of its status.dnsRecords maps
+                to one records entry here (join priority into the MX value,
+                strip the domain suffix off the name).
+              properties:
+                region:
+                  type: string
+                  description: Provider API region. DNS itself is global on both clouds; Route53 managed resources still require a region to call the API through. Ignored by GCP.
+                domain:
+                  type: string
+                  description: Zone apex (e.g. example.com), without a trailing dot — the compositions normalize FQDNs themselves.
+                records:
+                  type: array
+                  default: []
+                  description: Records to manage inside the zone, one entry per (name, type) pair — multiple values become one multi-value record set on both clouds.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: Record name relative to the zone apex ("api", "*.dev"); "@" or "" addresses the apex itself.
+                      type:
+                        type: string
+                        enum: [A, AAAA, CNAME, TXT, MX, SRV, CAA, NS]
+                        description: Record type. NS entries are for delegating child zones — the apex NS set is cloud-managed.
+                      ttl:
+                        type: integer
+                        default: 300
+                        minimum: 1
+                        description: TTL in seconds.
+                      values:
+                        type: array
+                        minItems: 1
+                        items: {type: string}
+                        description: 'Rdata strings, in native zone-file form: MX and SRV carry their priority inline ("10 mail.example.com"), TXT values are passed verbatim (the compositions add quoting where the cloud wants it).'
+                    required: [name, type, values]
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the backing resources when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them).
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS zone tags / GCP zone labels; records carry none on either cloud.
+              required:
+                - region
+                - domain
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the zone exists and reports its name servers.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp).
+                zoneId:
+                  type: string
+                  description: Provider zone identifier (Route53 hosted zone ID / Cloud DNS managed zone name).
+                nameServers:
+                  type: array
+                  items: {type: string}
+                  description: Authoritative name servers to delegate the domain to at its registrar. The zone only answers once this delegation is live.
+                arn:
+                  type: string
+                  description: AWS ARN of the hosted zone (AWS only).
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the zone.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: ZONE
+          type: string
+          jsonPath: .status.zoneId

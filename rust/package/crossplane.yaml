@@ -1,0 +1,21 @@
+# Crossplane Function package metadata. Built with:
+#   crossplane xpkg build --package-root=rust/package \
+#     --embed-runtime-image=ghcr.io/yurikrupnik/function-kclx-runtime
+#   crossplane xpkg push ghcr.io/yurikrupnik/function-kclx:v0.1.0
+#
+# The input contract is `krm.kcl.dev/v1alpha1, KCLInput` — deliberately
+# function-kcl's, so the Compositions in packages/cloud/** can point at this
+# function by changing `functionRef.name` and nothing else.
+apiVersion: meta.pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-kclx
+  annotations:
+    meta.crossplane.io/maintainer: Yuri Krupnik
+    meta.crossplane.io/source: github.com/yurikrupnik/kcl-packages
+    meta.crossplane.io/license: Apache-2.0
+    meta.crossplane.io/description: |
+      Renders KCL packages into composed resources. Embeds the KCL runtime in
+      process and shares its renderer with the `kclx render` CLI, so local
+      renders and in-cluster renders cannot drift.
+spec: {}

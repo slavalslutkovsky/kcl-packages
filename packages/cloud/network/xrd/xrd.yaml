@@ -1,0 +1,148 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: networks.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: Network
+    plural: networks
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable private network for the workloads in one region: an
+                address space, subnets, egress to the internet, and the
+                attachment points the data services in this group need. Every
+                field below is a COMMON parameter mapped onto each backend's
+                native resources (AWS VPC + public/private Subnets + Internet
+                Gateway + NAT Gateway + Route Tables + Security Group + RDS and
+                ElastiCache subnet groups, GCP VPC Network + regional
+                Subnetwork + Cloud Router + Cloud NAT + Firewall + a reserved
+                range for private service access). Fields a backend cannot
+                express are documented as ignored rather than silently dropped.
+              properties:
+                region:
+                  type: string
+                  description: Cloud region the subnets live in (VPC subnets region / Subnetwork region).
+                cidr:
+                  type: string
+                  default: 10.0.0.0/16
+                  description: 'IPv4 address space of the network. AWS becomes the VPC cidrBlock, which is then carved into subnets (see subnetPrefixLength); GCP becomes the primary IP range of the single regional Subnetwork (its VPC is custom-mode, so the network itself holds no range).'
+                subnetPrefixLength:
+                  type: integer
+                  default: 20
+                  minimum: 16
+                  maximum: 28
+                  description: AWS-only — prefix length of each derived subnet. Subnets are carved from cidr in order, one private then one public per availability zone. Ignored by GCP, which uses cidr as one regional range.
+                availabilityZones:
+                  type: array
+                  items: {type: string}
+                  description: AWS-only — availability zones to spread subnets across, as full zone names (e.g. us-east-1a). REQUIRED by the aws backend; a multi-AZ subnet group is what RDS and ElastiCache demand. Ignored by GCP, whose subnetworks are regional.
+                publicSubnets:
+                  type: boolean
+                  default: true
+                  description: AWS-only — also create one public subnet per zone, an Internet Gateway, and a default route to it. Turning this off leaves a private-only VPC, which also forces natGateway off (a NAT Gateway must live in a public subnet). Ignored by GCP, where reaching the internet is a matter of routes and NAT, not subnet kind.
+                natGateway:
+                  type: boolean
+                  default: true
+                  description: Give private workloads outbound internet access. AWS creates one NAT Gateway (plus its Elastic IP) in the first public subnet and points the private route table at it; GCP creates a Cloud Router and a Cloud NAT covering the subnetwork.
+                serviceRange:
+                  type: string
+                  description: 'GCP-only — CIDR reserved for private service access, i.e. the range Google-managed services (Cloud SQL private IP, Memorystore) get their addresses from. Creates a VPC_PEERING GlobalAddress with that range and publishes it as status.serviceRange. NOTE the VPC peering itself (servicenetworking.googleapis.com) is NOT managed here: provider-gcp ships no ServiceNetworkingConnection resource, so the peering is a one-time out-of-band step per network. Ignored by AWS, where subnet groups play this role.'
+                privateGoogleAccess:
+                  type: boolean
+                  default: true
+                  description: GCP-only — let instances without public IPs reach Google APIs (Subnetwork privateIpGoogleAccess). Ignored by AWS, which needs VPC endpoints for the equivalent.
+                databaseSubnetGroups:
+                  type: boolean
+                  default: true
+                  description: AWS-only — also create an RDS DB subnet group and an ElastiCache subnet group over the private subnets, published as status.dbSubnetGroupName and status.cacheSubnetGroupName. This is what a PostgresInstance or RedisInstance attaches to. Ignored by GCP, which attaches by network instead.
+                allowInternalIngress:
+                  type: boolean
+                  default: true
+                  description: Allow traffic between workloads inside the network. AWS opens all protocols from cidr on the workload security group; GCP creates an equivalent ingress Firewall rule. Turning this off leaves the group/rule empty, so nothing inside the network can talk to anything else.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the backing resources when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them).
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS tags / GCP labels where the resource has them (most compute network resources do not, so GCP applies them only where accepted).
+              required:
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the network reports an id.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp).
+                id:
+                  type: string
+                  description: Provider-assigned network id (VPC id / GCP network name).
+                name:
+                  type: string
+                  description: Network name as the cloud knows it.
+                selfLink:
+                  type: string
+                  description: GCP network self link (projects/<p>/global/networks/<n>), the spelling other GCP resources expect. Empty on AWS.
+                region:
+                  type: string
+                  description: Region the subnets live in.
+                cidr:
+                  type: string
+                  description: Address space actually configured.
+                publicSubnetIds:
+                  type: array
+                  items: {type: string}
+                  description: Subnets with a route to the internet gateway (AWS). Empty on GCP.
+                privateSubnetIds:
+                  type: array
+                  items: {type: string}
+                  description: Subnets with no inbound route from the internet (AWS), or the single regional subnetwork (GCP).
+                securityGroupIds:
+                  type: array
+                  items: {type: string}
+                  description: The workload security group, ready to attach to instances that should be able to talk inside the network (AWS). Empty on GCP, which filters by firewall rule and network tag instead.
+                dbSubnetGroupName:
+                  type: string
+                  description: RDS DB subnet group over the private subnets (AWS, when databaseSubnetGroups). Empty on GCP.
+                cacheSubnetGroupName:
+                  type: string
+                  description: ElastiCache subnet group over the private subnets (AWS, when databaseSubnetGroups). Empty on GCP.
+                serviceRange:
+                  type: string
+                  description: CIDR reserved for private service access (GCP, when serviceRange is set) — the range to hand to Cloud SQL private IP or Memorystore. Empty on AWS.
+                natEnabled:
+                  type: boolean
+                  description: True when private workloads have managed outbound internet access.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the network.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: CIDR
+          type: string
+          jsonPath: .status.cidr
+        - name: ID
+          type: string
+          jsonPath: .status.id

@@ -1,0 +1,13 @@
+#DOCKER_SECRET: ref+gcpsecrets://playground-447016/docker-secret
+#GITHUB_SECRET: ref+gcpsecrets://playground-447016/github-secret
+OPENAI: ref+gcpsecrets://yk-admin-gke/manager-secrets#/ai/openai
+ANTHROPIC: ref+gcpsecrets://yk-admin-gke/manager-secrets#/ai/anthropic
+DOCKERHUB_TOKEN: ref+gcpsecrets://yk-admin-gke/manager-secrets#/docker-hub/dockerhub-token
+DOCKERHUB_USERNAME: ref+gcpsecrets://yk-admin-gke/manager-secrets#/docker-hub/dockerhub-username
+AWS_SECRET_KEY: ref+gcpsecrets://yk-admin-gke/manager-secrets#/aws/secret_key
+AWS_ACCESS_KEY_ID: ref+gcpsecrets://yk-admin-gke/manager-secrets#/aws/access_key_id
+GITHUB_APP_PRIVATE_KEY: ref+gcpsecrets://yk-admin-gke/manager-secrets#/github-app/private-key
+GITHUB_APP_APP_ID: ref+gcpsecrets://yk-admin-gke/manager-secrets#/github-app/app-id
+GITHUB_APP_CLIENT_ID: ref+gcpsecrets://yk-admin-gke/manager-secrets#/github-app/client-id
+#AWS_IAC_MANAGER: ref+gcpsecrets://yk-admin-gke/manager-secrets#/slack/iac-manager-aws
+#keycloak: ref+gcpsecrets://yk-admin-gke/manager-secrets#/keycloak/openai
