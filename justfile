@@ -749,6 +749,14 @@ e2e-down:
 
 # ─── Release ──────────────────────────────────────────────────────────────────
 
+# The Release workflow refuses to run off main (it versions, tags and pushes
+# `HEAD:main`), so preview a release from a feature branch here instead of
+# dispatching the workflow at it. `--specifier=patch` matches what the
+# workflow forces; without it nx prompts for a bump per project.
+# Preview a release: no commit, no tag, no OCI push.
+release-dry:
+    {{ nx }} release --specifier=patch --dry-run
+
 # Version, changelog, tag, publish (providers excluded via nx.json).
 release:
     {{ nx }} release --yes
