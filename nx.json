@@ -31,7 +31,7 @@
     },
     "git": {
       "commit": true,
-      "commitMessage": "chore(release): {projectName}@{version}",
+      "commitMessage": "chore(release): publish affected packages",
       "tag": true
     },
     "releaseTag": {

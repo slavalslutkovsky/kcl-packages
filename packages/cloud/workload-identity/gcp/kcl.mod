@@ -1,7 +1,7 @@
 [package]
 name = "workload-identity-gcp"
 edition = "v0.12.3"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies]
 gcp-cloudplatform = { path = "../../../providers/gcp-cloudplatform" }

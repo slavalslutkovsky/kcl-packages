@@ -1,7 +1,7 @@
 [package]
 name = "postgres-cnpg"
 edition = "v0.12.3"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies]
 cnpg = { path = "../../../providers/cnpg" }
