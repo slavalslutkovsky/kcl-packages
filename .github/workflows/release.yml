@@ -77,11 +77,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      # `kcl registry login` validates the credentials and then fails to persist
+      # them: it writes through an oras file store with plaintext puts disabled
+      # ("putting plaintext credentials is disabled"), so the login never lands.
+      # `docker login` writes the standard base64 `auths` entry, and `kcl mod
+      # push` reads credentials from the same ~/.docker/config.json.
       - name: Log in to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: kcl registry login -u "$DOCKERHUB_USERNAME" -p "$DOCKERHUB_TOKEN" docker.io
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Determine affected releasable projects
         id: affected
