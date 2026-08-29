@@ -22,6 +22,7 @@ uop:
 lol:
     kcl run packages/app -D values=manifests/apps/app1.yaml
     kcl run packages/app -D values=manifests/apps/app1.yaml
+    nx release version patch --dry-run --first-release
 gets:
     kubectl get --raw /api/v1/pods --v=6 | jless
 # ─── Local platform (devkit) ──────────────────────────────────────────────────

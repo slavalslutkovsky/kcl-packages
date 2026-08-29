@@ -11,3 +11,6 @@ tasks:
     cmds:
       - echo "{{.GREETING}}"
     silent: true
+  nir:
+    cmds:
+      - task --taskfile https://raw.githubusercontent.com/go-task/task/main/website/src/public/Taskfile.yml hello
