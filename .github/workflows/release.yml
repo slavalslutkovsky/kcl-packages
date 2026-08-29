@@ -22,12 +22,26 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Two overlapping release runs would both bump from the same base and the
+# loser's push would be rejected as non-fast-forward - after it had already
+# published to OCI. Serialize instead of cancelling: a cancelled run can leave
+# tags pushed with nothing published.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions:
   contents: write # push the version commit + tags back to the repo
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    # `workflow_dispatch` is not branch-restricted, so this job is reachable
+    # from any branch - and every step below assumes main: the affected base
+    # is a release tag on main and the final push targets main. Dispatching
+    # from a feature branch used to version, tag and publish that branch, then
+    # fail on `HEAD:main` with the tags already pushed. Refuse instead.
+    if: github.ref == 'refs/heads/main'
     env:
       # Each package publishes to oci://docker.io/<namespace>/<pkg>.
       # On Docker Hub the namespace is your username; change this if you
@@ -166,10 +180,18 @@ jobs:
           echo "Bumped: $BUMPED"
           echo "projects=$BUMPED" >> "$GITHUB_OUTPUT"
 
+      # Git first, OCI second, and `--atomic` so the branch and its tags land
+      # or fail together. `kcl mod push` is irreversible - a published version
+      # can never be re-pushed - while a rejected git push costs nothing, so
+      # the recoverable operation has to be the one that runs first. When main
+      # has moved on under us this step fails with nothing published, and
+      # re-running the workflow is a clean retry. Without `--atomic` the tags
+      # would survive the rejected branch update and point at a commit that is
+      # on no branch at all.
+      - name: Push version commit and tags
+        if: steps.version.outputs.projects != ''
+        run: git push --atomic --follow-tags origin HEAD:main
+
       - name: Publish bumped packages to OCI
         if: steps.version.outputs.projects != ''
         run: pnpm exec nx release publish --projects="${{ steps.version.outputs.projects }}" --yes
-
-      - name: Push version commits and tags
-        if: steps.version.outputs.projects != ''
-        run: git push --follow-tags origin HEAD:main
