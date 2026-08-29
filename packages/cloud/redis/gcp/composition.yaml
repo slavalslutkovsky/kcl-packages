@@ -18,7 +18,7 @@ spec:
         kind: KCLInput
         spec:
           # Pin a release with ?tag=<version> once published via `nx release`.
-          source: oci://docker.io/yurikrupnik/redis-gcp?tag=0.1.0
+          source: oci://docker.io/yurikrupnik/redis-gcp?tag=0.1.1
     - step: ready
       functionRef:
         name: function-auto-ready

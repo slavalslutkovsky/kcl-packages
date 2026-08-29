@@ -1,7 +1,7 @@
 [package]
 name = "serverless-azure"
 edition = "v0.12.3"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies]
 azure-containerapp = { path = "../../../providers/azure-containerapp" }

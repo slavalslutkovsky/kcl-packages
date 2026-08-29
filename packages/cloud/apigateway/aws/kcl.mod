@@ -1,7 +1,7 @@
 [package]
 name = "apigateway-aws"
 edition = "v0.12.3"
-version = "0.1.0"
+version = "0.1.1"
 
 [dependencies]
 aws-apigatewayv2 = { path = "../../../providers/aws-apigatewayv2" }
