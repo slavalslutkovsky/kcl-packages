@@ -1,0 +1,40 @@
+# The record the Forge Composition READS. It is not composed by anything here:
+# it is an input to composition, fetched by Crossplane at render time because
+# the Composition asks for it (a meta.krm.kcl.dev RequiredResources item), and
+# whatever owns billing is what writes it. This file exists so the example XR
+# next door can be applied on a fresh cluster and so the shape of the grant is
+# visible next to the capability that depends on it.
+#
+# The CRD itself lives in packages/platform/entitlement/crd.yaml, and
+# `metadata.name` MUST equal the tenant NAMESPACE — that is the join key
+# `entitlement.request()` looks the record up by.
+#
+# The grant this capability needs is the feature key `forgejo`; the quota key
+# `storageGb` caps spec.storageGb on every Forge in the namespace. Without a
+# record, or with `forgejo` missing from features, a Forge XR in this namespace
+# gets one fatal render result and zero resources.
+apiVersion: platform.example.org/v1alpha1
+kind: Entitlement
+metadata:
+  name: tenant-a
+spec:
+  plan: team
+  features:
+    - forgejo                      # may run a Forge instance
+    - repository                   # may manage repositories inside it
+  quota:
+    storageGb: 50                  # ceiling for spec.storageGb, not a target
+    repositories: 50
+  reference: sub_1P9xyzExample
+---
+# The negative case, kept alongside on purpose: `enterprise`-only fields fail
+# closed even for a tenant that legitimately holds the feature. Applying the
+# example Forge with spec.highAvailability: true in this namespace produces a
+# fatal render naming the plan, not a single-replica forge pretending to be HA.
+apiVersion: platform.example.org/v1alpha1
+kind: Entitlement
+metadata:
+  name: tenant-free
+spec:
+  plan: free
+  features: []

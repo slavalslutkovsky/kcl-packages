@@ -1,0 +1,32 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Repository
+metadata:
+  namespace: tenant-a               # the tenant: its Entitlement is named after this
+  name: platform
+spec:
+  forge:
+    # Copied verbatim from a Forge XR's status.apiUrl. The `-http` suffix is the
+    # forgejo chart's own Service name, not a typo.
+    baseUrl: http://git-http.tenant-a.svc:3000/api/v1
+    secretRef: forge-token          # Secret key `authorization` = "token <PAT>"
+  owner: acme                       # organization the repository lives in
+  description: managed by crossplane
+  private: true                     # PAID — needs plan `team` or better
+  defaultBranch: main
+  autoInit: true                    # create-only: an initial commit so it clones
+  license: Apache-2.0               # only with autoInit
+  createOrganization: false         # the org is pre-created and shared
+---
+# The credential the Composition's ProviderConfig reads. Committed here as the
+# shape only — a real token never belongs in git; create it with
+#   kubectl -n tenant-a create secret generic forge-token \
+#     --from-literal=authorization="token $PAT"
+# The `token ` prefix is mandatory: provider-http substitutes these bytes
+# verbatim into the Authorization header, and Forgejo 401s a bare token.
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: tenant-a
+  name: forge-token
+stringData:
+  authorization: "token replace-me-with-a-forgejo-personal-access-token"

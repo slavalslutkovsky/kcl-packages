@@ -1,0 +1,187 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: forges.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: Forge
+    plural: forges
+  defaultCompositionRef:
+    name: forge-forgejo
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                One self-hosted git forge per tenant: web UI, REST API, SSH and
+                CI-facing tokens, from the upstream Forgejo helm chart installed
+                into the XR's own namespace by provider-helm. Every field below
+                is a COMMON parameter of the forge, not of the chart: the chart
+                keys they compute into are named in each description, and
+                anything this XRD does not model is reachable through `values`.
+
+                This is a PAID capability. The Composition asks Crossplane, at
+                render time, for the cluster-scoped `Entitlement` named after
+                this XR's NAMESPACE (a tenant is a namespace here) and composes
+                nothing until that record grants the feature key `forgejo`. A
+                namespace with no record, or a plan that does not list the
+                feature, gets a single fatal render result naming the missing
+                grant and ZERO resources — never a half-installed forge that
+                someone has to clean up. `highAvailability` additionally
+                requires the `enterprise` plan and `storageGb` is capped by the
+                plan's `quota.storageGb`, both enforced the same way.
+
+                The Helm release, and therefore every chart resource, is named
+                after the XR (metadata.name), so the name must be a valid DNS
+                label with room for the chart's own suffixes.
+              properties:
+                hostname:
+                  type: string
+                  description: DNS name the forge is served on. Drives the ingress host (ingress.hosts[0].host) and Forgejo's own ROOT_URL/DOMAIN, which is what ends up in the clone URLs and webhook payloads it hands out — so it must be the name clients actually resolve, not an internal one.
+                storageGb:
+                  type: integer
+                  minimum: 1
+                  default: 10
+                  description: Size of the volume repositories, LFS objects and (with database.mode sqlite) the database live on; maps to persistence.size. Capped by the tenant's plan — a request above `quota.storageGb` on the Entitlement fails the render rather than being silently trimmed. The volume is never shrunk by lowering this; PVCs do not shrink.
+                adminSecret:
+                  type: string
+                  default: ""
+                  description: 'Name of an EXISTING Secret in this XR''s namespace with `username` and `password` keys, passed to the chart as gitea.admin.existingSecret. Leave empty to keep the chart''s own generated admin (username `gitea_admin`, password in the chart-created Secret). Nothing about the credential passes through the Composition, so it never lands in the XR''s or the Release''s stored state.'
+                database:
+                  type: object
+                  default: {}
+                  description: |
+                    Where Forgejo keeps its metadata.
+
+                    Chart 17.x ships NO bundled PostgreSQL (the subchart was
+                    dropped in chart v14), so `postgres` points at a server that
+                    ALREADY EXISTS — for example one provisioned by this repo's
+                    `Postgres` capability in the same namespace. This XR
+                    deliberately does not compose a database of its own: a forge
+                    that outlives the database holding its users and issues is
+                    worse than two XRs with clear owners and lifecycles.
+                  properties:
+                    mode:
+                      type: string
+                      enum: [sqlite, postgres]
+                      default: sqlite
+                      description: sqlite keeps the database on the repository volume (the chart default, and fine for a single-replica forge). postgres sets gitea.config.database.DB_TYPE and requires host below.
+                    host:
+                      type: string
+                      description: 'host:port of the existing PostgreSQL server (gitea.config.database.HOST). Required when mode is postgres; the render fails without it rather than starting a forge that cannot reach its database.'
+                    name:
+                      type: string
+                      description: Database name (gitea.config.database.NAME). Defaults to `forgejo`.
+                    user:
+                      type: string
+                      description: Database user (gitea.config.database.USER). Defaults to `forgejo`.
+                    passwordSecret:
+                      type: object
+                      description: |
+                        Secret holding the database password. The password is
+                        NEVER put into the Release: the Secret is mounted
+                        through gitea.additionalConfigSources, where the chart
+                        treats each projected file name as an app.ini section
+                        and its body as that section's `KEY=value` lines.
+
+                        The referenced key's value must therefore be the
+                        fragment `PASSWD=<password>` (one line), which is what
+                        gets merged into app.ini's [database] section.
+                      properties:
+                        name:
+                          type: string
+                          description: Secret name in this XR's namespace.
+                        key:
+                          type: string
+                          description: Key inside the Secret. Defaults to `password`.
+                      required:
+                        - name
+                ingress:
+                  type: object
+                  default: {}
+                  description: How the forge is published. The chart serves plain HTTP behind the ingress; TLS is terminated there.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                      description: Create the Ingress (ingress.enabled). Set false to publish the forge yourself — the in-cluster Service stays reachable either way, which is all a `Repository` XR needs.
+                    className:
+                      type: string
+                      description: IngressClass name (ingress.className). Omit to use the cluster's default class.
+                    tlsSecretName:
+                      type: string
+                      description: Name of a TLS Secret in this XR's namespace covering `hostname` (ingress.tls). Setting it also flips the scheme Forgejo advertises and status.url reports to https, because the public URL and ROOT_URL must agree.
+                highAvailability:
+                  type: boolean
+                  default: false
+                  description: 'Run more than one Forgejo replica (replicaCount 2, a ReadWriteMany volume, and the db-backed indexer and session store the chart requires for multiple replicas). Requires the `enterprise` plan, and requires database.mode postgres: replicas share one repository volume, and concurrent writers on a sqlite file corrupt it. A shared cache/queue (Valkey) is not modelled here — supply it through `values`.'
+                chartVersion:
+                  type: string
+                  default: "17.1.5"
+                  description: 'Forgejo chart version, pinned so a re-render never silently upgrades a running forge (an unset chart version is late-initialized to whatever is newest at reconcile time). 17.1.5 has appVersion Forgejo 15.0.7; `imageTag` overrides that image independently of the chart.'
+                imageTag:
+                  type: string
+                  default: ""
+                  description: Container image tag (image.tag), overriding the chart's appVersion. Empty means the version the pinned chart ships. Use it to take a Forgejo patch release without moving the chart.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the Helm release when this XR is deleted; maps to Crossplane managementPolicies. Orphan (["Observe", "Create", "Update", "LateInitialize"] — everything but Delete) leaves the forge, its PVC and its repositories installed.
+                values:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: |
+                    Escape hatch: raw chart values, deep-merged over everything
+                    computed from the fields above and applied LAST, so it wins
+                    on conflict. Unvalidated by this XRD and unvalidated by the
+                    Composition — a typo here reaches Helm as-is.
+
+                    Use it for chart keys this XRD does not model (resources,
+                    nodeSelector, gitea.config.mailer, an external Valkey);
+                    prefer the modelled fields for anything above, since those
+                    are what status and the entitlement checks are derived from.
+              required:
+                - hostname
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the Helm release reports Ready — the chart is installed and provider-helm's wait has succeeded.
+                url:
+                  type: string
+                  description: Public web UI URL — https:// when ingress.tlsSecretName is set, http:// otherwise. The same string Forgejo uses as its ROOT_URL.
+                apiUrl:
+                  type: string
+                  description: 'In-cluster REST API root, `http://<name>-http.<namespace>.svc:3000/api/v1` (the `-http` suffix is the chart''s own web Service name). This is the value a `Repository` XR takes as spec.forge.baseUrl: copy it across.'
+                service:
+                  type: string
+                  description: Name of the chart's web Service in this namespace.
+                plan:
+                  type: string
+                  description: Plan on the tenant's Entitlement at the last successful render (free | team | enterprise), carried so an operator can see which grant this forge is running under.
+                chartVersion:
+                  type: string
+                  description: Chart version actually deployed once the release reports one, otherwise the pinned spec.chartVersion.
+                release:
+                  type: string
+                  description: Helm release name (equal to the XR name; provider-helm pins it as the external name).
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: URL
+          type: string
+          jsonPath: .status.url
+        - name: PLAN
+          type: string
+          jsonPath: .status.plan

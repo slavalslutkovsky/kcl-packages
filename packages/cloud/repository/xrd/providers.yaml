@@ -1,0 +1,25 @@
+# Crossplane provider the Repository Composition renders against.
+#
+# provider-http, not a typed forge provider: there is no maintained Crossplane
+# provider for Forgejo or Gitea. `arch-err/provider-forgejo` ships 22 CRDs whose
+# `internal/controller/controller.go` `Setup` returns nil — it reconciles
+# nothing; `rossigee/provider-gitea` is single-maintainer, publishes amd64-only
+# images and vendors a forked crossplane-runtime; `juddowilcox/provider-jet-gitea`
+# is dead (2022, terrajet, pre-v1 runtime, no published image). So the
+# Composition drives Forgejo's REST API directly through the generic HTTP
+# provider, which is crossplane-contrib, multi-arch, and Crossplane-v2-native
+# (namespaced `http.m.crossplane.io` CRDs).
+#
+# The version here is the one packages/providers/http was generated from
+# (`tools/providers.sh seed http`) — keep them in step, or the rendered
+# manifests can reference fields the installed provider does not have.
+#
+# No ProviderConfig is applied here: the Composition composes a namespaced one
+# per XR, pointing at the Secret the tenant supplies (spec.forge.secretRef), so
+# nothing cluster-wide holds a forge credential.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-http
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/provider-http:v1.0.15

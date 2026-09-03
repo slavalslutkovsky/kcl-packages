@@ -2,12 +2,38 @@
 Cluster manager manifests — typed schemas + renderers (single source of truth).
 
 Where `app` describes one workload, `manager` describes the cluster around the
-workloads. One values.yaml, three concerns:
+workloads. One values.yaml, four concerns:
 
   • dependencies → the platform charts as Flux HelmRepository + HelmRelease
     pairs. The declarative twin of devkit.toml's `[[deps]]`: `dependsOn`
     replaces waves, `values:` replaces `set = [...]`. Flux (source-controller +
     helm-controller) must already be on the cluster.
+
+    Two kinds of cluster, so two kinds of dependency. A *manager* cluster
+    manages other clusters and cloud resources (Crossplane, its providers,
+    the fleet machinery); a *workload* cluster only runs apps. Every
+    dependency has a `type` saying which clusters install it:
+      manager      → manager clusters only (crossplane, …)
+      application  → every cluster that runs apps — workload clusters, and
+                     manager clusters too, since a manager can also run apps
+                     (keda, chaos-mesh, monitoring, …)
+    `Manager.role` says which kind of cluster a values file describes and
+    selects what renders: `manager` renders both types, `workload` renders
+    application only. One base values file with a `role: workload` overlay
+    therefore serves both. The type is also emitted as the label
+    `platform.example.org/type`, so a rendered stream can still be split:
+
+      kcl run packages/manager -D values=<file> -q | kubectl apply -l platform.example.org/type=application -f -
+
+    An application dependency may not depend on a manager one: it has to
+    install on a workload cluster, where manager dependencies do not exist.
+  • issuers → cert-manager ClusterIssuers (or namespaced Issuers): the thing
+    an Ingress names in `cert-manager.io/cluster-issuer`. ACME (Let's
+    Encrypt) with HTTP01 or DNS01 solvers for public certificates,
+    self-signed and CA issuers for the in-cluster PKI. cert-manager itself is
+    just another dependency above — list it there; the issuers take its
+    `type` (so they render wherever the chart does) and apply the render
+    twice (idempotent) if they race the CRDs the chart installs.
   • chaos.experiments → Chaos Mesh experiments with a free selector
     (namespaces, labels, nodes, pod phases): the cluster-scope counterpart of a
     Workload's `chaos:` faults, built from the same `app.Fault` schema and the
@@ -31,6 +57,8 @@ import app.lib as app
 import flux_source.models.v1.source_toolkit_fluxcd_io_v1_helm_repository as helmrepo
 import flux_helm.models.v2.helm_toolkit_fluxcd_io_v2_helm_release as helmrelease
 import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_workflow as cmworkflow
+import cert_manager.models.v1.cert_manager_io_v1_cluster_issuer as cmclusterissuer
+import cert_manager.models.v1.cert_manager_io_v1_issuer as cmissuer
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
 schema Dependency:
@@ -46,6 +74,11 @@ schema Dependency:
     fields, `secretRef` / `provider` are HelmRepository.spec fields.
     """
     name: str
+
+    # Which clusters install this chart: `manager` (manager clusters only) or
+    # `application` (every cluster that runs apps). Becomes the label
+    # `platform.example.org/type` on the HelmRepository and the HelmRelease.
+    $type: "manager" | "application"
     repo: str
     # default: name
     chart?: str
@@ -73,6 +106,98 @@ schema Dependency:
     check:
         repo.startswith("https://") or repo.startswith("http://") or repo.startswith("oci://"), "dependency ${name}: repo must be an http(s):// chart index or an oci:// registry"
         not provider or repo.startswith("oci://"), "dependency ${name}: provider only applies to an oci:// registry"
+
+schema Solver:
+    """
+    One ACME challenge solver: how cert-manager proves control of a domain.
+
+    `http01` serves the token from a temporary Ingress — the boring choice for
+    a cluster that already terminates HTTP in-cluster, and the one that cannot
+    issue wildcards. `dns01` writes a TXT record through a cloud DNS API, the
+    only way to get `*.example.com` and the only way to issue for a cluster the
+    internet cannot reach. Credentials are ambient in every provider below
+    (GKE Workload Identity, IRSA, Azure Workload Identity): a keyless cluster
+    is the point of packages/cloud/workload-identity, and a Secret full of
+    long-lived cloud keys is not something this package will help write.
+
+    `dnsNames` / `dnsZones` / `labels` narrow a solver to part of the estate,
+    so one issuer can solve the wildcard zone over DNS and everything else
+    over HTTP.
+    """
+    $type: "http01" | "dns01" = "http01"
+    # → solver.selector
+    dnsNames: [str] = []
+    dnsZones: [str] = []
+    labels: {str:str} = {}
+
+    # http01: ingressClassName of the solver Ingress; unset → the cluster default
+    ingressClass?: str
+    # dns01: which API writes the TXT record
+    provider?: "cloud-dns" | "route53" | "azure-dns"
+    # cloud-dns: the project that owns the zone. route53: the region the SDK
+    # signs against (Route 53 is global, the SDK still needs one).
+    project?: str
+    region?: str
+    # Pin the zone instead of letting cert-manager search every zone in the
+    # account: hostedZoneID for route53, hostedZoneName for the other two.
+    hostedZoneID?: str
+    hostedZoneName?: str
+    # route53: the IAM role cert-manager assumes (IRSA / EKS Pod Identity).
+    role?: str
+    # azure-dns: the zone's subscription + resource group, and the managed
+    # identity cert-manager federates with.
+    subscriptionID?: str
+    resourceGroupName?: str
+    clientID?: str
+
+    check:
+        $type == "dns01" or not provider, "an http01 solver has no dns provider: drop `provider` or set type: dns01"
+        $type == "http01" or not ingressClass, "ingressClass is an http01 field: a dns01 solver serves nothing over HTTP"
+        $type == "http01" or provider, "a dns01 solver needs a provider (cloud-dns | route53 | azure-dns)"
+        provider != "cloud-dns" or project, "a cloud-dns solver needs the `project` that owns the zone"
+        provider != "route53" or region, "a route53 solver needs a `region` to sign against"
+        provider != "azure-dns" or (subscriptionID and resourceGroupName), "an azure-dns solver needs `subscriptionID` and `resourceGroupName`"
+
+schema Issuer:
+    """
+    A cert-manager issuer — cluster-scoped by default, because a ClusterIssuer
+    is what an Ingress in *any* namespace may name in the
+    `cert-manager.io/cluster-issuer` annotation. Set `namespace` for a
+    namespaced Issuer instead (one tenant, one CA, no cluster-wide reach).
+
+    Three kinds, and nothing else this package pretends to support:
+      • `acme` — Let's Encrypt or any other ACME CA. Needs `email` and at
+        least one solver; the account key is kept in `privateKeySecret`
+        (default `<name>-account-key`).
+      • `self-signed` — signs with the requester's own key. Used to bootstrap
+        the root of an internal PKI, and for throwaway clusters.
+      • `ca` — signs from an existing keypair in `caSecret` (tls.crt +
+        tls.key). The in-cluster PKI case: mTLS, webhooks, internal names no
+        public CA will ever sign.
+    """
+    name: str
+    $type: "acme" | "self-signed" | "ca" = "acme"
+    # set → a namespaced Issuer instead of a ClusterIssuer
+    namespace?: str
+    # acme. The default is Let's Encrypt production; point `server` at
+    # https://acme-staging-v02.api.letsencrypt.org/directory while wiring up
+    # DNS, because production is rate-limited per registered domain.
+    server: str = "https://acme-v02.api.letsencrypt.org/directory"
+    email?: str
+    privateKeySecret?: str
+    solvers: [Solver] = []
+
+    # ca: the Secret holding the signing keypair, in cert-manager's namespace
+    # for a ClusterIssuer, in `namespace` for an Issuer.
+    caSecret?: str
+
+    check:
+        $type == "acme" or not solvers, "issuer ${name}: solvers are an ACME concept; a ${$type} issuer solves no challenges"
+        $type == "acme" or not email, "issuer ${name}: email is the ACME account address; a ${$type} issuer has no account"
+        $type != "acme" or email, "issuer ${name}: an ACME issuer needs the account `email`"
+        $type != "acme" or len(solvers) > 0, "issuer ${name}: an ACME issuer needs at least one solver, or nothing can ever be issued"
+        $type != "ca" or caSecret, "issuer ${name}: a ca issuer needs `caSecret` — the keypair it signs with"
+        $type == "ca" or not caSecret, "issuer ${name}: caSecret only applies to a ca issuer"
 
 schema Target:
     """
@@ -139,25 +264,53 @@ schema Chaos:
         len(workflows) == len({w.name: 1 for w in workflows}), "workflow names must be unique"
 
 schema Manager:
-    """The whole cluster-management release: one values.yaml."""
+    """The whole cluster-management release: one values.yaml per cluster."""
     name: str = "manager"
+
+    # The kind of cluster this file describes. `manager` renders every
+    # dependency; `workload` renders only the `application` ones.
+    role: "manager" | "workload"
     # namespace the HelmRepository / HelmRelease objects live in
     namespace: str = "flux-system"
     dependencies: [Dependency] = []
+
+    # cert-manager issuers. Cluster-scoped unless a row sets `namespace`; the
+    # cert-manager chart itself belongs in `dependencies` above.
+    issuers: [Issuer] = []
     chaos?: Chaos
+    _typeOf = {d.name: d.$type for d in dependencies}
 
     check:
         len(dependencies) == len({d.name: 1 for d in dependencies}), "dependency names must be unique"
-        all_true([dep in [d.name for d in dependencies] for d in dependencies for dep in d.dependsOn]), "dependsOn must name another dependency in this file"
+        all_true([dep in _typeOf for d in dependencies for dep in d.dependsOn]), "dependsOn must name another dependency in this file"
+        all_true([_typeOf[dep] == "application" for d in dependencies if d.$type == "application" for dep in d.dependsOn if dep in _typeOf]), "an application dependency may not depend on a manager dependency: it must install on a workload cluster, where manager dependencies are absent"
+        len(issuers) == len({i.name: 1 for i in issuers}), "issuer names must be unique"
+
+# Which dependencies a cluster of this role installs.
+_installed = lambda m: Manager -> [Dependency] {
+    m.dependencies if m.role == "manager" else [d for d in m.dependencies if d.$type == "application"]
+}
+
+# Issuers are instances of cert-manager's CRDs, so they go wherever the
+# cert-manager chart goes. Without the chart in this file: manager clusters.
+_issuerType = lambda m: Manager -> str {
+    _cm = [d for d in m.dependencies if d.name == "cert-manager"]
+    _cm[0].$type if _cm else "manager"
+}
 
 # ── Dependencies (Flux) ──────────────────────────────────────────────────────
 _labels = lambda m: Manager -> {str:str} {
     {"app.kubernetes.io/managed-by" = "manager", "app.kubernetes.io/part-of" = m.name}
 }
 
+# The phase selector: `kubectl apply -l platform.example.org/type=<type>`.
+_dependencyLabels = lambda m: Manager, d: Dependency -> {str:str} {
+    _labels(m) | {"platform.example.org/type" = d.$type}
+}
+
 _helmRepository = lambda m: Manager, d: Dependency -> helmrepo.HelmRepository {
     helmrepo.HelmRepository {
-        metadata = {name = d.name, namespace = m.namespace, labels = _labels(m)}
+        metadata = {name = d.name, namespace = m.namespace, labels = _dependencyLabels(m, d)}
         spec = {
             url = d.repo
             interval = d.interval
@@ -182,7 +335,7 @@ _installDefaults = {createNamespace = True, remediation = {retries = 3}}
 # null there (same dance as platform/component/flux).
 _helmRelease = lambda m: Manager, d: Dependency -> {str:} {
     _hr = helmrelease.HelmRelease {
-        metadata = {name = d.name, namespace = m.namespace, labels = _labels(m)}
+        metadata = {name = d.name, namespace = m.namespace, labels = _dependencyLabels(m, d)}
         spec = {
             interval = d.interval
             timeout = d.timeout
@@ -213,6 +366,53 @@ _helmRelease = lambda m: Manager, d: Dependency -> {str:} {
         }
     }
     {apiVersion = _hr.apiVersion, kind = _hr.kind, metadata = _hr.metadata, spec = {k: v for k, v in _hr.spec if v not in [None, Undefined]}}
+}
+
+# ── Issuers (cert-manager) ───────────────────────────────────────────────────
+# The DNS01 provider blocks, keyless in every case: no credential fields are
+# emitted, so cert-manager uses the identity its ServiceAccount is federated
+# with (see packages/cloud/workload-identity for the GSA/role/identity itself).
+_dns01 = lambda s: Solver -> {str:} {
+    _cloudDNS = {project = s.project} | ({hostedZoneName = s.hostedZoneName} if s.hostedZoneName else {})
+    _route53 = {region = s.region} | ({hostedZoneID = s.hostedZoneID} if s.hostedZoneID else {}) | ({role = s.role} if s.role else {})
+    _azureDNS = {subscriptionID = s.subscriptionID, resourceGroupName = s.resourceGroupName} | ({hostedZoneName = s.hostedZoneName} if s.hostedZoneName else {}) | ({
+        managedIdentity = {clientID = s.clientID}
+    } if s.clientID else {})
+    {cloudDNS = _cloudDNS} if s.provider == "cloud-dns" else {route53 = _route53} if s.provider == "route53" else {azureDNS = _azureDNS}
+}
+
+_solver = lambda s: Solver -> {str:} {
+    _http01 = {ingress = {ingressClassName = s.ingressClass} if s.ingressClass else {}}
+    _challenge = {http01 = _http01} if s.$type == "http01" else {dns01 = _dns01(s)}
+    _selectorFields = ({dnsNames = s.dnsNames} if s.dnsNames else {}) | ({dnsZones = s.dnsZones} if s.dnsZones else {}) | ({matchLabels = s.labels} if s.labels else {})
+    _challenge | ({selector = _selectorFields} if _selectorFields else {})
+}
+
+_issuerSpec = lambda i: Issuer -> {str:} {
+    _acme = {
+        server = i.server
+        email = i.email
+        privateKeySecretRef = {name = i.privateKeySecret or "${i.name}-account-key"}
+        solvers = [_solver(s) for s in i.solvers]
+    }
+    {acme = _acme} if i.$type == "acme" else {
+        selfSigned = {}
+    } if i.$type == "self-signed" else {
+        ca = {secretName = i.caSecret}
+    }
+}
+
+# An issuer is an instance of a cert-manager CRD, so it carries the type of
+# the cert-manager dependency and renders on the same clusters as the chart.
+_issuer = lambda m: Manager, i: Issuer -> any {
+    _meta = {name = i.name, labels = _labels(m) | {"platform.example.org/type" = _issuerType(m)}}
+    cmissuer.Issuer {
+        metadata = _meta | {namespace = i.namespace}
+        spec = _issuerSpec(i)
+    } if i.namespace else cmclusterissuer.ClusterIssuer {
+        metadata = _meta
+        spec = _issuerSpec(i)
+    }
 }
 
 # ── Chaos (Chaos Mesh) ───────────────────────────────────────────────────────
@@ -264,11 +464,20 @@ _workflow = lambda m: Manager, w: Workflow -> cmworkflow.Workflow {
 render = lambda m: Manager -> [any] {
     """
     All manifests for a Manager, in apply order: chaos-enabled Namespaces,
-    HelmRepositories, HelmReleases, experiments (one-shot or Schedule), Workflows.
+    HelmRepositories, HelmReleases, issuers, experiments (one-shot or
+    Schedule), Workflows. Dependencies (and the issuers, which follow
+    cert-manager) are filtered by `role`: a workload cluster gets the
+    `application` type only.
+
+    Issuers come after the releases on purpose — the cert-manager CRDs they are
+    instances of arrive with the chart, so a first apply on a bare cluster can
+    reject them; the render is idempotent, apply it again once helm-controller
+    reports cert-manager Ready.
     """
-    #_namespace = corev1.Namespace
+    _deps = _installed(m)
     _namespaces: [any] = [_chaosNamespace(m, ns) for ns in m.chaos.namespaces] if m.chaos else []
-    _deps: [any] = [_helmRepository(m, d) for d in m.dependencies] + [_helmRelease(m, d) for d in m.dependencies]
+    _flux: [any] = [_helmRepository(m, d) for d in _deps] + [_helmRelease(m, d) for d in _deps]
+    _issuers: [any] = [_issuer(m, i) for i in m.issuers] if m.role == "manager" or _issuerType(m) == "application" else []
     _runs: [any] = ([_experiment(m, e) for e in m.chaos.experiments] + [_workflow(m, w) for w in m.chaos.workflows]) if m.chaos else []
-    _namespaces + _deps + _runs
+    _namespaces + _flux + _issuers + _runs
 }

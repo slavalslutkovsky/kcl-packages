@@ -1,0 +1,20 @@
+apiVersion: platform.example.org/v1alpha1
+kind: Inbox
+metadata:
+  namespace: default
+  name: uploads
+spec:
+  provider: gcp                    # the flag: stamped onto both children (aws | gcp)
+  region: europe-west1             # GCS location and Pub/Sub message storage region
+  bucket:
+    storageClass: nearline         # payloads are kept a while before processing
+    expirationDays: 30
+  queue:
+    visibilityTimeoutSeconds: 300  # -> ackDeadlineSeconds (GCP clamps to 10-600)
+    retentionDays: 7               # GCP subscription retention max
+    deadLetter:
+      enabled: true                # uploads-queue-dlq topic + subscription
+      maxReceives: 5               # GCP floor
+  deletionPolicy: Orphan           # keep bucket and queue when the Inbox goes
+  tags:
+    team: platform

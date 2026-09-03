@@ -26,6 +26,21 @@ export function readKclMod(workspaceRoot: string, kclModPath: string): KclModInf
 }
 
 /**
+ * Relative `path = "…"` dependencies declared in a kcl.mod `[dependencies]`
+ * table. These are the only intra-workspace edges KCL knows about (registry
+ * dependencies point outside the repo), so they are what the Nx project graph
+ * is built from.
+ */
+export function parseKclModPathDeps(content: string): string[] {
+  const deps: string[] = [];
+  for (const line of content.split('\n')) {
+    const path = line.match(/^[A-Za-z0-9_-]+\s*=\s*\{[^}]*\bpath\s*=\s*"([^"]+)"/)?.[1];
+    if (path) deps.push(path);
+  }
+  return deps;
+}
+
+/**
  * Update the version in a kcl.mod file content string.
  */
 export function updateKclModVersion(content: string, newVersion: string): string {

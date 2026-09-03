@@ -1,0 +1,25 @@
+apiVersion: platform.example.org/v1alpha1
+kind: Inbox
+metadata:
+  namespace: default
+  name: uploads
+spec:
+  provider: aws                    # the flag: stamped onto both children (aws | gcp)
+  region: us-east-1                # bucket and queue are placed here
+  bucket:
+    storageClass: standard         # payloads are read once, soon
+    versioning: false              # immutable work items: no point keeping versions
+    expirationDays: 14             # lifecycle rule: payloads older than this are deleted
+    forceDestroy: false            # an unprocessed backlog survives deleting the Inbox
+  queue:
+    fifo: false                    # true -> uploads-queue.fifo, ordered delivery
+    visibilityTimeoutSeconds: 120  # a consumer gets two minutes per payload before redelivery
+    retentionDays: 7               # a work item never outlives its payload (14d above)
+    deadLetter:
+      enabled: true                # poison payloads go to uploads-queue-dlq
+      maxReceives: 5
+  encryptionKmsKeyId: arn:aws:kms:us-east-1:111122223333:key/abcd-ef  # one CMEK for bucket + queue
+  deletionPolicy: Delete           # Delete | Orphan — Orphan keeps bucket and queue
+  tags:
+    team: platform
+    env: staging

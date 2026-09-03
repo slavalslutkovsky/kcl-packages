@@ -1,0 +1,31 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: repository-forgejo
+  labels:
+    provider: forgejo
+spec:
+  compositeTypeRef:
+    apiVersion: cloud.example.org/v1alpha1
+    kind: Repository
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-kcl
+      input:
+        apiVersion: krm.kcl.dev/v1alpha1
+        kind: KCLInput
+        spec:
+          # Explicit, and load-bearing: function-kcl only intercepts the
+          # `meta.krm.kcl.dev/v1alpha1` kinds — which is how this Composition
+          # asks Crossplane to fetch the tenant's Entitlement — under the
+          # `Default` target. Its input CRD defaults `target` to `Resources`,
+          # where the gate item would be treated as a composed resource and
+          # rejected for having no name.
+          target: Default
+          # Pin a release with ?tag=<version> once published via `nx release`.
+          source: oci://docker.io/yurikrupnik/repository-forgejo?tag=0.1.1
+    - step: ready
+      functionRef:
+        name: function-auto-ready

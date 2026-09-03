@@ -5,6 +5,8 @@ Same contract as `app`:
 
   kcl run packages/manager -D values=manifests/manager/values.yaml -q | kubectl apply -f -
   kcl run packages/manager -D values=manifests/manager/values.yaml -D env=staging -q
+  # one phase at a time: every dependency is labelled platform.example.org/type=<manager|application>
+  kcl run packages/manager -D values=manifests/manager/values.yaml -q | kubectl apply -l platform.example.org/type=manager -f -
   # after publish: kcl run oci://docker.io/yurikrupnik/manager -D values=... -q
 
 `-D values=<path>` (like helm -f) or a values.yaml in the current directory;
@@ -33,7 +35,8 @@ _hasOverlay = _env and file.exists(_overlayPath)
 assert (not _env) or _hasOverlay, "env overlay not found: '${_overlayPath}' for -D env=${_env} (relative to ${file.workdir()})."
 
 _demoValues = {
-    dependencies = [{name = "chaos-mesh", repo = "https://charts.chaos-mesh.org", version = "2.8.4"}]
+    role = "manager"
+    dependencies = [{name = "chaos-mesh", $type = "application", repo = "https://charts.chaos-mesh.org", version = "2.8.4"}]
     chaos.experiments = [{name = "demo-kill", $type = "pod-kill", target.namespaces = ["demo"]}]
 }
 _baseValues = yaml.decode(file.read(_valuesPath)) if _hasValues else _demoValues

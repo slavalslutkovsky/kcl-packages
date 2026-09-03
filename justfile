@@ -29,14 +29,44 @@ gets:
 # ─── Render locally with the kcl CLI ─────────────────────────────────────────
 #   just app <values.yaml> [env]        one app release (packages/app)
 #   just manager [values.yaml] [env]    the cluster manager (packages/manager):
-#                                       Flux-delivered charts + cluster-scope chaos
-# Both print a manifest stream: pipe into `kubectl apply -f -`. `env` picks the
+#                                       Flux-delivered charts, cert-manager
+#                                       issuers, cluster-scope chaos. The values'
+#                                       `role` picks the cluster kind: `manager`
+#                                       renders every chart, `workload` only the
+#                                       `application` ones — e.g.
+#                                       `just manager <values> workload` with a
+#                                       `<stem>.workload.yaml` overlay
+#   just manager-phase <type> [values.yaml] [env]
+#                                       split one render by chart type via the
+#                                       label platform.example.org/type
+#   just entitlements [values.yaml]     who has paid for what
+#                                       (packages/platform/entitlement)
+# All print a manifest stream: pipe into `kubectl apply -f -`. `env` picks the
 # <stem>.<env>.yaml overlay next to the values file.
 app values env="":
     kcl run packages/app -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
 
 manager values="packages/manager/examples/values.yaml" env="":
     kcl run packages/manager -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+# One type of the manager's charts out of a render, by the label the `type`
+# field becomes. `role` in the values is the normal way to pick what a cluster
+# gets; this is for splitting a stream that already has both.
+manager-phase type values="packages/manager/examples/values.yaml" env="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{ type }}" in manager|application) ;; *) echo "type must be manager or application, got '{{ type }}'" >&2; exit 2 ;; esac
+    just manager {{ values }} {{ env }} | yq 'select(.metadata.labels["platform.example.org/type"] == "{{ type }}")'
+
+# Cluster-scoped, one per tenant namespace, and normally written by whatever
+# owns billing — this renders them from a tenant list instead, so a demo or a
+# test cluster can have them in version control. `known_features` in
+# packages/platform/entitlement/lib.k makes a typo'd feature key a build
+# failure rather than a tenant who paid and got a fatal render.
+# Render the paid-feature records the gated Compositions read.
+entitlements values="":
+    kcl run packages/platform/entitlement {{ if values != "" { "-D values=" + values } else { "" } }} -q
+
 # ─── Local platform (devkit) ──────────────────────────────────────────────────
 #
 # `just up` is the whole local platform in one command:
@@ -150,6 +180,61 @@ provider-repo name repo ref="main" service="" crdPath="package/crds":
 # Generate a provider schema package from a local directory of CRD YAMLs.
 provider-local name dir service="":
     {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --from={{ dir }} {{ if service != "" { "--service=" + service } else { "" } }} --no-interactive
+
+# ─── XRD schema packages (typed child XRs) ────────────────────────────────────
+#
+# A module's xrd/ dir can also be a KCL package — `<module>-xrd` — holding the
+# schemas `kcl import` derives from its own xrd.yaml. A composite of composites
+# (platform/inbox) imports them by path to build its child XRs against the same
+# contract the cluster enforces, and that path dependency is the edge the Nx
+# graph shows. kcl import only knows CRDs, so the XRD is first shaped into the
+# CRD Crossplane itself would serve for it: kind/apiVersion renamed, one
+# storage version, and `spec.crossplane` (composition selection) added, which
+# Crossplane injects into every v2 XR schema and is what a composer sets.
+# models/ is generated — never hand-edit it; re-run after changing the XRD.
+
+#   just xrd-schema <module>        e.g. just xrd-schema bucket
+# Generate (or refresh) packages/*/<module>/xrd as the `<module>-xrd` schema package.
+xrd-schema module:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="$(just module-dir {{ module }})/xrd"
+    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+    yq '
+      .apiVersion = "apiextensions.k8s.io/v1" | .kind = "CustomResourceDefinition"
+      | .spec.versions[] |= (.storage = true | del(.referenceable) | del(.additionalPrinterColumns))
+      | .spec.versions[].schema.openAPIV3Schema.properties.spec.properties.crossplane = {
+          "type": "object",
+          "description": "Crossplane composition selection, injected into every v2 XR by Crossplane itself; a composer sets compositionSelector or compositionRef to pick the backend.",
+          "properties": {
+            "compositionRef": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+            "compositionRevisionRef": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+            "compositionRevisionSelector": {"type": "object", "properties": {"matchLabels": {"type": "object", "additionalProperties": {"type": "string"}}}, "required": ["matchLabels"]},
+            "compositionSelector": {"type": "object", "properties": {"matchLabels": {"type": "object", "additionalProperties": {"type": "string"}}}, "required": ["matchLabels"]},
+            "compositionUpdatePolicy": {"type": "string", "enum": ["Automatic", "Manual"]}
+          }
+        }
+    ' "$dir/xrd.yaml" > "$tmp/{{ module }}.yaml"
+    if [ ! -f "$dir/kcl.mod" ]; then
+        printf '[package]\nname = "%s-xrd"\nedition = "v0.12.3"\nversion = "0.1.0"\n' "{{ module }}" > "$dir/kcl.mod"
+        # Pinned like the provider packages (import-crd generator): ObjectMeta comes from k8s.
+        (cd "$dir" && kcl mod add k8s:1.32.4 >/dev/null)
+        cat > "$dir/main.k" <<EOF
+    # {{ module }}-xrd — KCL schemas of the {{ module }} XRD, generated from ./xrd.yaml
+    # via \`just xrd-schema {{ module }}\` (kcl import -m crd). Import the composite type:
+    #   import {{ module }}_xrd.models.v1alpha1.<group>_v1alpha1_<kind> as <alias>
+    # Regenerate after every change to xrd.yaml; models/ is not hand-edited.
+    _generated = "see ./models for schemas"
+    EOF
+    fi
+    rm -rf "$dir/models"
+    (cd "$dir" && kcl import -m crd -f "$tmp/{{ module }}.yaml" >/dev/null)
+    # kcl import writes a nested models/kcl.mod, which would be a spurious Nx project.
+    rm -f "$dir/models/kcl.mod" "$dir/models/kcl.mod.lock"
+    # Unlike packages/providers/**, xrd/ is in the pre-commit fmt/lint scope; ship
+    # the formatted form so the kcl-fmt hook has nothing to rewrite.
+    (cd "$dir/models" && kcl fmt ./... >/dev/null)
+    echo "generated $dir/models"
 
 # Bootstrap/refresh the storage providers used by the bucket Composition.
 seed-providers:
@@ -459,10 +544,22 @@ secrets-check *files:
     done
     exit $fail
 
-# Type-check the TypeScript in tools/ (the nx-kcl plugin and the bench harness).
+# Type-check the TypeScript in tools/ (the nx-kcl plugin, the bench harness, the install graph).
 typecheck:
     {{ tsc }} --noEmit -p tools/nx-kcl/tsconfig.json
     {{ tsc }} --noEmit -p tools/bench/tsconfig.json
+    {{ tsc }} --noEmit -p tools/graph/tsconfig.json
+
+# Redraw docs/install-graph.md from devkit.toml [[deps]] and the manager values:
+# the wave ladder `devkit cluster deps` runs, and the HelmRelease dependsOn DAG
+# Flux keeps. Code dependencies between KCL packages are a different graph —
+# `nx graph` draws those from kcl.mod path deps.
+graph:
+    node tools/graph/src/install-graph.ts
+
+# Fail if docs/install-graph.md no longer matches its sources (pre-commit).
+graph-check:
+    node tools/graph/src/install-graph.ts --check
 
 # Merge, revert and fixup!/squash! subjects are git's own wording, so they pass
 # through untouched.
@@ -813,6 +910,94 @@ e2e-status:
 e2e-down:
     -devkit cluster delete kcl-e2e
     -docker rm -f {{ registry_host }}
+
+# ─── End-to-end: the manager package on a Flux-owned cluster ──────────────────
+#
+#   just e2e-manager            # a manager cluster: crossplane + the apps' operators
+#   just e2e-manager workload   # a workload cluster: the apps' operators only
+#
+# Its own Kind cluster (`kcl-manager`), because the e2e cluster's devkit.toml
+# installs crossplane / chaos-mesh / cert-manager by helm CLI and the manager
+# render must be their only owner. manifests/manager/devkit.toml shadows the
+# root file when devkit runs from that directory (docs/devkit.md, "Shadow it
+# with a nearer devkit.toml"): a smaller cluster, and Flux as the only dep.
+#
+# The render is applied twice, as the package documents: the issuers and the
+# chaos objects are instances of CRDs the cert-manager and chaos-mesh charts
+# install, so the first pass takes only what Flux understands, and the second
+# pass lands once helm-controller reports every HelmRelease Ready.
+manager_values := "packages/manager/examples/values.yaml"
+manager_cluster := "kcl-manager" # keep in step with manifests/manager/devkit.toml
+
+# Cluster, Flux, the manager render for one cluster role, and the checks.
+e2e-manager role="manager": e2e-manager-up (e2e-manager-apply role) (e2e-manager-check role)
+    @just e2e-manager-status
+
+# Kind cluster + Flux, from manifests/manager/devkit.toml.
+e2e-manager-up:
+    cd manifests/manager && devkit cluster create && devkit cluster deps
+
+# Apply the render for a role: `manager` is the base values, `workload` is the
+# <stem>.workload.yaml overlay beside it.
+e2e-manager-apply role="manager":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{ role }}" in manager) env="" ;; workload) env="workload" ;; *) echo "role must be manager or workload, got '{{ role }}'" >&2; exit 2 ;; esac
+    kubectl config use-context kind-{{ manager_cluster }} >/dev/null
+    # Pass 1: Namespaces + the Flux objects only.
+    just manager {{ manager_values }} "$env" \
+        | yq 'select(.kind == "Namespace" or .kind == "HelmRepository" or .kind == "HelmRelease")' \
+        | kubectl apply -f -
+    kubectl -n flux-system wait helmrelease --all --for=condition=Ready --timeout=20m
+    # Pass 2: everything; the CRDs are there now.
+    just manager {{ manager_values }} "$env" | kubectl apply -f -
+
+# What the role change promises: a manager cluster runs crossplane, a workload
+# cluster does not, and both run every `application` chart.
+e2e-manager-check role="manager":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail=0
+    ok()   { echo "  ✓ $1"; }
+    bad()  { echo "  ✗ $1"; fail=1; }
+    type_of() { kubectl -n flux-system get helmrelease "$1" -o jsonpath='{.metadata.labels.platform\.example\.org/type}' 2>/dev/null || true; }
+    echo "── role {{ role }} ─────────────────────────────────────────"
+    for hr in cert-manager chaos-mesh keda kube-prometheus-stack; do
+        [ "$(type_of $hr)" = application ] && ok "$hr installed, type=application" || bad "$hr missing or not type=application"
+    done
+    if [ "{{ role }}" = manager ]; then
+        [ "$(type_of crossplane)" = manager ] && ok "crossplane installed, type=manager" || bad "crossplane missing or not type=manager"
+        kubectl get crd compositeresourcedefinitions.apiextensions.crossplane.io >/dev/null 2>&1 && ok "crossplane CRDs served" || bad "crossplane CRDs absent"
+    else
+        [ -z "$(type_of crossplane)" ] && ok "crossplane absent" || bad "crossplane installed on a workload cluster"
+    fi
+    ready=$(kubectl -n flux-system get helmrelease -o jsonpath='{range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' | grep -vc '=True' || true)
+    [ "$ready" = 0 ] && ok "every HelmRelease Ready" || bad "$ready HelmRelease(s) not Ready"
+    # Issuers follow cert-manager (type=application), so both roles get them.
+    n=$(kubectl get clusterissuer -l platform.example.org/type=application --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    [ "$n" = 4 ] && ok "4 ClusterIssuers, labelled application" || bad "expected 4 ClusterIssuers labelled application, got $n"
+    kubectl wait clusterissuer/platform-root --for=condition=Ready --timeout=2m >/dev/null && ok "platform-root (self-signed) Ready" || bad "platform-root not Ready"
+    # Chaos objects: instances of chaos-mesh CRDs, applied in pass 2.
+    for r in schedule/zerg-random-kill stresschaos/node-memory-pressure networkchaos/zerg-db-loss workflow/game-day workflow/everything-at-once; do
+        kubectl -n chaos-mesh get "$r" >/dev/null 2>&1 && ok "$r" || bad "$r missing"
+    done
+    exit $fail
+
+# HelmReleases, issuers and chaos objects on the manager cluster.
+e2e-manager-status:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    kubectl config use-context kind-{{ manager_cluster }} >/dev/null
+    echo "── helmreleases ───────────────────────────────────────────"
+    kubectl -n flux-system get helmrelease -L platform.example.org/type
+    echo "── issuers ────────────────────────────────────────────────"
+    kubectl get clusterissuer -L platform.example.org/type
+    echo "── chaos ──────────────────────────────────────────────────"
+    kubectl -n chaos-mesh get schedule,podchaos,networkchaos,stresschaos,workflow 2>/dev/null || true
+
+# Delete the manager cluster.
+e2e-manager-down:
+    -devkit cluster delete {{ manager_cluster }}
 
 # ─── Release ──────────────────────────────────────────────────────────────────
 

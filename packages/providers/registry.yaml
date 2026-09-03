@@ -500,3 +500,22 @@ providers:
       the API group: every CRD file is chaos-mesh.org_<plural>.yaml, so the
       whole group is imported; packages/providers/crds.yaml says which kinds
       are rendered.
+
+  - name: cert-manager
+    cloud: kubernetes
+    service: cert-manager
+    repo: cert-manager/cert-manager
+    ref: v1.21.1
+    crdPath: deploy/crds
+    scope: cluster
+    install: none
+    modules: [manager]
+    notes: >-
+      Operator CRDs, not a Crossplane provider: the manager package renders
+      cert-manager.io/v1 ClusterIssuer / Issuer from its `issuers:` block, so
+      the charts and workloads on the cluster have something to point
+      `cert-manager.io/cluster-issuer` at. cert-manager itself is a
+      `manager`-type dependency of packages/manager (Flux HelmRelease) — keep
+      `ref` in step with the chart version pinned there. `service` filters to
+      the cert-manager.io group only: the acme.cert-manager.io CRDs (Challenge,
+      Order) are the ACME controller's own bookkeeping, never authored here.

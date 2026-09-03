@@ -213,12 +213,26 @@ operators:
              VaultDynamicSecret, Webhook]
 
   - name: cert-manager
-    source: cert-manager/cert-manager@v1.21.1 (cert-manager.crds.yaml)
-    installedBy: devkit.toml deps.cert-manager (helm chart 1.21.1, crds.enabled=true, cert-manager)
-    schemas: none
+    source: cert-manager/cert-manager@v1.21.1 (deploy/crds)
+    installedBy: packages/manager dependencies.cert-manager (Flux HelmRelease, chart 1.21.1, crds.enabled=true, cert-manager)
+    schemas: packages/providers/cert-manager/models (cert-manager.io group only)
     groups: [cert-manager.io, acme.cert-manager.io]
-    used: []
-    unused: [Certificate, CertificateRequest, ClusterIssuer, Issuer, Challenge, Order]
+    notes: >-
+      The manager package renders one issuer per `issuers:` row — a
+      ClusterIssuer, or a namespaced Issuer when the row sets `namespace`.
+      Certificate objects are not authored here: an Ingress annotated with
+      `cert-manager.io/cluster-issuer` makes the ingress-shim write them, and a
+      workload chart that wants one writes its own. Challenge and Order are the
+      ACME controller's own bookkeeping, so no schemas are generated for the
+      acme.cert-manager.io group at all.
+    used:
+      - kind: ClusterIssuer
+        group: cert-manager.io
+        by: [manager]
+      - kind: Issuer
+        group: cert-manager.io
+        by: [manager]
+    unused: [Certificate, CertificateRequest, Challenge (acme), Order (acme)]
 
   - name: flagger
     source: fluxcd/flagger@v1.44.0 (artifacts/flagger/crd.yaml)

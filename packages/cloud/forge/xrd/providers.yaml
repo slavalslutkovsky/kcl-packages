@@ -1,0 +1,54 @@
+# The only Crossplane provider a Forge Composition renders against.
+#
+# The forge is in-cluster software, not a cloud service: there is no managed
+# Forgejo anywhere, so there is one backend and it installs a Helm chart. That
+# needs provider-helm v1.x — the first line that ships the namespaced
+# `helm.m.crossplane.io` CRDs the Composition renders (a Crossplane v2
+# namespaced XR cannot own a cluster-scoped MR).
+#
+# The version here is the one the schema package under packages/providers/helm
+# was generated from — keep them in step, or the rendered Release can reference
+# fields the installed provider does not have.
+#
+# The ClusterProviderConfig this provider is used through lives in
+# providerconfigs.yaml, deliberately: applying it together with the Provider
+# fails, because it is an instance of a CRD this Provider has not installed yet.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-helm
+spec:
+  package: ghcr.io/crossplane-contrib/provider-helm:v1.3.0
+  runtimeConfigRef:
+    name: provider-helm
+---
+# provider-helm needs in-cluster RBAC to install charts. This binds its
+# ServiceAccount to cluster-admin, which is what the upstream quickstart does;
+# scope it down before using this outside a sandbox.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provider-helm
+  namespace: crossplane-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: provider-helm-cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: provider-helm
+    namespace: crossplane-system
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-helm
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-helm

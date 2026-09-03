@@ -56,6 +56,14 @@ spec:
                     it), and an operator copies them here. That keeps the two
                     capabilities independently installable — a Repository can
                     target a forge this platform does not manage at all.
+
+                    DELETE ORDER MATTERS. Deletion runs the forge's DELETE call,
+                    so a Repository whose forge is already gone cannot finish
+                    deleting: it fails its observe, keeps its finalizer, and has
+                    to be released by hand
+                    (`kubectl patch ... -p '{"metadata":{"finalizers":[]}}'`).
+                    Delete the Repositories before the Forge, or set
+                    deletionPolicy: Orphan on them first.
                   properties:
                     baseUrl:
                       type: string

@@ -40,6 +40,20 @@ Failing closed is the point: `assert` surfaces as a SEVERITY_FATAL function
 result, so an unentitled tenant gets a named error on its XR and zero resources,
 not a half-provisioned instance.
 
+REQUIREMENTS
+
+`request()` needs function-kcl >= v0.12 (this repo pins v0.12.2 in every
+module's `xrd/functions.yaml`) or this repo's `kclx`. v0.11.x rejects the item
+outright — `invalid kind "RequiredResources" for apiVersion
+"meta.krm.kcl.dev/v1alpha1" - must be CompositeConnectionDetails or
+ExtraResources` — so a cluster running an older pin fails every gated
+Composition rather than degrading. The Composition must also set
+`spec.pipeline[].input.spec.target: Default`: the meta-kind dispatch runs only
+under that target, and the input CRD's own default is `Resources`.
+
+Crossplane core, not the function, performs the fetch, so its ClusterRole needs
+to cover the record — see `rbac.yaml` next to this file.
+
 The tenant key is the XR's NAMESPACE, not its name: a tenant is a namespace here
 (Crossplane v2 XRs are namespaced), and one namespace may hold many XRs of many
 kinds covered by one purchase.

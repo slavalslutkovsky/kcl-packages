@@ -1,3 +1,18 @@
+# The demo tenants: a namespace and the record that grants it.
+#
+# Both halves live here because a tenant IS the pair — the record's name is the
+# namespace, and a record without its namespace grants nothing while a namespace
+# without its record can compose nothing paid.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-a
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-free
+---
 # A paying tenant. The name IS the namespace the grant applies to.
 apiVersion: platform.example.org/v1alpha1
 kind: Entitlement
@@ -10,6 +25,7 @@ spec:
     - repository                 # may manage repositories inside a forge
   quota:
     repositories: 50             # cap enforced by entitlement.within_quota()
+    storageGb: 50                # ceiling for a Forge's spec.storageGb, not a target
   reference: sub_1P9xyzExample   # opaque billing handle, never read by a Composition
 ---
 # A free tenant, kept as the negative case: applying a Forge XR in namespace

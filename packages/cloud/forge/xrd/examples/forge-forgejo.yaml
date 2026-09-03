@@ -1,0 +1,50 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Forge
+metadata:
+  # The namespace IS the tenant: this XR only renders if the cluster-scoped
+  # Entitlement named `tenant-a` grants the feature `forgejo`. See
+  # ../required-resources/entitlement.yaml (and packages/platform/entitlement).
+  namespace: tenant-a
+  name: git
+spec:
+  # The name clients resolve. Everything Forgejo hands out — clone URLs,
+  # webhook payloads, OAuth redirects — is built from it, so it is not a
+  # cosmetic label.
+  hostname: git.tenant-a.example.org
+  storageGb: 20                    # persistence.size; must fit the plan's quota.storageGb
+  # sqlite on the volume above is the chart default and needs nothing else.
+  # `postgres` points at a server that ALREADY exists (chart 17.x bundles
+  # none); the password is mounted from a Secret, never written into the
+  # Release:
+  # database:
+  #   mode: postgres
+  #   host: pg-rw.tenant-a.svc:5432
+  #   name: forgejo
+  #   user: forgejo
+  #   passwordSecret:
+  #     name: forge-db                # key's value is the fragment `PASSWD=<password>`
+  #     key: app-ini
+  database:
+    mode: sqlite
+  ingress:
+    enabled: true
+    className: nginx
+    # A TLS Secret covering `hostname` also flips ROOT_URL and status.url to
+    # https; without one the forge is served over plain HTTP.
+    # tlsSecretName: git-tls
+  # Requires the `enterprise` plan AND database.mode postgres — two replicas on
+  # one sqlite file corrupt it.
+  highAvailability: false
+  chartVersion: "17.1.5"           # appVersion Forgejo 15.0.7
+  deletionPolicy: Delete           # Orphan leaves the release, its PVC and the repositories
+  # Raw chart values, deep-merged LAST over everything computed above. For chart
+  # keys this XRD does not model:
+  values:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+  # Without an admin Secret the chart generates its own admin credential:
+  #   kubectl create secret generic git-admin -n tenant-a \
+  #     --from-literal=username=admin --from-literal=password='…'
+  # adminSecret: git-admin

@@ -1,18 +1,55 @@
 # Cluster manager values → manager.Manager. Render with
 #   kcl run /abs/path/to/packages/manager -D values=<this file> -q | kubectl apply -f -
-# Three concerns in one file: the platform charts Flux should keep installed,
-# cluster-scope chaos experiments, and orchestrated chaos runs (Workflows).
+# Four concerns in one file: the platform charts Flux should keep installed,
+# the cert-manager issuers that sign the cluster's certificates, cluster-scope
+# chaos experiments, and orchestrated chaos runs (Workflows).
 #
-# Flux must already be on the cluster (devkit.toml installs it). Do not list a
-# chart here that devkit.toml also installs: helm-controller would take over
-# the same release and the two would fight.
+# Flux must already be on the cluster (devkit.toml installs it on the e2e
+# cluster). A chart must have one owner: on the e2e Kind cluster devkit.toml
+# installs crossplane, chaos-mesh and cert-manager itself, so this file is for
+# a cluster Flux owns — never both on the same cluster.
+#
+# `role` says which kind of cluster this file describes; every dependency's
+# `type` says which kind installs it:
+#   manager      → manager clusters only: what manages other clusters and
+#                  cloud resources (crossplane and its providers)
+#   application  → every cluster that runs apps — workload clusters, and
+#                  manager clusters too (a manager can also run apps)
+# `role: manager` renders everything; `role: workload` renders the
+# application charts only. values.workload.yaml next to this file is that
+# overlay: `just manager packages/manager/examples/values.yaml workload`.
+# The type is also the label `platform.example.org/type` on every rendered
+# Flux object. An application dependency may not dependOn a manager one.
 
 name: platform
+role: manager
 namespace: flux-system            # where the HelmRepository / HelmRelease objects live
 
 dependencies:
+  # What makes this a manager cluster: Crossplane, which provisions the
+  # workload clusters and the cloud resources behind them (packages/cloud/*).
+  # `manager` type — a workload cluster never runs it.
+  - name: crossplane
+    type: manager
+    repo: https://charts.crossplane.io/stable
+    version: 2.3.4
+    namespace: crossplane-system
+  # TLS inside the cluster: Issuer/ClusterIssuer + Certificate, the webhook
+  # and mTLS machinery every other operator asks for. Apps need certificates
+  # wherever they run, so `application`; the issuers below follow it. The
+  # chart skips its CRDs by default and then its startupapicheck job fails, so
+  # turn them on.
+  - name: cert-manager
+    type: application
+    repo: https://charts.jetstack.io
+    version: 1.21.1
+    namespace: cert-manager
+    values:
+      crds:
+        enabled: true
   # The operator behind `app`'s `chaos:` faults and everything under chaos: below.
   - name: chaos-mesh
+    type: application
     repo: https://charts.chaos-mesh.org
     version: 2.8.4
     namespace: chaos-mesh
@@ -24,6 +61,7 @@ dependencies:
         create: false
   # The operator behind `app`'s `scaler:` (ScaledObject).
   - name: keda
+    type: application
     repo: https://kedacore.github.io/charts
     version: 2.17.2
     namespace: keda
@@ -31,14 +69,57 @@ dependencies:
   # only once keda is Ready (devkit.toml's `wave`, per chart). `install` /
   # `upgrade` are HelmRelease.spec fields as-is (typed by the Flux CRD schema),
   # merged over the manager defaults; this chart ships CRDs that must be
-  # replaced on upgrade.
+  # replaced on upgrade. The workloads' monitoring: `application`, like the
+  # chart it depends on (an application chart may only depend on application charts).
   - name: kube-prometheus-stack
+    type: application
     repo: oci://ghcr.io/prometheus-community/charts
     version: 77.5.0
     namespace: monitoring
     dependsOn: [keda]
     install: {crds: CreateReplace}
     upgrade: {crds: CreateReplace}
+
+# What signs the certificates: cert-manager ClusterIssuers (cluster-scoped, so
+# an Ingress in any namespace can name one in
+# `cert-manager.io/cluster-issuer`), or namespaced Issuers when a row sets
+# `namespace`. These are instances of the CRDs the cert-manager chart above
+# installs, so on a bare cluster apply the render twice — the second pass lands
+# once helm-controller reports cert-manager Ready.
+issuers:
+  # Public certificates from Let's Encrypt. Two solvers, narrowed by zone: the
+  # wildcard can only be proven over DNS, everything else goes through the
+  # ingress controller. No credentials anywhere — the cert-manager
+  # ServiceAccount is federated with a GSA that holds roles/dns.admin
+  # (packages/cloud/workload-identity/xrd/examples/workload-identity-gcp-platform.yaml).
+  - name: letsencrypt
+    type: acme
+    email: platform@example.com
+    solvers:
+      - type: dns01
+        provider: cloud-dns
+        project: my-project
+        dnsZones: [example.com]
+      - type: http01
+        ingressClass: nginx
+  # The same CA's staging endpoint: untrusted certificates, but rate limits you
+  # cannot hit. Point an Ingress at this one while DNS is still moving —
+  # production allows 50 certificates per registered domain per week.
+  - name: letsencrypt-staging
+    type: acme
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: platform@example.com
+    solvers:
+      - type: http01
+        ingressClass: nginx
+  # The internal PKI: mTLS between services and webhook certificates, names no
+  # public CA will ever sign. `platform-root` signs its own root into
+  # platform-ca-tls; `platform-ca` then issues from that keypair.
+  - name: platform-root
+    type: self-signed
+  - name: platform-ca
+    type: ca
+    caSecret: platform-ca-tls
 
 chaos:
   namespace: chaos-mesh           # where the experiments / Workflows are created

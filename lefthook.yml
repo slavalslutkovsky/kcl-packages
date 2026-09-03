@@ -50,6 +50,12 @@ pre-commit:
     - name: secrets
       run: just secrets-check {staged_files}
 
+    # docs/install-graph.md is generated from these two files; a change to
+    # either without `just graph` leaves the drawing lying.
+    - name: install-graph
+      glob: '{devkit.toml,packages/manager/examples/values.yaml,tools/graph/**}'
+      run: just graph-check
+
     # The plugin behind every nx target and generator in the justfile.
     - name: typecheck
       glob: 'tools/**/*.ts'

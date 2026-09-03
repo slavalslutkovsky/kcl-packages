@@ -48,6 +48,15 @@ importers:
         specifier: ^2.9.0
         version: 2.9.0
 
+  tools/graph:
+    dependencies:
+      smol-toml:
+        specifier: ^1.6.1
+        version: 1.6.1
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
+
   tools/nx-kcl: {}
 
 packages:

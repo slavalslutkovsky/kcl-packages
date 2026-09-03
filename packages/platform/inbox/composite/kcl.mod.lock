@@ -1,0 +1,17 @@
+[dependencies]
+  [dependencies.bucket-xrd]
+    name = "bucket-xrd"
+    full_name = "bucket-xrd_0.1.0"
+    version = "0.1.0"
+  [dependencies.k8s]
+    name = "k8s"
+    full_name = "k8s_1.32.4"
+    version = "1.32.4"
+    sum = "WrltC/mTXtdzmhBZxlvM71wJL5C/UZ/vW+bF3nFvNbM="
+    reg = "ghcr.io"
+    repo = "kcl-lang/k8s"
+    oci_tag = "1.32.4"
+  [dependencies.queue-xrd]
+    name = "queue-xrd"
+    full_name = "queue-xrd_0.1.0"
+    version = "0.1.0"

@@ -37,7 +37,11 @@ export default class KclVersionActions extends VersionActions {
     return null;
   }
 
-  // KCL packages in this workspace have no nx-tracked inter-project dependencies.
+  // Path dependencies between KCL packages are graph edges (create-dependencies.ts),
+  // but a KCL package pins no version of a path dependency — the path is the
+  // pin — so there is nothing to read here. nx.json sets
+  // `updateDependents: never` so a dependency's release never bumps its
+  // dependents on the strength of these edges.
   async readCurrentVersionOfDependency() {
     return { currentVersion: null, dependencyCollection: null };
   }

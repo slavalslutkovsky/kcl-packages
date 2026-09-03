@@ -1,0 +1,178 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: inboxes.platform.example.org
+spec:
+  scope: Namespaced
+  group: platform.example.org
+  names:
+    kind: Inbox
+    plural: inboxes
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                A drop zone with a work queue behind it: one object-storage
+                Bucket where payloads land and one point-to-point Queue that
+                carries a work item per payload to whoever processes it, in one
+                region on one cloud.
+
+                Like AppStack this XR composes CHILD COMPOSITE RESOURCES
+                (cloud.example.org Bucket + Queue) rather than managed
+                resources, so it knows nothing about S3, SQS, GCS or Pub/Sub;
+                each capability keeps owning its cloud mapping and this XRD only
+                decides how the pair is sized and which backend both resolve
+                to. Unlike AppStack the children are rendered TYPED, against
+                the KCL schemas generated from those two XRDs (bucket-xrd,
+                queue-xrd), so a field the child XRD does not declare is a
+                render error here, not a rejected apply on the cluster.
+
+                What is NOT modelled: a storage-event notification from the
+                bucket into the queue. Neither child XRD exposes one and the
+                clouds wire it differently (S3 event notifications vs. GCS
+                Pub/Sub notifications), so the producer that uploads a payload
+                also enqueues its key. Fields a backend cannot express are
+                documented on the child XRDs as ignored rather than silently
+                dropped.
+              properties:
+                provider:
+                  type: string
+                  enum: [aws, gcp]
+                  description: |
+                    Backend for both children, stamped onto each as
+                    spec.crossplane.compositionSelector.matchLabels.provider so
+                    the bucket and the queue land on the same cloud.
+
+                    Only aws and gcp are offered: Bucket also has azure and
+                    rustfs backends, but Queue has no Composition for either
+                    (its nats backend would be the in-cluster partner of
+                    rustfs). Add a value here once the matching pair exists.
+                region:
+                  type: string
+                  description: Cloud region for the pair. Forwarded verbatim as spec.region to both children — the queue lives where the payloads live.
+                bucket:
+                  type: object
+                  description: Tuning of the child Bucket. It is always created and always private (blockPublicAccess and uniformAccess stay at the Bucket defaults of true); this block only sizes it.
+                  properties:
+                    storageClass:
+                      type: string
+                      enum: [standard, nearline, cold, archive]
+                      default: standard
+                      description: Bucket spec.storageClass — the abstract tier payloads are written to. Inbox payloads are usually read once and soon, so standard is the default; pick a colder tier only when they are kept.
+                    versioning:
+                      type: boolean
+                      default: false
+                      description: Bucket spec.versioning. Off by default (the Bucket default is on) — payloads are immutable work items, and versions would only double the storage of every overwrite.
+                    expirationDays:
+                      type: integer
+                      minimum: 1
+                      description: Delete payloads this many days after they land, as a Bucket lifecycleRule (id "expire-payloads", empty prefix). Unset keeps them until the consumer deletes them.
+                    forceDestroy:
+                      type: boolean
+                      default: false
+                      description: Bucket spec.forceDestroy — delete payloads still in the bucket when the Inbox is deleted. Off by default so an unprocessed backlog survives a deletion.
+                queue:
+                  type: object
+                  description: Tuning of the child Queue. It is always created as a WORK QUEUE (one consumer receives each work item); this block only sizes it.
+                  properties:
+                    fifo:
+                      type: boolean
+                      default: false
+                      description: Queue spec.fifo — process payloads in the order they were announced. AWS FIFO queue (name gains .fifo); GCP message ordering.
+                    visibilityTimeoutSeconds:
+                      type: integer
+                      default: 30
+                      minimum: 0
+                      maximum: 43200
+                      description: Queue spec.visibilityTimeoutSeconds — how long a consumer has to process a payload before its work item is redelivered. Size it to the slowest expected processing of one payload.
+                    retentionDays:
+                      type: integer
+                      default: 4
+                      minimum: 1
+                      maximum: 14
+                      description: Queue spec.retentionDays — how long an unconsumed work item survives. Pair with bucket.expirationDays so a work item never outlives its payload.
+                    deadLetter:
+                      type: object
+                      description: Queue spec.deadLetter — after maxReceives failed deliveries a work item is shunted to a companion <name>-queue-dlq so a poison payload cannot block the inbox. On by default, unlike the bare Queue.
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: true
+                        maxReceives:
+                          type: integer
+                          default: 5
+                          minimum: 1
+                          maximum: 100
+                encryptionKmsKeyId:
+                  type: string
+                  description: CMEK for both children — Bucket spec.encryptionKmsKeyId and Queue spec.encryptionKmsKeyId. One key, because a payload and the work item that names it are the same data at rest. Unset leaves each child on provider-default encryption.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: Forwarded as spec.deletionPolicy to both children, which translate it into Crossplane managementPolicies. Orphan keeps the bucket and the queue when the Inbox is deleted.
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata forwarded as spec.tags to both children, which map it onto AWS tags or GCP labels.
+              required:
+                - provider
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True only when both children report status.ready — a bucket nobody is told about, or a queue with nowhere to put payloads, is not an inbox.
+                provider:
+                  type: string
+                  description: Backend the pair was placed on (aws | gcp).
+                bucketName:
+                  type: string
+                  description: Name of the provisioned bucket, copied from the Bucket status.bucketName. What a producer uploads to.
+                bucketUrl:
+                  type: string
+                  description: Native storage URI (gs://… or s3://…), copied from the Bucket status.url.
+                queueName:
+                  type: string
+                  description: The name a consumer receives from, copied from the Queue status.queueName (SQS queue name, GCP subscription name).
+                queueUrl:
+                  type: string
+                  description: What a consumer connects to, copied from the Queue status.url (SQS queue URL / GCP subscription path).
+                topic:
+                  type: string
+                  description: The name a producer sends the work item to, copied from the Queue status.topic (equals queueName on AWS; the GCP topic path).
+                deadLetterUrl:
+                  type: string
+                  description: Where shunted work items land, copied from the Queue status.deadLetterUrl. Absent when queue.deadLetter.enabled is false.
+                components:
+                  type: object
+                  description: Per-child readiness, for telling which half is still coming up.
+                  properties:
+                    bucket:
+                      type: boolean
+                      description: Bucket readiness.
+                    queue:
+                      type: boolean
+                      description: Queue readiness.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: BUCKET
+          type: string
+          jsonPath: .status.bucketUrl
+        - name: QUEUE
+          type: string
+          jsonPath: .status.queueName

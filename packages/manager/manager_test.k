@@ -1,7 +1,9 @@
-# Tests for the manager package: Flux dependencies, cluster-scope chaos, Workflows.
+# Tests for the manager package: Flux dependencies, cert-manager issuers,
+# cluster-scope chaos, Workflows.
 # Run: kcl test
 import yaml
 import file
+import app.lib as app
 
 _kinds = lambda items: [any] -> [str] {
     [m.kind for m in items]
@@ -14,13 +16,16 @@ _named = lambda items: [any], name: str -> any {
 test_dependencies = lambda {
     m = Manager {**yaml.decode("""\
 name: platform
+role: manager
 dependencies:
   - name: chaos-mesh
+    type: application
     repo: https://charts.chaos-mesh.org
     version: 2.8.4
     values:
       dashboard: {create: false}
   - name: kube-prometheus-stack
+    type: application
     repo: oci://ghcr.io/prometheus-community/charts
     chart: kube-prometheus-stack
     namespace: monitoring
@@ -31,6 +36,7 @@ dependencies:
     assert _kinds(out) == ["HelmRepository", "HelmRepository", "HelmRelease", "HelmRelease"], "one repo + one release per dependency, repos first: ${_kinds(out)}"
     assert all_true([o.metadata.namespace == "flux-system" for o in out]), "Flux objects live in the manager namespace"
     assert all_true([o.metadata.labels["app.kubernetes.io/part-of"] == "platform" for o in out])
+    assert all_true([o.metadata.labels["platform.example.org/type"] == "application" for o in out]), "type → label on the repo and the release"
 
     repo = out[0]
     assert repo.spec.url == "https://charts.chaos-mesh.org" and repo.spec?.$type == Undefined, "https index → default type"
@@ -57,8 +63,10 @@ dependencies:
 # the generated CRD schemas; the manager's install defaults survive the merge.
 test_dependency_flux_fields = lambda {
     m = Manager {**yaml.decode("""\
+role: manager
 dependencies:
   - name: kube-prometheus-stack
+    type: application
     repo: oci://123456789012.dkr.ecr.eu-west-1.amazonaws.com/charts
     provider: aws
     secretRef: {name: ecr-pull}
@@ -88,14 +96,145 @@ dependencies:
     assert hr.spec.valuesFrom[0].kind == "Secret" and hr.spec.valuesFrom[0].targetPath == "grafana.adminPassword"
     assert hr.spec.postRenderers[0].kustomize.patches[0].target.kind == "Deployment"
 
-    plain = render(Manager {dependencies = [{name = "keda", repo = "https://kedacore.github.io/charts"}]})[1]
+    plain = render(Manager {role = "manager", dependencies = [{name = "keda", $type = "application", repo = "https://kedacore.github.io/charts"}]})[1]
     assert plain.spec.install.createNamespace == True and plain.spec.install.remediation.retries == 3 and plain.spec.install?.crds == Undefined, "no install → defaults only"
     assert all_true([k not in plain.spec for k in ["upgrade", "driftDetection", "postRenderers", "valuesFrom"]]), "unset Flux fields are not emitted"
+}
+
+# ── Role: which dependencies a cluster installs ──────────────────────────────
+# A manager cluster runs crossplane AND the apps' operators; a workload cluster
+# runs the operators only. Same file, one overlay key.
+_roleValues = """\
+name: platform
+dependencies:
+  - name: crossplane
+    type: manager
+    repo: https://charts.crossplane.io/stable
+  - name: cert-manager
+    type: application
+    repo: https://charts.jetstack.io
+  - name: keda
+    type: application
+    repo: https://kedacore.github.io/charts
+  - name: provider-configs
+    type: manager
+    repo: oci://ghcr.io/example/charts
+    dependsOn: [crossplane, cert-manager]
+issuers:
+  - {name: platform-root, type: self-signed}
+"""
+test_role = lambda {
+    manager = render(Manager {**yaml.decode(_roleValues), role = "manager"})
+    assert [o.metadata.name for o in manager if o.kind == "HelmRelease"] == ["crossplane", "cert-manager", "keda", "provider-configs"], "a manager cluster installs every type"
+    assert [o.metadata.labels["platform.example.org/type"] for o in manager if o.kind == "HelmRelease"] == ["manager", "application", "application", "manager"]
+    assert [o.kind for o in manager][-1] == "ClusterIssuer" and manager[-1].metadata.labels["platform.example.org/type"] == "application", "issuers take cert-manager's type"
+
+    workload = render(Manager {**yaml.decode(_roleValues), role = "workload"})
+    assert _kinds(workload) == ["HelmRepository", "HelmRepository", "HelmRelease", "HelmRelease", "ClusterIssuer"], "a workload cluster: application charts and the issuers that follow cert-manager, nothing manager-typed: ${_kinds(workload)}"
+    assert [o.metadata.name for o in workload if o.kind == "HelmRelease"] == ["cert-manager", "keda"]
+    assert all_true([o.metadata.labels["platform.example.org/type"] == "application" for o in workload])
+
+    # cert-manager typed manager (or absent) → the issuers are manager-cluster objects
+    noCm = render(Manager {role = "workload", issuers = [{name = "root", $type = "self-signed"}]})
+    assert noCm == [], "no cert-manager dependency → issuers are manager-only → nothing on a workload cluster"
+    assert render(Manager {role = "manager", issuers = [{name = "root", $type = "self-signed"}]})[0].metadata.labels["platform.example.org/type"] == "manager"
+}
+
+# ── Issuers → cert-manager ClusterIssuer / Issuer ─────────────────────────────
+test_issuers = lambda {
+    m = Manager {**yaml.decode("""\
+name: platform
+role: manager
+issuers:
+  - name: letsencrypt
+    email: platform@example.com
+    solvers:
+      - type: dns01
+        provider: cloud-dns
+        project: my-project
+        hostedZoneName: example-com
+        dnsZones: [example.com]
+      - type: http01
+        ingressClass: nginx
+        dnsNames: [app.example.com]
+        labels: {use-solver: http}
+  - name: tenant-a
+    namespace: tenant-a
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: tenant-a@example.com
+    privateKeySecret: tenant-a-acme
+    solvers:
+      - {type: http01}
+  - name: platform-root
+    type: self-signed
+  - name: platform-ca
+    type: ca
+    caSecret: platform-ca-tls
+""")}
+    out = render(m)
+    assert _kinds(out) == ["ClusterIssuer", "Issuer", "ClusterIssuer", "ClusterIssuer"], "namespace → namespaced Issuer, otherwise ClusterIssuer: ${_kinds(out)}"
+
+    le = out[0]
+    assert le.apiVersion == "cert-manager.io/v1" and le.metadata?.namespace == Undefined, "a ClusterIssuer is cluster-scoped"
+    assert le.metadata.labels["platform.example.org/type"] == "manager", "issuers travel with the manager phase"
+    assert le.spec.acme.server == "https://acme-v02.api.letsencrypt.org/directory", "default ACME endpoint is Let's Encrypt production"
+    assert le.spec.acme.privateKeySecretRef.name == "letsencrypt-account-key", "account key secret defaults to <name>-account-key"
+
+    dns01 = le.spec.acme.solvers[0]
+    assert dns01.dns01.cloudDNS.project == "my-project" and dns01.dns01.cloudDNS.hostedZoneName == "example-com"
+    assert dns01.dns01.cloudDNS?.serviceAccountSecretRef == Undefined, "cloud-dns is keyless: Workload Identity, not a Secret"
+    assert dns01.selector.dnsZones == ["example.com"] and dns01.selector?.dnsNames == Undefined
+    http01 = le.spec.acme.solvers[1]
+    assert http01.http01.ingress.ingressClassName == "nginx"
+    assert http01.selector.dnsNames == ["app.example.com"] and http01.selector.matchLabels == {"use-solver" = "http"}
+
+    tenant = out[1]
+    assert tenant.metadata.namespace == "tenant-a", "namespaced Issuer lands in its own namespace"
+    assert tenant.spec.acme.server.startswith("https://acme-staging") and tenant.spec.acme.privateKeySecretRef.name == "tenant-a-acme"
+    assert tenant.spec.acme.solvers[0].http01.ingress?.ingressClassName == Undefined, "no ingressClass → the cluster's default ingress class"
+    assert tenant.spec.acme.solvers[0]?.selector == Undefined, "an unnarrowed solver emits no selector"
+
+    assert out[2].spec?.selfSigned != Undefined and out[2].spec?.acme == Undefined, "self-signed carries no ACME account"
+    assert out[3].spec.ca.secretName == "platform-ca-tls"
+}
+
+# The other two DNS01 providers, both keyless: IRSA on AWS, workload identity
+# on Azure. No solver ever emits a credential Secret reference.
+test_issuer_dns01_providers = lambda {
+    out = render(Manager {**yaml.decode("""\
+role: manager
+issuers:
+  - name: route53
+    email: platform@example.com
+    solvers:
+      - type: dns01
+        provider: route53
+        region: eu-west-1
+        hostedZoneID: Z123456789
+        role: arn:aws:iam::123456789012:role/cert-manager
+  - name: azure
+    email: platform@example.com
+    solvers:
+      - type: dns01
+        provider: azure-dns
+        subscriptionID: 00000000-0000-0000-0000-000000000000
+        resourceGroupName: dns-rg
+        hostedZoneName: example.com
+        clientID: 11111111-1111-1111-1111-111111111111
+""")})
+    r53 = out[0].spec.acme.solvers[0].dns01.route53
+    assert r53.region == "eu-west-1" and r53.hostedZoneID == "Z123456789"
+    assert r53.role == "arn:aws:iam::123456789012:role/cert-manager", "IRSA: a role to assume, never an access key"
+    az = out[1].spec.acme.solvers[0].dns01.azureDNS
+    assert az.subscriptionID == "00000000-0000-0000-0000-000000000000" and az.resourceGroupName == "dns-rg"
+    assert az.hostedZoneName == "example.com" and az.managedIdentity.clientID == "11111111-1111-1111-1111-111111111111"
+    assert all_true([s.dns01?.route53?.accessKeyIDSecretRef in [None, Undefined] and s.dns01?.azureDNS?.clientSecretSecretRef in [None, Undefined] for o in out for s in o.spec.acme.solvers]), "no long-lived cloud keys: both providers authenticate as the workload"
 }
 
 # ── Experiments: app faults with a free target ───────────────────────────────
 test_experiments = lambda {
     m = Manager {**yaml.decode("""\
+role: manager
 chaos:
   namespaces: [zerg, dbs]
   experiments:
@@ -148,6 +287,7 @@ chaos:
 
 test_paused = lambda {
     m = Manager {**yaml.decode("""\
+role: manager
 chaos:
   paused: true
   experiments:
@@ -168,6 +308,7 @@ chaos:
 # ── Workflows: managed runs ──────────────────────────────────────────────────
 test_workflow_serial = lambda {
     m = Manager {**yaml.decode("""\
+role: manager
 chaos:
   workflows:
     - name: game-day
@@ -223,6 +364,7 @@ chaos:
 
 test_workflow_parallel = lambda {
     m = Manager {**yaml.decode("""\
+role: manager
 chaos:
   workflows:
     - name: all-at-once
@@ -245,25 +387,42 @@ chaos:
 test_example_valid = lambda {
     m = Manager {**yaml.decode(file.read("examples/values.yaml"))}
     out = render(m)
-    assert _kinds(out) == ["Namespace", "Namespace", "HelmRepository", "HelmRepository", "HelmRepository", "HelmRelease", "HelmRelease", "HelmRelease", "Schedule", "StressChaos", "NetworkChaos", "Workflow", "Workflow"], "example → namespaces, repos, releases, experiments, workflows: ${_kinds(out)}"
-    assert m.name == "platform" and len(m.dependencies) == 3 and len(m.chaos.experiments) == 3
+    assert _kinds(out) == ["Namespace", "Namespace"] + ["HelmRepository"] * 5 + ["HelmRelease"] * 5 + ["ClusterIssuer"] * 4 + ["Schedule", "StressChaos", "NetworkChaos", "Workflow", "Workflow"], "example → namespaces, repos, releases, issuers, experiments, workflows: ${_kinds(out)}"
+    assert m.name == "platform" and m.role == "manager" and len(m.dependencies) == 5 and len(m.issuers) == 4 and len(m.chaos.experiments) == 3
+    assert [d.$type for d in m.dependencies] == ["manager", "application", "application", "application", "application"], "crossplane is what makes it a manager cluster; the apps' operators go everywhere"
+
+    # The shipped overlay: the same file on a workload cluster loses crossplane and nothing else.
+    w = render(Manager {**app.mergeValues(yaml.decode(file.read("examples/values.yaml")), yaml.decode(file.read("examples/values.workload.yaml")))})
+    assert [o.metadata.name for o in w if o.kind == "HelmRelease"] == ["cert-manager", "chaos-mesh", "keda", "kube-prometheus-stack"], "workload overlay drops the manager-type charts"
+    assert len(w) == len(out) - 2, "exactly crossplane's repo + release are gone: ${_kinds(w)}"
+    _cm = [d for d in m.dependencies if d.name == "cert-manager"][0]
+    assert _cm.values.crds.enabled == True, "the chart's CRDs are off by default and startupapicheck fails without them"
+    assert [i.$type for i in m.issuers] == ["acme", "acme", "self-signed", "ca"], "the example covers every issuer kind"
+    _le = m.issuers[0]
+    assert [s.$type for s in _le.solvers] == ["dns01", "http01"], "the wildcard zone is solved over DNS, the rest over HTTP"
 }
 
 test_empty = lambda {
-    assert render(Manager {}) == [], "an empty Manager renders nothing"
+    assert render(Manager {role = "manager"}) == [], "an empty Manager renders nothing"
     assert _kinds(render(Manager {
+        role = "workload"
         chaos = {}
     })) == [], "an empty chaos block renders nothing"
 }
 
 # invalid inputs — a target without namespaces, a step with a schedule,
-# dependsOn naming an unknown dependency, a non-http/oci repo, pauseBetween on
-# a parallel workflow, duplicate names — are rejected by the schema `check` blocks.
+# dependsOn naming an unknown dependency, an application dependency depending
+# on a manager one, a dependency without a type, a Manager without a role, a
+# non-http/oci repo, pauseBetween on a parallel workflow, duplicate names — are
+# rejected by the schema `check` blocks.
 test_dependencies()
 test_dependency_flux_fields()
+test_role()
 test_experiments()
 test_paused()
 test_workflow_serial()
 test_workflow_parallel()
+test_issuers()
+test_issuer_dns01_providers()
 test_example_valid()
 test_empty()

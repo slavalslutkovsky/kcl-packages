@@ -1,0 +1,18 @@
+# ProviderConfig for the Forge backend.
+#
+# Kept out of providers.yaml on purpose: this is an instance of a CRD that the
+# Provider installs, so a single `kubectl apply` of both files fails with
+# `no matches for kind "ClusterProviderConfig"`. Apply this only once the
+# Provider reports Healthy (`just e2e-providerconfigs` does that ordering).
+#
+# provider-helm installs the chart with its own in-cluster ServiceAccount, so
+# one cluster-wide config serves Forge XRs in every tenant namespace. It is the
+# same object the other self-hosted backends use — applying this file twice is
+# a no-op, not a conflict.
+apiVersion: helm.m.crossplane.io/v1beta1
+kind: ClusterProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: InjectedIdentity

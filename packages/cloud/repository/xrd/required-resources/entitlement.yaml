@@ -1,0 +1,19 @@
+# The cluster object this Composition asks Crossplane to fetch, mocked for a
+# local `nx run repository-forgejo:render`.
+#
+# On a cluster this record is written by whatever owns billing and lives outside
+# any namespace; here it stands in for that fetch so a local render exercises the
+# entitled path instead of the pending no-op. The name IS the XR's namespace.
+#
+# Drop the `repository` feature (or the whole file) and the render fails with a
+# fatal result naming the tenant — which is the behaviour to check, not a bug.
+apiVersion: platform.example.org/v1alpha1
+kind: Entitlement
+metadata:
+  name: tenant-a
+spec:
+  plan: team
+  features:
+    - repository
+  quota:
+    repositories: 50

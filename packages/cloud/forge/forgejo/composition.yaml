@@ -1,0 +1,31 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: forge-forgejo
+  labels:
+    provider: forgejo
+spec:
+  compositeTypeRef:
+    apiVersion: cloud.example.org/v1alpha1
+    kind: Forge
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-kcl
+      input:
+        apiVersion: krm.kcl.dev/v1alpha1
+        kind: KCLInput
+        spec:
+          # `Default`, not the input CRD's own default of `Resources`:
+          # function-kcl only dispatches the meta.krm.kcl.dev meta-kinds under
+          # the Default target, and this module's first emitted item is the
+          # RequiredResources request that fetches the tenant's Entitlement.
+          # Under `Resources` that item would be composed as a resource and the
+          # gate would never resolve.
+          target: Default
+          # Pin a release with ?tag=<version> once published via `nx release`.
+          source: oci://docker.io/yurikrupnik/forge-forgejo?tag=0.1.0
+    - step: ready
+      functionRef:
+        name: function-auto-ready

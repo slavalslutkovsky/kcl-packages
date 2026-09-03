@@ -134,13 +134,10 @@ wave = 1
 #repo = "https://helm.cowley.tech"
 #version = "0.0.2"
 #namespace = "ccowley"
-[[deps]]
-name = "cert-manager"
-repo = "https://charts.jetstack.io"
-# The chart skips CRDs by default; without them startupapicheck fails.
-set = ["crds.enabled=true"]
-version = "1.21.1"
-namespace = "cert-manager"
+# cert-manager is not here: it is a `manager`-type dependency in
+# packages/manager/examples/values.yaml, delivered by helm-controller. Listing
+# it in both would give one release two owners (see docs/install-graph.md
+# "Conflicts").
 
 [[deps]]
 name = "flagger"
@@ -269,6 +266,86 @@ wave = 4
 [[deps]]
 name = "component-examples"
 manifest = "packages/platform/component/xrd/examples/"
+wave = 5
+
+# ─── Paid capabilities ────────────────────────────────────────────────────────
+#
+# `forge` (a Forgejo instance) and `repository` (objects inside one) are gated:
+# their Compositions ask Crossplane to fetch the cluster-scoped Entitlement
+# named after the XR's namespace, and fail the render with a named fatal result
+# when it does not grant the feature. Three prerequisites, in this order:
+#
+#   wave 1  the Entitlement CRD, and the aggregated ClusterRole WITHOUT WHICH
+#           Crossplane may not read it (a kubectl-installed CRD gets no grant
+#           from the rbac-manager). Wave 1 because wave 0's crossplane chart
+#           must already have registered the aggregation.
+#   wave 2  the records themselves — inputs to composition, not composites.
+#   waves 2-5  the usual XRD / providers / Composition / examples ladder.
+#
+# The examples live in namespace `tenant-a`, which the tenant-a record grants;
+# `tenant-free` is the negative case, and applying a Forge there is expected to
+# fail rather than provision.
+[[deps]]
+name = "entitlement-crd"
+manifest = "packages/platform/entitlement/crd.yaml"
+wave = 1
+
+[[deps]]
+name = "entitlement-rbac"
+manifest = "packages/platform/entitlement/rbac.yaml"
+wave = 1
+
+[[deps]]
+name = "entitlement-records"
+manifest = "packages/platform/entitlement/examples/"
+wave = 2
+
+[[deps]]
+name = "forge-xrd"
+manifest = "packages/cloud/forge/xrd/xrd.yaml"
+wave = 2
+
+[[deps]]
+name = "forge-providers"
+manifest = "packages/cloud/forge/xrd/providers.yaml"
+wave = 3
+
+[[deps]]
+name = "forge-providerconfigs"
+manifest = "packages/cloud/forge/xrd/providerconfigs.yaml"
+wave = 4
+
+[[deps]]
+name = "forge-composition-forgejo"
+manifest = "packages/cloud/forge/forgejo/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "forge-examples"
+manifest = "packages/cloud/forge/xrd/examples/"
+wave = 5
+
+[[deps]]
+name = "repository-xrd"
+manifest = "packages/cloud/repository/xrd/xrd.yaml"
+wave = 2
+
+[[deps]]
+name = "repository-providers"
+manifest = "packages/cloud/repository/xrd/providers.yaml"
+wave = 3
+
+[[deps]]
+name = "repository-composition-forgejo"
+manifest = "packages/cloud/repository/forgejo/composition.yaml"
+wave = 4
+
+# Last of all: a Repository needs the forge it writes into to be up, and the
+# forge is itself a wave-5 XR. `devkit cluster deps` is idempotent — the second
+# run is what usually makes this one succeed.
+[[deps]]
+name = "repository-examples"
+manifest = "packages/cloud/repository/xrd/examples/"
 wave = 5
 
 [tilt]

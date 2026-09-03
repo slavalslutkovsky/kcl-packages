@@ -3,6 +3,10 @@
     name = "app"
     full_name = "app_0.1.2"
     version = "0.1.2"
+  [dependencies.cert-manager]
+    name = "cert-manager"
+    full_name = "cert-manager_0.0.1"
+    version = "0.0.1"
   [dependencies.chaos-mesh]
     name = "chaos-mesh"
     full_name = "chaos-mesh_0.0.1"

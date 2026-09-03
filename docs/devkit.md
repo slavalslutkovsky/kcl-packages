@@ -17,10 +17,22 @@ offers for app monorepos are left at their defaults and unused here.
 ## What this repo actually calls
 
 ```
-just e2e-up      →  devkit cluster create      # Kind cluster from [cluster]
-                    devkit cluster deps        # everything in [[deps]]
-just e2e-down    →  devkit cluster delete kcl-e2e
+just e2e-up            →  devkit cluster create      # Kind cluster from [cluster]
+                          devkit cluster deps        # everything in [[deps]]
+just e2e-down          →  devkit cluster delete kcl-e2e
+just e2e-manager-up    →  (cd manifests/manager && devkit cluster create && devkit cluster deps)
+just e2e-manager-down  →  devkit cluster delete kcl-manager
 ```
+
+`just e2e-manager [manager|workload]` is the second cluster: `kcl-manager`,
+built from `manifests/manager/devkit.toml`, which shadows the root file when
+devkit runs from that directory (see below) and lists Flux as its only dep.
+Everything else on it — crossplane, cert-manager, chaos-mesh, keda,
+monitoring — is the `packages/manager` render, delivered by helm-controller.
+That is the point: a chart has one owner, and on this cluster it is Flux. The
+role argument is the values overlay (`examples/values.workload.yaml`), and the
+checks are the role's promise — crossplane present on `manager`, absent on
+`workload`, every `application` chart and the issuers on both.
 
 `devkit cluster deps` is no longer only helm charts. Waves 0/1 are the platform
 charts (the crossplane chart itself among them); waves 2–5 are the Crossplane
@@ -145,8 +157,8 @@ Keys this repo sets, and what they drive:
 | `cluster.db_workers` | `1` | One tainted database-dedicated worker. |
 | `cluster.ingress` | `true` | Passed as `-D ingress=true` to the cluster KCL package, which binds host ports 80/443. Set it to `false` if something already listens there — the flag can only force it on. |
 | `cluster.kcl_package` / `kcl_tag` | *(commented out)* | Falls back to `oci://docker.io/yurikrupnik/cluster` @ `0.0.6`. The Kind topology comes from this repo's own `packages/cluster` KCL package, rendered by `kcl run <pkg> --tag <tag>`. Uncomment and bump `kcl_tag` in step with releases of that package. |
-| `[[deps]]` waves 0–1 | n8s, web, openbao, crossplane 2.3.4, pgbouncer, openebs, vcluster, external-secrets, kubeblocks(-crds), cert-manager, flagger, chaos-mesh, flux2 | The platform charts, `helm upgrade --install --wait`. `flux2` is here because the `component` module composes Flux objects directly, so its controllers and CRDs must predate wave 2. `chaos-mesh` is the operator behind the `app` package's `chaos:` faults (chaos-daemon pinned to Kind's containerd socket, dashboard off). |
-| `[[deps]]` waves 2–5 | `crossplane-functions`, `bucket-xrd`, `bucket-providers`, `bucket-composition-{aws,azure,gcp,rustfs}`, `bucket-examples`, `component-xrd`, `component-providers`, `component-composition-flux`, `component-examples` | The Crossplane stack under test, `kubectl apply --server-side` in dependency order. See [Waves](#waves-the-crossplane-stack-under-test). |
+| `[[deps]]` waves 0–1 | n8s, web, openbao, crossplane 2.3.4, pgbouncer, openebs, vcluster, external-secrets, kubeblocks(-crds), flagger, chaos-mesh, flux2 | The platform charts, `helm upgrade --install --wait`. `flux2` is here because the `component` module composes Flux objects directly, so its controllers and CRDs must predate wave 2. `chaos-mesh` is the operator behind the `app` package's `chaos:` faults (chaos-daemon pinned to Kind's containerd socket, dashboard off). `cert-manager` is deliberately absent — it is a `manager`-type dependency in `packages/manager/examples/values.yaml`, installed by helm-controller, so the release has one owner. |
+| `[[deps]]` waves 1–5 | `entitlement-{crd,rbac,records}`, `crossplane-functions`, `bucket-*`, `component-*`, `forge-*`, `repository-*` | The Crossplane stack under test, `kubectl apply --server-side` in dependency order. `forge` (a Forgejo instance) and `repository` (objects inside one) are PAID: their Compositions fetch the cluster-scoped `Entitlement` named after the XR's namespace and fail closed without it. See [Waves](#waves-the-crossplane-stack-under-test). |
 | `secrets.config` / `output` | `.vals.yaml` → `.env` | Inputs to `devkit secrets fetch`. |
 | `tilt.enabled` | `true` | Whether `devkit up` starts Tilt (unused by `just e2e`). |
 | `[[endpoints]]` | Tilt UI only | Printed after `devkit up`. Replaces the default five. |
@@ -184,6 +196,11 @@ once the previous one has fully succeeded — a failed row aborts the whole
 command with every later wave untouched. Put CRDs, operators and anything else
 a later row needs into an earlier wave.
 
+[docs/install-graph.md](install-graph.md) draws the rows as the barrier ladder
+this makes them, next to the `dependsOn` DAG of `packages/manager`. It is
+generated — `just graph` redraws it, and the pre-commit hook fails when
+`devkit.toml` or the manager values change without it.
+
 Path resolution differs between the two row kinds, and the difference bites:
 `values` paths resolve against `$PWD` first, then the directory holding
 `devkit.toml` (a missing values file is a hard error, not a warning), while
@@ -199,11 +216,11 @@ re-running it after editing a version upgrades in place.
 | wave | rows | why here and not earlier |
 |---|---|---|
 | 0 | the platform charts + `kubeblocks-crds` | helm runs with `--wait`, so when wave 0 finishes the crossplane deployment is up and the `pkg.crossplane.io` / `apiextensions.crossplane.io` APIs are registered. `flux2` lands here too: the `component` module composes `source.toolkit.fluxcd.io` / `kustomize.toolkit.fluxcd.io` / `helm.toolkit.fluxcd.io` objects, so those CRDs and controllers must already exist |
-| 1 | `kubeblocks` | its chart templates `lookup` the CRDs applied in wave 0 |
-| 2 | `crossplane-functions`, `bucket-xrd`, `component-xrd` | the composition functions the Compositions run, and the XRDs that define the composite APIs — all instances of wave 0's Crossplane CRDs |
-| 3 | `bucket-providers`, `component-providers` | the providers whose CRDs the composed managed resources are instances of; a wave of their own so the (slow) package pulls start before the Compositions and examples land. `component-providers` installs no provider at all — it is the `rbac.crossplane.io/aggregate-to-crossplane` ClusterRole without which Crossplane may not compose Flux kinds |
-| 4 | `bucket-composition-{aws,azure,gcp,rustfs}`, `component-composition-flux` | a Composition's `compositeTypeRef` names wave 2's XRD API and its `functionRef` names wave 2's Functions |
-| 5 | `bucket-examples`, `component-examples` | the "run" step: each example XR is an instance of the composite CRD Crossplane derives from wave 2's XRD, and applying it is what makes Crossplane call the function and create managed resources. The `component` examples additionally need the OCI artifact they point at — `just component-push` |
+| 1 | `kubeblocks`, `entitlement-crd`, `entitlement-rbac` | kubeblocks' chart templates `lookup` the CRDs applied in wave 0. The `Entitlement` CRD and its aggregated ClusterRole land here because the paid capabilities' Compositions ask **Crossplane** (not the function) to fetch a record, and a kubectl-installed CRD gets no grant from the rbac-manager until a labelled ClusterRole exists — which the wave-0 crossplane chart has to have registered first |
+| 2 | `crossplane-functions`, `bucket-xrd`, `component-xrd`, `forge-xrd`, `repository-xrd`, `entitlement-records` | the composition functions the Compositions run, and the XRDs that define the composite APIs — all instances of wave 0's Crossplane CRDs. `entitlement-records` are the per-tenant grants (plus the tenant namespaces): inputs to composition, never composites |
+| 3 | `bucket-providers`, `component-providers`, `forge-providers`, `repository-providers` | the providers whose CRDs the composed managed resources are instances of; a wave of their own so the (slow) package pulls start before the Compositions and examples land. `component-providers` installs no provider at all — it is the `rbac.crossplane.io/aggregate-to-crossplane` ClusterRole without which Crossplane may not compose Flux kinds |
+| 4 | `bucket-composition-{aws,azure,gcp,rustfs}`, `component-composition-flux`, `forge-composition-forgejo`, `repository-composition-forgejo`, `forge-providerconfigs` | a Composition's `compositeTypeRef` names wave 2's XRD API and its `functionRef` names wave 2's Functions. `forge-providerconfigs` is an *instance* of a CRD wave 3's provider installs, so it cannot share that wave |
+| 5 | `bucket-examples`, `component-examples`, `forge-examples`, `repository-examples` | the "run" step: each example XR is an instance of the composite CRD Crossplane derives from wave 2's XRD, and applying it is what makes Crossplane call the function and create managed resources. The `component` examples additionally need the OCI artifact they point at — `just component-push`. `repository-examples` needs the forge from `forge-examples` to be serving, so it is the row a second `devkit cluster deps` usually fixes |
 
 Wave 0 is load-bearing in a way the later waves are not: helm's `--wait` is the
 only synchronisation in the whole sequence. Waves 2–5 are `kubectl apply
