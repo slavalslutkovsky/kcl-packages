@@ -1,0 +1,26 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: component-flux
+  # Deliberately no `provider` label. The cloud.example.org Compositions carry
+  # one because a claim picks between their backends; FluxCD is the only
+  # implementation of Component, and the XRD names it as its
+  # defaultCompositionRef, so there is nothing to select on.
+spec:
+  compositeTypeRef:
+    apiVersion: platform.example.org/v1alpha1
+    kind: Component
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-kcl
+      input:
+        apiVersion: krm.kcl.dev/v1alpha1
+        kind: KCLInput
+        spec:
+          # Pin a release with ?tag=<version> once published via `nx release`.
+          source: oci://docker.io/yurikrupnik/component-flux?tag=0.1.0
+    - step: ready
+      functionRef:
+        name: function-auto-ready

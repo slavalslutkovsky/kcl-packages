@@ -1,0 +1,22 @@
+# Lets Crossplane READ the entitlement records.
+#
+# The gate works through Crossplane's required-resources mechanism: the function
+# returns `requirements.resources`, and Crossplane core — not the function —
+# fetches the object with its own ServiceAccount before calling the step again.
+# Crossplane's ClusterRole is an aggregate over every ClusterRole labelled
+# `rbac.crossplane.io/aggregate-to-crossplane: "true"` (crossplane chart
+# `templates/clusterrole.yaml`), and a CRD installed by kubectl gets no such
+# grant automatically. Without this, the fetch fails and every gated Composition
+# errors instead of composing.
+#
+# Read-only on purpose: composition must never be able to widen an entitlement.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: entitlement:aggregate-to-crossplane
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups: [platform.example.org]
+    resources: [entitlements]
+    verbs: [get, list, watch]

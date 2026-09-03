@@ -2,8 +2,19 @@ packages:
   - 'packages/*'
   - 'tools/*'
 
-# Allow these dependencies to run install/build scripts (pnpm blocks them by default).
+# pnpm 11 asks for an explicit decision per package that ships install scripts.
+# protobufjs generates its CLI shims; puppeteer downloads the Chromium the bench
+# report verifier drives (tools/bench/src/verify.ts).
+allowBuilds:
+  '@swc/core': true
+  nx: true
+  protobufjs: true
+  puppeteer: true
+
+# Legacy (pnpm 10) form of the same allow-list; kept so older pnpm still builds.
 onlyBuiltDependencies:
   - '@swc/core'
   - esbuild
   - nx
+  - protobufjs
+  - puppeteer

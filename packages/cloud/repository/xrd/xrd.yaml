@@ -1,0 +1,204 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: repositories.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: Repository
+    plural: repositories
+  # One implementation (Forgejo, driven over its REST API), so a Repository
+  # never has to select a backend. A github/gitlab backend would add a
+  # compositionSelector label here, not a new field.
+  defaultCompositionRef:
+    name: repository-forgejo
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                One git repository inside a forge that ALREADY RUNS: this
+                capability creates objects through the forge's HTTP API, it does
+                not run the forge. The `Forge` capability
+                (cloud.example.org/Forge) is what installs a Forgejo instance;
+                this XR points at one and writes into it.
+
+                Every field below is a COMMON parameter of "a repository",
+                mapped onto the forge's native API calls (Forgejo/Gitea v1).
+                Fields a forge cannot express are documented as ignored rather
+                than silently dropped.
+
+                The repository is named after the XR (metadata.name) unless
+                spec.name overrides it, and always belongs to spec.owner — the
+                XR name therefore only has to be unique per namespace, while
+                owner/name has to be unique per forge.
+
+                This is a PAID capability: composition fetches the
+                cluster-scoped Entitlement named after this XR's namespace and
+                refuses to compose anything unless it grants the `repository`
+                feature. `spec.quota.repositories` on that record caps how many
+                repositories the namespace may hold, and private repositories
+                additionally need plan `team` or better.
+              properties:
+                forge:
+                  type: object
+                  description: |
+                    Which forge to write into. There is no cross-XR reference
+                    mechanism on purpose: a Forge XR publishes exactly these two
+                    values (status.apiUrl, and the Secret an operator created for
+                    it), and an operator copies them here. That keeps the two
+                    capabilities independently installable — a Repository can
+                    target a forge this platform does not manage at all.
+                  properties:
+                    baseUrl:
+                      type: string
+                      description: 'API root of the forge, INCLUDING the version prefix — e.g. http://git.tenant-a.svc:3000/api/v1. A Forge XR publishes exactly this string as its status.apiUrl; copy it verbatim. No trailing slash: every call appends its own path.'
+                    secretRef:
+                      type: string
+                      description: |
+                        Name of a Secret in this XR's namespace holding the
+                        forge credential under the key `authorization`. The
+                        value must be the LITERAL header value, i.e. `token
+                        <PAT>` (or `Basic <base64>`): provider-http substitutes
+                        the secret bytes verbatim into the Authorization header,
+                        and Forgejo answers 401 to a bare token with no scheme.
+                        Create it with:
+                          kubectl create secret generic forge-token \
+                            --from-literal=authorization="token $PAT"
+                  required:
+                    - baseUrl
+                    - secretRef
+                owner:
+                  type: string
+                  description: Organization (or user) the repository belongs to. Must already exist in the forge unless createOrganization is true. Forgejo has no "create a repo and infer the owner" call — the owner is part of the create URL — so this is required even for a personal repository.
+                name:
+                  type: string
+                  description: Repository name inside the forge. Defaults to the XR name. Override it when the forge-side name has to differ from the Kubernetes object name (Forgejo accepts dots and underscores that a Kubernetes name may not).
+                description:
+                  type: string
+                  description: Repository description shown in the forge UI. Mutable — it is part of the UPDATE call.
+                defaultBranch:
+                  type: string
+                  default: main
+                  description: Name of the default branch. Only takes effect at creation when autoInit is true (there is no branch to default to in an empty repository); on an initialized repository it is mutable and moves HEAD.
+                private:
+                  type: boolean
+                  default: true
+                  description: Keep the repository private. PAID — a private repository requires plan `team` or better on the namespace's Entitlement; a `free` plan may only create public repositories. Mutable.
+                autoInit:
+                  type: boolean
+                  default: true
+                  description: "Create an initial commit (README/LICENSE/.gitignore per the fields below) so the repository can be cloned immediately. CREATE-ONLY: Forgejo ignores it on update, so flipping it on an existing repository does nothing. Set false when a mirror or an existing history will be pushed into it."
+                template:
+                  type: boolean
+                  default: false
+                  description: Mark the repository as a template other repositories can be generated from. CREATE-ONLY here — see autoInit.
+                gitignores:
+                  type: string
+                  description: Comma-separated .gitignore templates for the initial commit (Forgejo's own template names, e.g. "Go,Node"). Only meaningful with autoInit; ignored otherwise.
+                license:
+                  type: string
+                  description: License template for the initial commit (e.g. "Apache-2.0"). Only meaningful with autoInit; ignored otherwise.
+                readme:
+                  type: string
+                  description: README template for the initial commit (Forgejo ships "Default"). Only meaningful with autoInit; ignored otherwise.
+                createOrganization:
+                  type: boolean
+                  default: false
+                  description: |
+                    Also manage spec.owner as an organization. This makes the XR
+                    OWN the organization: deleting the XR deletes the org, and
+                    with it every repository in it, including ones this platform
+                    never created. Leave false and pre-create the org whenever
+                    more than one Repository shares an owner — otherwise two XRs
+                    each believe they own it and the first deletion takes the
+                    other's repository with it.
+                organization:
+                  type: object
+                  default: {}
+                  description: Organization attributes. Ignored unless createOrganization is true.
+                  properties:
+                    fullName:
+                      type: string
+                      description: Display name of the organization. Defaults to spec.owner when unset.
+                    description:
+                      type: string
+                      description: Organization description.
+                    visibility:
+                      type: string
+                      enum: [public, limited, private]
+                      default: private
+                      description: Who may see the organization. `limited` means signed-in users only — a Forgejo/Gitea concept with no equivalent on other forges.
+                    website:
+                      type: string
+                      description: Organization website URL.
+                webhook:
+                  type: object
+                  default: {}
+                  description: |
+                    A push webhook on the repository. Empty (the default) means
+                    no webhook is created at all. Only ONE webhook is
+                    expressible: Forgejo addresses hooks by numeric id assigned
+                    at creation, so a second one cannot be told apart from the
+                    first by anything this XR knows.
+                  properties:
+                    url:
+                      type: string
+                      description: Endpoint the forge POSTs events to. Setting this is what creates the webhook.
+                    secretRef:
+                      type: string
+                      description: Name of a Secret in this XR's namespace whose key `secret` holds the HMAC shared secret the forge signs deliveries with. Omit for unsigned deliveries.
+                    events:
+                      type: array
+                      items: {type: string}
+                      description: 'Forgejo event names to deliver (e.g. push, pull_request, issues). Defaults to ["push"] when unset.'
+                    active:
+                      type: boolean
+                      default: true
+                      description: Deliver events. False keeps the webhook configured but silent.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the forge-side objects when this resource is deleted; maps to Crossplane managementPolicies (Orphan leaves the repository — and its git history — in the forge). Orphan is the only safe policy for a repository that carries work no one has pushed elsewhere.
+              required:
+                - forge
+                - owner
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the forge has confirmed the repository exists.
+                cloneUrl:
+                  type: string
+                  description: HTTP(S) clone URL, as reported by the forge (`git clone <cloneUrl>`).
+                sshUrl:
+                  type: string
+                  description: SSH clone URL, as reported by the forge. Empty on a forge whose SSH server is not exposed.
+                htmlUrl:
+                  type: string
+                  description: Web URL of the repository in the forge UI.
+                fullName:
+                  type: string
+                  description: owner/name — computed locally, so it is populated before the forge answers.
+                plan:
+                  type: string
+                  description: Plan on the Entitlement that authorized this repository, echoed so a support request does not need cluster-scoped access to explain what the tenant bought.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: REPO
+          type: string
+          jsonPath: .status.fullName
+        - name: URL
+          type: string
+          jsonPath: .status.htmlUrl

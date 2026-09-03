@@ -1,7 +1,10 @@
 # Crossplane providers the KubernetesCluster Compositions render against.
 # Install only the ones whose backends you intend to use; each Composition
 # references exactly one cloud (aws needs both aws providers below — EKS
-# clusters cannot exist without their IAM roles).
+# clusters cannot exist without their IAM roles). The onprem backend needs no
+# cloud at all: it drives Helm releases into an existing cluster through
+# provider-helm, with a per-XR ProviderConfig built from the kubeconfig Secret
+# the XR names — so no ProviderConfig is installed here for it.
 #
 # The versions here are the ones the schema packages under packages/providers/
 # were generated from (`just seed-cluster-providers`) — keep them in step, or
@@ -34,3 +37,15 @@ metadata:
   name: provider-azure-containerservice
 spec:
   package: ghcr.io/crossplane-contrib/provider-azure-containerservice:v2.6.0
+---
+# Must be v1.x — the first line that ships the namespaced helm.m.crossplane.io
+# CRDs the onprem backend renders. Unlike the in-cluster backends of other
+# modules, no ServiceAccount / cluster-admin binding comes with it: every
+# Release here authenticates to the ADOPTED cluster with the XR's kubeconfig,
+# and the provider's default RBAC already lets it read that Secret.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-helm
+spec:
+  package: ghcr.io/crossplane-contrib/provider-helm:v1.3.0

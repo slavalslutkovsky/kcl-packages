@@ -1,0 +1,1061 @@
+# crds.yaml — every CRD the operators and Crossplane providers this repo
+# knows about, and whether anything here renders it.
+#
+# One row per operator or provider. `used` lists the kinds some renderer in
+# this repo emits, with the packages (relative to packages/, or a repo path for
+# hand-written YAML) that emit them; `unused` is every other kind the same
+# source ships. "Unused" is not "unneeded": a provider installs all of its CRDs
+# regardless, and an operator's internal kinds (Chaos Mesh Pod*Chaos, KubeBlocks
+# *Definition, cert-manager Order/Challenge) are created by the operator itself.
+#
+# Fields
+#   source       where the CRDs come from — image:tag, repo@ref, kcl-lang
+#                module, or a helm chart
+#   installedBy  what puts the CRDs on a cluster: a devkit.toml [[deps]] row,
+#                a pkg.crossplane.io Provider in cloud/<module>/xrd/providers.yaml,
+#                or "not installed"
+#   schemas      the typed KCL package renderers import, if any
+#   group(s)     the API group(s) the kinds live in
+#   used         [{kind, group, by}] — `by` is the list of consumers
+#   unused       kinds nothing here renders
+#
+# Derived from packages/providers/*/models (one file per CRD), the
+# `import <pkg>.models.<version>.<file>` lines in packages/**/*.k, the
+# apiVersion/kind pairs in packages/**/*.yaml and manifests/**, and the CRD
+# lists of the pinned upstream releases for sources with no schema package.
+# Refresh after `just seed`, a devkit.toml version bump, or a new Composition.
+version: 1
+
+# ── operators ─────────────────────────────────────────────────────────────────
+# Controllers whose CRDs are composed directly (no Crossplane provider), plus
+# Crossplane itself.
+operators:
+  - name: crossplane
+    source: crossplane/crossplane@v2.3.4 (cluster/crds)
+    installedBy: devkit.toml deps.crossplane (helm chart 2.3.4, crossplane-system)
+    schemas: none — the Crossplane layer of every module is hand-written YAML
+    groups: [apiextensions.crossplane.io, pkg.crossplane.io, ops.crossplane.io, protection.crossplane.io]
+    used:
+      - kind: CompositeResourceDefinition
+        group: apiextensions.crossplane.io
+        by: [cloud/<module>/xrd/xrd.yaml (16 modules), platform/appstack/xrd, platform/component/xrd]
+      - kind: Composition
+        group: apiextensions.crossplane.io
+        by: [cloud/<module>/<backend>/composition.yaml (48), platform/appstack/stack, platform/component/flux]
+      - kind: Function
+        group: pkg.crossplane.io
+        by: [cloud/apigateway/xrd, cloud/bucket/xrd, cloud/cluster/xrd, cloud/dns/xrd,
+             cloud/email/xrd, cloud/iam/xrd, cloud/kms/xrd, cloud/name/xrd, cloud/network/xrd,
+             cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd, cloud/registry/xrd,
+             cloud/serverless/xrd, cloud/vm/xrd, cloud/workload-identity/xrd, manifests/crossplane,
+             platform/appstack/xrd, platform/component/xrd]
+      - kind: Provider
+        group: pkg.crossplane.io
+        by: [cloud/apigateway/xrd, cloud/bucket/xrd, cloud/cluster/xrd, cloud/dns/xrd,
+             cloud/email/xrd, cloud/iam/xrd, cloud/kms/xrd, cloud/network/xrd, cloud/postgres/xrd,
+             cloud/queue/xrd, cloud/redis/xrd, cloud/registry/xrd, cloud/serverless/xrd,
+             cloud/vm/xrd, cloud/workload-identity/xrd]
+      - kind: DeploymentRuntimeConfig
+        group: pkg.crossplane.io
+        by: [cloud/email/xrd, cloud/kms/xrd, cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd,
+             cloud/registry/xrd, manifests/crossplane]
+    unused: [CompositionRevision, EnvironmentConfig, ManagedResourceActivationPolicy,
+             ManagedResourceDefinition, Usage (apiextensions), CronOperation, Operation, WatchOperation,
+             Configuration, ConfigurationRevision, FunctionRevision, ImageConfig, Lock, ProviderRevision,
+             ClusterUsage, Usage (protection)]
+
+  - name: crossplane-provider-families
+    source: crossplane-contrib/provider-upjet-{aws,gcp,azure}@v2.6.0 (package/crds, family CRDs)
+    installedBy: pulled in as the provider-family-{aws,gcp,azure} dependency of every service provider above
+    schemas: none — the service schema packages are generated with a --service filter that excludes the family
+    groups: [aws.m.upbound.io, gcp.m.upbound.io, azure.m.upbound.io, aws.upbound.io, gcp.upbound.io, azure.upbound.io]
+    used:
+      - kind: ClusterProviderConfig
+        group: "{aws,gcp,azure}.m.upbound.io"
+        by: [every cloud Composition — composed MRs carry no providerConfigRef, so Crossplane resolves the
+             ClusterProviderConfig named "default"; cloud/<module>/xrd/providerconfigs.yaml where present]
+    unused: [ProviderConfig (namespaced), ProviderConfigUsage, ResourceGroup, ResourceProviderRegistration,
+             Subscription (azure), and every cluster-scoped *.upbound.io v1 twin]
+
+  - name: chaos-mesh
+    source: chaos-mesh/chaos-mesh@v2.8.4
+    installedBy: devkit.toml deps.chaos-mesh (helm chart 2.8.4, chaos-mesh) — or the same chart as a `manager` dependency
+    schemas: packages/providers/chaos-mesh/models
+    groups: [chaos-mesh.org]
+    notes: >-
+      The app package renders one experiment per Workload `chaos:` fault (or a
+      Schedule around it); the manager package renders the same kinds with a
+      free selector, plus Workflows for orchestrated runs. The Pod*Chaos kinds
+      are the per-pod records Chaos Mesh derives from those; WorkflowNode is
+      what a Workflow expands into; StatusCheck is the workflow engine's probe.
+      The *Chaos kinds not listed under `used` are fault types neither package
+      has a `type` for yet.
+    used:
+      - kind: NetworkChaos
+        group: chaos-mesh.org
+        by: [app, manager (through app.experiment)]
+      - kind: PodChaos
+        group: chaos-mesh.org
+        by: [app, manager (through app.experiment)]
+      - kind: Schedule
+        group: chaos-mesh.org
+        by: [app, manager (through app.experiment)]
+      - kind: StressChaos
+        group: chaos-mesh.org
+        by: [app, manager (through app.experiment)]
+      - kind: Workflow
+        group: chaos-mesh.org
+        by: [manager]
+    unused: [AWSChaos, AzureChaos, BlockChaos, DNSChaos, GCPChaos, HTTPChaos, IOChaos, JVMChaos,
+             KernelChaos, PhysicalMachine, PhysicalMachineChaos, PodHttpChaos, PodIOChaos,
+             PodNetworkChaos, RemoteCluster, StatusCheck, TimeChaos, WorkflowNode]
+
+  - name: litmus
+    source: litmuschaos/chaos-operator@3.31.0 (deploy/crds)
+    installedBy: not installed
+    schemas: none
+    groups: [litmuschaos.io]
+    notes: >-
+      The other chaos option, not taken: a Litmus experiment needs a
+      ChaosExperiment installed from the hub per fault type plus a chaos
+      ServiceAccount/Role per target namespace before a ChaosEngine can
+      run, whereas a Chaos Mesh experiment is one self-contained CR. Listed
+      so the choice is on record; nothing here renders these.
+    used: []
+    unused: [ChaosEngine, ChaosExperiment, ChaosResult]
+
+  - name: flux-source
+    source: fluxcd/source-controller@v1.9.2
+    installedBy: devkit.toml deps.flux2 (helm chart 2.19.0 = Flux 2.9.1, flux-system)
+    schemas: packages/providers/flux-source/models
+    groups: [source.toolkit.fluxcd.io]
+    used:
+      - kind: GitRepository
+        group: source.toolkit.fluxcd.io
+        by: [platform/component/flux]
+      - kind: HelmRepository
+        group: source.toolkit.fluxcd.io
+        by: [manager, platform/component/flux]
+      - kind: OCIRepository
+        group: source.toolkit.fluxcd.io
+        by: [platform/component/flux]
+    unused: [Bucket, ExternalArtifact, HelmChart]
+
+  - name: flux-kustomize
+    source: fluxcd/kustomize-controller@v1.9.2
+    installedBy: devkit.toml deps.flux2 (helm chart 2.19.0 = Flux 2.9.1, flux-system)
+    schemas: packages/providers/flux-kustomize/models
+    groups: [kustomize.toolkit.fluxcd.io]
+    used:
+      - kind: Kustomization
+        group: kustomize.toolkit.fluxcd.io
+        by: [platform/component/flux]
+    unused: []
+
+  - name: flux-helm
+    source: fluxcd/helm-controller@v1.6.2
+    installedBy: devkit.toml deps.flux2 (helm chart 2.19.0 = Flux 2.9.1, flux-system)
+    schemas: packages/providers/flux-helm/models
+    groups: [helm.toolkit.fluxcd.io]
+    used:
+      - kind: HelmRelease
+        group: helm.toolkit.fluxcd.io
+        by: [manager, platform/component/flux]
+    unused: []
+
+  - name: cnpg
+    source: cloudnative-pg/cloudnative-pg@v1.27.1
+    installedBy: provider-helm Release in cloud/postgres/xrd/providerconfigs.yaml (cloudnative-pg chart)
+    schemas: packages/providers/cnpg/models
+    groups: [postgresql.cnpg.io]
+    used:
+      - kind: Cluster
+        group: postgresql.cnpg.io
+        by: [cloud/postgres/cnpg]
+    unused: [Backup, ClusterImageCatalog, Database, FailoverQuorum, ImageCatalog, Pooler,
+             Publication, ScheduledBackup, Subscription]
+
+  - name: knative
+    source: knative/serving@knative-v1.23.0
+    installedBy: not installed by this repo — the serverless/knative backend assumes Knative Serving is present
+    schemas: packages/providers/knative/models
+    groups: [serving.knative.dev]
+    used:
+      - kind: Service
+        group: serving.knative.dev
+        by: [cloud/serverless/knative]
+    unused: [Configuration, Revision, Route, DomainMapping]
+
+  - name: keda
+    source: ghcr.io/kcl-lang/keda:0.1.3 (kcl-lang module; keda.sh/v1alpha1)
+    installedBy: not installed by this repo — the app package's `scaler:` assumes KEDA is present
+    schemas: kcl.mod dependency `keda` of packages/app
+    groups: [keda.sh]
+    used:
+      - kind: ScaledObject
+        group: keda.sh
+        by: [app]
+    unused: [ScaledJob, TriggerAuthentication, ClusterTriggerAuthentication]
+
+  - name: external-secrets
+    source: ghcr.io/kcl-lang/external-secrets:0.18.2 (kcl-lang module; external-secrets.io/v1)
+    installedBy: devkit.toml deps.external-secrets (helm chart 2.9.0, external-secrets)
+    schemas: kcl.mod dependency `external-secrets` of packages/app
+    groups: [external-secrets.io, generators.external-secrets.io]
+    used:
+      - kind: ExternalSecret
+        group: external-secrets.io
+        by: [app]
+    unused: [ClusterExternalSecret, ClusterPushSecret, ClusterSecretStore (referenced by name only —
+             app.ExternalSecretSpec.store — never rendered), PushSecret, SecretStore, ACRAccessToken,
+             ClusterGenerator, ECRAuthorizationToken, Fake, GCRAccessToken, GeneratorState,
+             GithubAccessToken, Grafana, MFA, Password, QuayAccessToken, STSSessionToken, UUID,
+             VaultDynamicSecret, Webhook]
+
+  - name: cert-manager
+    source: cert-manager/cert-manager@v1.21.1 (cert-manager.crds.yaml)
+    installedBy: devkit.toml deps.cert-manager (helm chart 1.21.1, crds.enabled=true, cert-manager)
+    schemas: none
+    groups: [cert-manager.io, acme.cert-manager.io]
+    used: []
+    unused: [Certificate, CertificateRequest, ClusterIssuer, Issuer, Challenge, Order]
+
+  - name: flagger
+    source: fluxcd/flagger@v1.44.0 (artifacts/flagger/crd.yaml)
+    installedBy: devkit.toml deps.flagger (helm chart 1.44.0, flagger)
+    schemas: none
+    groups: [flagger.app]
+    notes: >-
+      Installed for the replica-ownership contract only: the app package omits
+      Deployment.spec.replicas under an autoscaler so Flagger and the HPA do
+      not fight. No Canary is rendered.
+    used: []
+    unused: [Canary, MetricTemplate, AlertProvider]
+
+  - name: kubeblocks
+    source: apecloud/kubeblocks@v1.2.0-alpha.3 (kubeblocks_crds.yaml)
+    installedBy: devkit.toml deps.kubeblocks-crds (wave 0) + deps.kubeblocks (helm chart 1.2.0-alpha.3, wave 1)
+    schemas: none
+    groups: [apps.kubeblocks.io, dataprotection.kubeblocks.io, experimental.kubeblocks.io,
+             extensions.kubeblocks.io, operations.kubeblocks.io, parameters.kubeblocks.io,
+             trace.kubeblocks.io, workloads.kubeblocks.io]
+    used: []
+    unused: [ClusterDefinition, Cluster, ComponentDefinition, Component, ComponentVersion,
+             ConfigConstraint, Configuration, Rollout, ServiceDescriptor, ShardingDefinition,
+             SidecarDefinition, ActionSet, BackupPolicy, BackupPolicyTemplate, BackupRepo, Backup,
+             BackupSchedule, Restore, StorageProvider, NodeCountScaler, Addon, OpsDefinition,
+             OpsRequest, ComponentParameter, ParamConfigRenderer, Parameter, ParametersDefinition,
+             ParameterView, ReconciliationTrace, Instance, InstanceSet]
+
+  - name: nats-jetstream
+    source: tmp/nack-crds.yml
+    installedBy: not installed — justfile seed-queue-providers fetches nack v0.24.0 CRDs into tmp/
+    schemas: packages/providers/nats-jetstream/models
+    groups: [jetstream.nats.io]
+    notes: >-
+      Schema package with no registry.yaml row (tools/providers.sh check reports
+      it) and no consumer: the queue module composes SQS/Pub/Sub only.
+    used: []
+    unused: [Consumer (v1beta1), Stream (v1beta1), StreamTemplate, Account, Consumer (v1beta2),
+             KeyValue, ObjectStore, Stream (v1beta2)]
+
+# ── crossplane providers ──────────────────────────────────────────────────────
+# Image-sourced schema packages: each one is a pkg.crossplane.io Provider on
+# the cluster and a `models/` directory here. Opt-in per module (`just
+# workload <module> <backend>`), never installed by devkit.toml.
+providers:
+  - name: aws-apigatewayv2
+    source: ghcr.io/crossplane-contrib/provider-aws-apigatewayv2:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-apigatewayv2:v2.6.0 in cloud/apigateway/xrd/providers.yaml
+    schemas: packages/providers/aws-apigatewayv2/models
+    groups: [apigatewayv2.aws.m.upbound.io]
+    used:
+      - kind: API
+        group: apigatewayv2.aws.m.upbound.io
+        by: [cloud/apigateway/aws]
+    unused: [APIMapping, Authorizer, Deployment, DomainName, Integration, IntegrationResponse,
+             Model, Route, RouteResponse, Stage, VPCLink]
+
+  - name: aws-codebuild
+    source: ghcr.io/crossplane-contrib/provider-aws-codebuild:v2.6.0
+    installedBy: nothing — no module's xrd/providers.yaml installs it (schemas generated, not wired in)
+    schemas: packages/providers/aws-codebuild/models
+    groups: [codebuild.aws.m.upbound.io]
+    used: []
+    unused: [Project, ReportGroup, SourceCredential, Webhook]
+
+  - name: aws-ec2
+    source: ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0 in cloud/vm/xrd/providers.yaml
+    schemas: packages/providers/aws-ec2/models
+    groups: [ec2.aws.m.upbound.io]
+    used:
+      - kind: EIP
+        group: ec2.aws.m.upbound.io
+        by: [cloud/network/aws]
+      - kind: Instance
+        group: ec2.aws.m.upbound.io
+        by: [cloud/vm/aws]
+      - kind: InternetGateway
+        group: ec2.aws.m.upbound.io
+        by: [cloud/network/aws]
+      - kind: KeyPair
+        group: ec2.aws.m.upbound.io
+        by: [cloud/vm/aws]
+      - kind: NATGateway
+        group: ec2.aws.m.upbound.io
+        by: [cloud/network/aws]
+      - kind: Route
+        group: ec2.aws.m.upbound.io
+        by: [cloud/network/aws]
+      - kind: RouteTable
+        group: ec2.aws.m.upbound.io
+        by: [cloud/network/aws]
+      - kind: RouteTableAssociation
+        group: ec2.aws.m.upbound.io
+        by: [cloud/network/aws]
+      - kind: SecurityGroup
+        group: ec2.aws.m.upbound.io
+        by: [cloud/network/aws]
+      - kind: SecurityGroupEgressRule
+        group: ec2.aws.m.upbound.io
+        by: [cloud/network/aws]
+      - kind: SecurityGroupIngressRule
+        group: ec2.aws.m.upbound.io
+        by: [cloud/network/aws]
+      - kind: Subnet
+        group: ec2.aws.m.upbound.io
+        by: [cloud/network/aws]
+      - kind: VPC
+        group: ec2.aws.m.upbound.io
+        by: [cloud/network/aws]
+    unused: [AMI, AMICopy, AMILaunchPermission, AvailabilityZoneGroup, CapacityBlockReservation,
+             CapacityReservation, CarrierGateway, CustomerGateway, DefaultNetworkACL,
+             DefaultRouteTable, DefaultSecurityGroup, DefaultSubnet, DefaultVPC,
+             DefaultVPCDHCPOptions, EBSDefaultKMSKey, EBSEncryptionByDefault, EBSSnapshot,
+             EBSSnapshotCopy, EBSSnapshotImport, EBSVolume, EIPAssociation,
+             EgressOnlyInternetGateway, Fleet, FlowLog, Host, InstanceState, LaunchTemplate,
+             MainRouteTableAssociation, ManagedPrefixList, ManagedPrefixListEntry, NetworkACL,
+             NetworkACLRule, NetworkInsightsAnalysis, NetworkInsightsPath, NetworkInterface,
+             NetworkInterfaceAttachment, NetworkInterfaceSgAttachment, PlacementGroup,
+             SecurityGroupRule, SerialConsoleAccess, SnapshotCreateVolumePermission,
+             SpotDatafeedSubscription, SpotFleetRequest, SpotInstanceRequest,
+             SubnetCidrReservation, Tag, TrafficMirrorFilter, TrafficMirrorFilterRule,
+             TransitGateway, TransitGatewayConnect, TransitGatewayConnectPeer,
+             TransitGatewayMulticastDomain, TransitGatewayMulticastDomainAssociation,
+             TransitGatewayMulticastGroupMember, TransitGatewayMulticastGroupSource,
+             TransitGatewayPeeringAttachment, TransitGatewayPeeringAttachmentAccepter,
+             TransitGatewayPolicyTable, TransitGatewayPrefixListReference, TransitGatewayRoute,
+             TransitGatewayRouteTable, TransitGatewayRouteTableAssociation,
+             TransitGatewayRouteTablePropagation, TransitGatewayVPCAttachment,
+             TransitGatewayVPCAttachmentAccepter, VPCDHCPOptions, VPCDHCPOptionsAssociation,
+             VPCEndpoint, VPCEndpointConnectionAccepter, VPCEndpointConnectionNotification,
+             VPCEndpointRouteTableAssociation, VPCEndpointSecurityGroupAssociation,
+             VPCEndpointService, VPCEndpointServiceAllowedPrincipal, VPCEndpointSubnetAssociation,
+             VPCIPv4CidrBlockAssociation, VPCIPv6CidrBlockAssociation, VPCIpam, VPCIpamPool,
+             VPCIpamPoolCidr, VPCIpamPoolCidrAllocation, VPCIpamScope, VPCPeeringConnection,
+             VPCPeeringConnectionAccepter, VPCPeeringConnectionOptions, VPNConnection,
+             VPNConnectionRoute, VPNGateway, VPNGatewayAttachment, VPNGatewayRoutePropagation,
+             VolumeAttachment]
+
+  - name: aws-ecr
+    source: ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0 in cloud/registry/xrd/providers.yaml
+    schemas: packages/providers/aws-ecr/models
+    groups: [ecr.aws.m.upbound.io]
+    used:
+      - kind: LifecyclePolicy
+        group: ecr.aws.m.upbound.io
+        by: [cloud/registry/aws]
+      - kind: Repository
+        group: ecr.aws.m.upbound.io
+        by: [cloud/registry/aws]
+      - kind: RepositoryPolicy
+        group: ecr.aws.m.upbound.io
+        by: [cloud/registry/aws]
+    unused: [PullThroughCacheRule, RegistryPolicy, RegistryScanningConfiguration,
+             ReplicationConfiguration, RepositoryCreationTemplate]
+
+  - name: aws-eks
+    source: ghcr.io/crossplane-contrib/provider-aws-eks:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-eks:v2.6.0 in cloud/cluster/xrd/providers.yaml
+    schemas: packages/providers/aws-eks/models
+    groups: [eks.aws.m.upbound.io]
+    used:
+      - kind: Cluster
+        group: eks.aws.m.upbound.io
+        by: [cloud/cluster/aws]
+      - kind: ClusterAuth
+        group: eks.aws.m.upbound.io
+        by: [cloud/cluster/aws]
+      - kind: NodeGroup
+        group: eks.aws.m.upbound.io
+        by: [cloud/cluster/aws]
+    unused: [AccessEntry, AccessPolicyAssociation, Addon, Capability, FargateProfile,
+             IdentityProviderConfig, PodIdentityAssociation]
+
+  - name: aws-elasticache
+    source: ghcr.io/crossplane-contrib/provider-aws-elasticache:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-elasticache:v2.6.0 in cloud/redis/xrd/providers.yaml
+    schemas: packages/providers/aws-elasticache/models
+    groups: [elasticache.aws.m.upbound.io]
+    used:
+      - kind: ParameterGroup
+        group: elasticache.aws.m.upbound.io
+        by: [cloud/redis/aws]
+      - kind: ReplicationGroup
+        group: elasticache.aws.m.upbound.io
+        by: [cloud/redis/aws]
+      - kind: SubnetGroup
+        group: elasticache.aws.m.upbound.io
+        by: [cloud/network/aws]
+    unused: [Cluster, GlobalReplicationGroup, ServerlessCache, User, UserGroup]
+
+  - name: aws-iam
+    source: ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0 in cloud/cluster/xrd/providers.yaml, cloud/iam/xrd/providers.yaml, cloud/serverless/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
+    schemas: packages/providers/aws-iam/models
+    groups: [iam.aws.m.upbound.io]
+    used:
+      - kind: Role
+        group: iam.aws.m.upbound.io
+        by: [cloud/cluster/aws, cloud/iam/aws, cloud/serverless/aws, cloud/workload-identity/aws]
+      - kind: RolePolicy
+        group: iam.aws.m.upbound.io
+        by: [cloud/iam/aws]
+      - kind: RolePolicyAttachment
+        group: iam.aws.m.upbound.io
+        by: [cloud/cluster/aws, cloud/iam/aws, cloud/serverless/aws, cloud/workload-identity/aws]
+    unused: [AccessKey, AccountAlias, AccountPasswordPolicy, Group, GroupMembership,
+             GroupPolicyAttachment, InstanceProfile, OpenIDConnectProvider, Policy, SAMLProvider,
+             ServerCertificate, ServiceLinkedRole, ServiceSpecificCredential, SigningCertificate,
+             User, UserGroupMembership, UserLoginProfile, UserPolicyAttachment, UserSSHKey,
+             VirtualMfaDevice]
+
+  - name: aws-kms
+    source: ghcr.io/crossplane-contrib/provider-aws-kms:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-kms:v2.6.0 in cloud/kms/xrd/providers.yaml
+    schemas: packages/providers/aws-kms/models
+    groups: [kms.aws.m.upbound.io]
+    used:
+      - kind: Alias
+        group: kms.aws.m.upbound.io
+        by: [cloud/kms/aws]
+      - kind: Key
+        group: kms.aws.m.upbound.io
+        by: [cloud/kms/aws]
+    unused: [Ciphertext, ExternalKey, Grant, ReplicaExternalKey, ReplicaKey]
+
+  - name: aws-lambda
+    source: ghcr.io/crossplane-contrib/provider-aws-lambda:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-lambda:v2.6.0 in cloud/serverless/xrd/providers.yaml
+    schemas: packages/providers/aws-lambda/models
+    groups: [lambda.aws.m.upbound.io]
+    used:
+      - kind: Function
+        group: lambda.aws.m.upbound.io
+        by: [cloud/serverless/aws]
+      - kind: FunctionURL
+        group: lambda.aws.m.upbound.io
+        by: [cloud/serverless/aws]
+      - kind: Permission
+        group: lambda.aws.m.upbound.io
+        by: [cloud/serverless/aws]
+    unused: [Alias, CodeSigningConfig, EventSourceMapping, FunctionEventInvokeConfig, Invocation,
+             LayerVersion, LayerVersionPermission, ProvisionedConcurrencyConfig]
+
+  - name: aws-rds
+    source: ghcr.io/crossplane-contrib/provider-aws-rds:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-rds:v2.6.0 in cloud/postgres/xrd/providers.yaml
+    schemas: packages/providers/aws-rds/models
+    groups: [rds.aws.m.upbound.io]
+    used:
+      - kind: Instance
+        group: rds.aws.m.upbound.io
+        by: [cloud/postgres/aws]
+      - kind: ParameterGroup
+        group: rds.aws.m.upbound.io
+        by: [cloud/postgres/aws]
+      - kind: SubnetGroup
+        group: rds.aws.m.upbound.io
+        by: [cloud/network/aws]
+    unused: [Cluster, ClusterActivityStream, ClusterEndpoint, ClusterInstance,
+             ClusterParameterGroup, ClusterRoleAssociation, ClusterSnapshot,
+             DBInstanceAutomatedBackupsReplication, DBSnapshotCopy, EventSubscription,
+             GlobalCluster, InstanceRoleAssociation, InstanceState, OptionGroup, Proxy,
+             ProxyDefaultTargetGroup, ProxyEndpoint, ProxyTarget, Snapshot]
+
+  - name: aws-route53
+    source: ghcr.io/crossplane-contrib/provider-aws-route53:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-route53:v2.6.0 in cloud/dns/xrd/providers.yaml
+    schemas: packages/providers/aws-route53/models
+    groups: [route53.aws.m.upbound.io]
+    used:
+      - kind: Record
+        group: route53.aws.m.upbound.io
+        by: [cloud/dns/aws]
+      - kind: Zone
+        group: route53.aws.m.upbound.io
+        by: [cloud/dns/aws]
+    unused: [DelegationSet, HealthCheck, HostedZoneDNSSEC, QueryLog, ResolverConfig, TrafficPolicy,
+             TrafficPolicyInstance, VPCAssociationAuthorization, ZoneAssociation]
+
+  - name: aws-s3
+    source: ghcr.io/crossplane-contrib/provider-aws-s3:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-s3:v2.6.0 in cloud/bucket/xrd/providers.yaml
+    schemas: packages/providers/aws-s3/models
+    groups: [s3.aws.m.upbound.io]
+    used:
+      - kind: Bucket
+        group: s3.aws.m.upbound.io
+        by: [cloud/bucket/aws, cloud/bucket/rustfs, cloud/name/aws]
+      - kind: BucketCorsConfiguration
+        group: s3.aws.m.upbound.io
+        by: [cloud/bucket/aws]
+      - kind: BucketLifecycleConfiguration
+        group: s3.aws.m.upbound.io
+        by: [cloud/bucket/aws, cloud/bucket/rustfs, cloud/name/aws]
+      - kind: BucketLogging
+        group: s3.aws.m.upbound.io
+        by: [cloud/bucket/aws]
+      - kind: BucketObjectLockConfiguration
+        group: s3.aws.m.upbound.io
+        by: [cloud/bucket/aws]
+      - kind: BucketOwnershipControls
+        group: s3.aws.m.upbound.io
+        by: [cloud/bucket/aws]
+      - kind: BucketPublicAccessBlock
+        group: s3.aws.m.upbound.io
+        by: [cloud/bucket/aws]
+      - kind: BucketRequestPaymentConfiguration
+        group: s3.aws.m.upbound.io
+        by: [cloud/bucket/aws]
+      - kind: BucketServerSideEncryptionConfiguration
+        group: s3.aws.m.upbound.io
+        by: [cloud/bucket/aws]
+      - kind: BucketVersioning
+        group: s3.aws.m.upbound.io
+        by: [cloud/bucket/aws]
+      - kind: BucketWebsiteConfiguration
+        group: s3.aws.m.upbound.io
+        by: [cloud/bucket/aws]
+    unused: [BucketAbac, BucketAccelerateConfiguration, BucketACL, BucketAnalyticsConfiguration,
+             BucketIntelligentTieringConfiguration, BucketInventory, BucketMetric,
+             BucketNotification, BucketObject, BucketPolicy, BucketReplicationConfiguration,
+             DirectoryBucket, Object, ObjectCopy]
+
+  - name: aws-sesv2
+    source: ghcr.io/crossplane-contrib/provider-aws-sesv2:v2.6.0
+    installedBy: Provider xpkg.crossplane.io/crossplane-contrib/provider-aws-sesv2:v2.6.0 in cloud/email/xrd/providers.yaml
+    schemas: packages/providers/aws-sesv2/models
+    groups: [sesv2.aws.m.upbound.io]
+    used:
+      - kind: ConfigurationSet
+        group: sesv2.aws.m.upbound.io
+        by: [cloud/email/aws]
+      - kind: EmailIdentity
+        group: sesv2.aws.m.upbound.io
+        by: [cloud/email/aws]
+      - kind: EmailIdentityMailFromAttributes
+        group: sesv2.aws.m.upbound.io
+        by: [cloud/email/aws]
+    unused: [ConfigurationSetEventDestination, DedicatedIPPool, EmailIdentityFeedbackAttributes]
+
+  - name: aws-sqs
+    source: ghcr.io/crossplane-contrib/provider-aws-sqs:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-sqs:v2.6.0 in cloud/queue/xrd/providers.yaml
+    schemas: packages/providers/aws-sqs/models
+    groups: [sqs.aws.m.upbound.io]
+    used:
+      - kind: Queue
+        group: sqs.aws.m.upbound.io
+        by: [cloud/queue/aws]
+    unused: [QueuePolicy, QueueRedriveAllowPolicy, QueueRedrivePolicy]
+
+  - name: azure-apimanagement
+    source: ghcr.io/crossplane-contrib/provider-azure-apimanagement:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-apimanagement:v2.6.0 in cloud/apigateway/xrd/providers.yaml
+    schemas: packages/providers/azure-apimanagement/models
+    groups: [apimanagement.azure.m.upbound.io]
+    used:
+      - kind: API
+        group: apimanagement.azure.m.upbound.io
+        by: [cloud/apigateway/azure]
+      - kind: APIOperation
+        group: apimanagement.azure.m.upbound.io
+        by: [cloud/apigateway/azure]
+      - kind: APIPolicy
+        group: apimanagement.azure.m.upbound.io
+        by: [cloud/apigateway/azure]
+      - kind: Management
+        group: apimanagement.azure.m.upbound.io
+        by: [cloud/apigateway/azure]
+    unused: [APIDiagnostic, APIOperationPolicy, APIOperationTag, APIRelease, APISchema, APITag,
+             APIVersionSet, AuthorizationServer, Backend, Certificate, CustomDomain, Diagnostic,
+             EmailTemplate, Gateway, GatewayAPI, GlobalSchema, Group, IdentityProviderAAD,
+             IdentityProviderFacebook, IdentityProviderGoogle, IdentityProviderMicrosoft,
+             IdentityProviderTwitter, Logger, NamedValue, NotificationRecipientEmail,
+             NotificationRecipientUser, OpenIDConnectProvider, Policy, PolicyFragment, Product,
+             ProductAPI, ProductGroup, ProductPolicy, ProductTag, RedisCache, Subscription, Tag,
+             User]
+
+  - name: azure-authorization
+    source: ghcr.io/crossplane-contrib/provider-azure-authorization:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-authorization:v2.6.0 in cloud/iam/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
+    schemas: packages/providers/azure-authorization/models
+    groups: [authorization.azure.m.upbound.io]
+    used:
+      - kind: RoleAssignment
+        group: authorization.azure.m.upbound.io
+        by: [cloud/iam/azure, cloud/workload-identity/azure]
+    unused: [ManagementGroupPolicyAssignment, ManagementGroupPolicyExemption, ManagementLock,
+             PimActiveRoleAssignment, PimEligibleRoleAssignment, PolicyDefinition,
+             PolicySetDefinition, ResourceGroupPolicyAssignment, ResourceGroupPolicyExemption,
+             ResourcePolicyAssignment, ResourcePolicyExemption, RoleDefinition,
+             RoleManagementPolicy, SubscriptionPolicyAssignment, SubscriptionPolicyExemption,
+             TrustedAccessRoleBinding]
+
+  - name: azure-compute
+    source: ghcr.io/crossplane-contrib/provider-azure-compute:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-compute:v2.6.0 in cloud/vm/xrd/providers.yaml
+    schemas: packages/providers/azure-compute/models
+    groups: [compute.azure.m.upbound.io]
+    used:
+      - kind: LinuxVirtualMachine
+        group: compute.azure.m.upbound.io
+        by: [cloud/vm/azure]
+    unused: [AvailabilitySet, CapacityReservation, CapacityReservationGroup, DedicatedHost,
+             DiskAccess, DiskEncryptionSet, GalleryApplication, GalleryApplicationVersion, Image,
+             LinuxVirtualMachineScaleSet, ManagedDisk, ManagedDiskSASToken,
+             OrchestratedVirtualMachineScaleSet, ProximityPlacementGroup, SharedImage,
+             SharedImageGallery, Snapshot, SSHPublicKey, VirtualMachineDataDiskAttachment,
+             VirtualMachineExtension, VirtualMachineRunCommand, VirtualMachineScaleSetStandbyPool,
+             WindowsVirtualMachine, WindowsVirtualMachineScaleSet]
+
+  - name: azure-containerapp
+    source: ghcr.io/crossplane-contrib/provider-azure-containerapp:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-containerapp:v2.6.0 in cloud/serverless/xrd/providers.yaml
+    schemas: packages/providers/azure-containerapp/models
+    groups: [containerapp.azure.m.upbound.io]
+    used:
+      - kind: ContainerApp
+        group: containerapp.azure.m.upbound.io
+        by: [cloud/serverless/azure]
+      - kind: Environment
+        group: containerapp.azure.m.upbound.io
+        by: [cloud/serverless/azure]
+    unused: [ContainerJob, CustomDomain, EnvironmentCertificate, EnvironmentCustomDomain,
+             EnvironmentDaprComponent, EnvironmentStorage]
+
+  - name: azure-containerregistry
+    source: ghcr.io/crossplane-contrib/provider-azure-containerregistry:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-containerregistry:v2.6.0 in cloud/registry/xrd/providers.yaml
+    schemas: packages/providers/azure-containerregistry/models
+    groups: [containerregistry.azure.m.upbound.io]
+    used:
+      - kind: Registry
+        group: containerregistry.azure.m.upbound.io
+        by: [cloud/registry/azure]
+    unused: [AgentPool, CacheRule, ContainerConnectedRegistry, CredentialSet, ScopeMap, Token,
+             TokenPassword, Webhook]
+
+  - name: azure-containerservice
+    source: ghcr.io/crossplane-contrib/provider-azure-containerservice:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-containerservice:v2.6.0 in cloud/cluster/xrd/providers.yaml
+    schemas: packages/providers/azure-containerservice/models
+    groups: [containerservice.azure.m.upbound.io]
+    used:
+      - kind: KubernetesCluster
+        group: containerservice.azure.m.upbound.io
+        by: [cloud/cluster/azure]
+    unused: [KubernetesClusterExtension, KubernetesClusterNodePool, KubernetesFleetManager]
+
+  - name: azure-dbforpostgresql
+    source: ghcr.io/crossplane-contrib/provider-azure-dbforpostgresql:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-dbforpostgresql:v2.6.0 in cloud/postgres/xrd/providers.yaml
+    schemas: packages/providers/azure-dbforpostgresql/models
+    groups: [dbforpostgresql.azure.m.upbound.io]
+    used:
+      - kind: FlexibleServer
+        group: dbforpostgresql.azure.m.upbound.io
+        by: [cloud/postgres/azure]
+      - kind: FlexibleServerActiveDirectoryAdministrator
+        group: dbforpostgresql.azure.m.upbound.io
+        by: [cloud/postgres/azure]
+      - kind: FlexibleServerConfiguration
+        group: dbforpostgresql.azure.m.upbound.io
+        by: [cloud/postgres/azure]
+      - kind: FlexibleServerDatabase
+        group: dbforpostgresql.azure.m.upbound.io
+        by: [cloud/postgres/azure]
+    unused: [ActiveDirectoryAdministrator, Configuration, Database, FirewallRule,
+             FlexibleServerBackup, FlexibleServerFirewallRule, FlexibleServerVirtualEndpoint,
+             Server, ServerKey, VirtualNetworkRule]
+
+  - name: azure-keyvault
+    source: ghcr.io/crossplane-contrib/provider-azure-keyvault:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-keyvault:v2.6.0 in cloud/kms/xrd/providers.yaml
+    schemas: packages/providers/azure-keyvault/models
+    groups: [keyvault.azure.m.upbound.io]
+    used:
+      - kind: Key
+        group: keyvault.azure.m.upbound.io
+        by: [cloud/kms/azure]
+      - kind: Vault
+        group: keyvault.azure.m.upbound.io
+        by: [cloud/kms/azure]
+    unused: [AccessPolicy, Certificate, CertificateContacts, CertificateIssuer,
+             ManagedHardwareSecurityModule, ManagedStorageAccount,
+             ManagedStorageAccountSASTokenDefinition, Secret]
+
+  - name: azure-managedidentity
+    source: ghcr.io/crossplane-contrib/provider-azure-managedidentity:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-managedidentity:v2.6.0 in cloud/iam/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
+    schemas: packages/providers/azure-managedidentity/models
+    groups: [managedidentity.azure.m.upbound.io]
+    used:
+      - kind: FederatedIdentityCredential
+        group: managedidentity.azure.m.upbound.io
+        by: [cloud/iam/azure, cloud/workload-identity/azure]
+      - kind: UserAssignedIdentity
+        group: managedidentity.azure.m.upbound.io
+        by: [cloud/iam/azure, cloud/workload-identity/azure]
+    unused: []
+
+  - name: azure-network
+    source: ghcr.io/crossplane-contrib/provider-azure-network:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-network:v2.6.0 in cloud/vm/xrd/providers.yaml
+    schemas: packages/providers/azure-network/models
+    groups: [network.azure.m.upbound.io]
+    used:
+      - kind: NetworkInterface
+        group: network.azure.m.upbound.io
+        by: [cloud/vm/azure]
+      - kind: PublicIP
+        group: network.azure.m.upbound.io
+        by: [cloud/vm/azure]
+    unused: [ApplicationGateway, ApplicationSecurityGroup, BastionHost, ConnectionMonitor,
+             DDoSProtectionPlan, DNSAAAARecord, DNSARecord, DNSCAARecord, DNSCNAMERecord,
+             DNSMXRecord, DNSNSRecord, DNSPTRRecord, DNSSRVRecord, DNSTXTRecord, DNSZone,
+             ExpressRouteCircuit, ExpressRouteCircuitAuthorization, ExpressRouteCircuitConnection,
+             ExpressRouteCircuitPeering, ExpressRouteConnection, ExpressRouteGateway,
+             ExpressRoutePort, Firewall, FirewallApplicationRuleCollection,
+             FirewallNATRuleCollection, FirewallNetworkRuleCollection, FirewallPolicy,
+             FirewallPolicyRuleCollectionGroup, FrontDoor, FrontdoorCustomHTTPSConfiguration,
+             FrontdoorFirewallPolicy, FrontdoorRulesEngine, IPGroup, LoadBalancer,
+             LoadBalancerBackendAddressPool, LoadBalancerBackendAddressPoolAddress,
+             LoadBalancerNatPool, LoadBalancerNatRule, LoadBalancerOutboundRule, LoadBalancerProbe,
+             LoadBalancerRule, LocalNetworkGateway, Manager, ManagerIpamPool,
+             ManagerManagementGroupConnection, ManagerNetworkGroup, ManagerRoutingConfiguration,
+             ManagerStaticMember, ManagerSubscriptionConnection, ManagerVerifierWorkspace,
+             NATGateway, NATGatewayPublicIPAssociation, NATGatewayPublicIPPrefixAssociation,
+             NetworkInterfaceApplicationSecurityGroupAssociation,
+             NetworkInterfaceBackendAddressPoolAssociation, NetworkInterfaceNatRuleAssociation,
+             NetworkInterfaceSecurityGroupAssociation, PacketCapture, PointToSiteVPNGateway,
+             PrivateDNSAAAARecord, PrivateDNSARecord, PrivateDNSCNAMERecord, PrivateDNSMXRecord,
+             PrivateDNSPTRRecord, PrivateDNSResolver, PrivateDNSResolverDNSForwardingRuleset,
+             PrivateDNSResolverForwardingRule, PrivateDNSResolverInboundEndpoint,
+             PrivateDNSResolverOutboundEndpoint, PrivateDNSResolverVirtualNetworkLink,
+             PrivateDNSSRVRecord, PrivateDNSTXTRecord, PrivateDNSZone,
+             PrivateDNSZoneVirtualNetworkLink, PrivateEndpoint,
+             PrivateEndpointApplicationSecurityGroupAssociation, PrivateLinkService, Profile,
+             PublicIPPrefix, Route, RouteFilter, RouteMap, RouteServer, RouteServerBGPConnection,
+             RouteTable, SecurityGroup, SecurityRule, Subnet, SubnetNATGatewayAssociation,
+             SubnetNetworkSecurityGroupAssociation, SubnetRouteTableAssociation,
+             SubnetServiceEndpointStoragePolicy, TrafficManagerAzureEndpoint,
+             TrafficManagerExternalEndpoint, TrafficManagerNestedEndpoint, TrafficManagerProfile,
+             VPNGateway, VPNGatewayConnection, VPNServerConfiguration,
+             VPNServerConfigurationPolicyGroup, VPNSite, VirtualHub, VirtualHubConnection,
+             VirtualHubIP, VirtualHubRouteTable, VirtualHubRouteTableRoute,
+             VirtualHubRoutingIntent, VirtualHubSecurityPartnerProvider, VirtualNetwork,
+             VirtualNetworkDNSServers, VirtualNetworkGateway, VirtualNetworkGatewayConnection,
+             VirtualNetworkPeering, VirtualWAN, Watcher, WatcherFlowLog,
+             WebApplicationFirewallPolicy]
+
+  - name: azure-storage
+    source: ghcr.io/crossplane-contrib/provider-azure-storage:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-storage:v2.6.0 in cloud/bucket/xrd/providers.yaml
+    schemas: packages/providers/azure-storage/models
+    groups: [storage.azure.m.upbound.io]
+    used:
+      - kind: Account
+        group: storage.azure.m.upbound.io
+        by: [cloud/bucket/azure]
+      - kind: ManagementPolicy
+        group: storage.azure.m.upbound.io
+        by: [cloud/bucket/azure]
+    unused: [AccountLocalUser, AccountNetworkRules, Blob, BlobInventoryPolicy, Container,
+             ContainerImmutabilityPolicy, DataLakeGen2FileSystem, DataLakeGen2Path,
+             EncryptionScope, ObjectReplication, Queue, Share, ShareDirectory, Table, TableEntity]
+
+  - name: gcp-apigee
+    source: ghcr.io/crossplane-contrib/provider-gcp-apigee:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-apigee:v2.6.0 in cloud/apigateway/xrd/providers.yaml
+    schemas: packages/providers/gcp-apigee/models
+    groups: [apigee.gcp.m.upbound.io]
+    used:
+      - kind: Envgroup
+        group: apigee.gcp.m.upbound.io
+        by: [cloud/apigateway/gcp]
+      - kind: EnvgroupAttachment
+        group: apigee.gcp.m.upbound.io
+        by: [cloud/apigateway/gcp]
+      - kind: Environment
+        group: apigee.gcp.m.upbound.io
+        by: [cloud/apigateway/gcp]
+      - kind: InstanceAttachment
+        group: apigee.gcp.m.upbound.io
+        by: [cloud/apigateway/gcp]
+      - kind: TargetServer
+        group: apigee.gcp.m.upbound.io
+        by: [cloud/apigateway/gcp]
+    unused: [AddonsConfig, EndpointAttachment, EnvKeystore, EnvReferences, EnvironmentIAMMember,
+             Instance, KeystoresAliasesKeyCertFile, NATAddress, Organization, SyncAuthorization]
+
+  - name: gcp-artifact
+    source: ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0 in cloud/registry/xrd/providers.yaml
+    schemas: packages/providers/gcp-artifact/models
+    groups: [artifact.gcp.m.upbound.io]
+    used:
+      - kind: RegistryRepository
+        group: artifact.gcp.m.upbound.io
+        by: [cloud/registry/gcp]
+      - kind: RegistryRepositoryIAMMember
+        group: artifact.gcp.m.upbound.io
+        by: [cloud/registry/gcp]
+    unused: []
+
+  - name: gcp-cloudbuild
+    source: ghcr.io/crossplane-contrib/provider-gcp-cloudbuild:v2.6.0
+    installedBy: nothing — no module's xrd/providers.yaml installs it (schemas generated, not wired in)
+    schemas: packages/providers/gcp-cloudbuild/models
+    groups: [cloudbuild.gcp.m.upbound.io]
+    used: []
+    unused: [Trigger, WorkerPool]
+
+  - name: gcp-cloudplatform
+    source: ghcr.io/crossplane-contrib/provider-gcp-cloudplatform:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-cloudplatform:v2.6.0 in cloud/iam/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
+    schemas: packages/providers/gcp-cloudplatform/models
+    groups: [cloudplatform.gcp.m.upbound.io]
+    used:
+      - kind: FolderIAMMember
+        group: cloudplatform.gcp.m.upbound.io
+        by: [cloud/workload-identity/gcp]
+      - kind: OrganizationIAMMember
+        group: cloudplatform.gcp.m.upbound.io
+        by: [cloud/workload-identity/gcp]
+      - kind: ProjectIAMMember
+        group: cloudplatform.gcp.m.upbound.io
+        by: [cloud/iam/gcp, cloud/workload-identity/gcp]
+      - kind: ServiceAccount
+        group: cloudplatform.gcp.m.upbound.io
+        by: [cloud/iam/gcp, cloud/workload-identity/gcp]
+      - kind: ServiceAccountIAMMember
+        group: cloudplatform.gcp.m.upbound.io
+        by: [cloud/iam/gcp, cloud/workload-identity/gcp]
+    unused: [Folder, OrganizationIAMAuditConfig, OrganizationIAMCustomRole, Project,
+             ProjectDefaultServiceAccounts, ProjectIAMAuditConfig, ProjectIAMCustomRole,
+             ProjectService, ProjectUsageExportBucket, ServiceAccountKey,
+             ServiceNetworkingPeeredDNSDomain]
+
+  - name: gcp-cloudrun
+    source: ghcr.io/crossplane-contrib/provider-gcp-cloudrun:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-cloudrun:v2.6.0 in cloud/serverless/xrd/providers.yaml
+    schemas: packages/providers/gcp-cloudrun/models
+    groups: [cloudrun.gcp.m.upbound.io]
+    used:
+      - kind: ServiceIAMMember
+        group: cloudrun.gcp.m.upbound.io
+        by: [cloud/serverless/gcp]
+      - kind: V2Service
+        group: cloudrun.gcp.m.upbound.io
+        by: [cloud/serverless/gcp]
+    unused: [DomainMapping, Service, V2Job]
+
+  - name: gcp-compute
+    source: ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0 in cloud/vm/xrd/providers.yaml
+    schemas: packages/providers/gcp-compute/models
+    groups: [compute.gcp.m.upbound.io]
+    used:
+      - kind: Firewall
+        group: compute.gcp.m.upbound.io
+        by: [cloud/network/gcp]
+      - kind: GlobalAddress
+        group: compute.gcp.m.upbound.io
+        by: [cloud/network/gcp]
+      - kind: Instance
+        group: compute.gcp.m.upbound.io
+        by: [cloud/vm/gcp]
+      - kind: Network
+        group: compute.gcp.m.upbound.io
+        by: [cloud/network/gcp]
+      - kind: Router
+        group: compute.gcp.m.upbound.io
+        by: [cloud/network/gcp]
+      - kind: RouterNAT
+        group: compute.gcp.m.upbound.io
+        by: [cloud/network/gcp]
+      - kind: Subnetwork
+        group: compute.gcp.m.upbound.io
+        by: [cloud/network/gcp]
+    unused: [Address, AttachedDisk, Autoscaler, BackendBucket, BackendBucketSignedURLKey,
+             BackendService, BackendServiceSignedURLKey, Disk, DiskIAMMember,
+             DiskResourcePolicyAttachment, ExternalVPNGateway, FirewallPolicy,
+             FirewallPolicyAssociation, FirewallPolicyRule, ForwardingRule, GlobalForwardingRule,
+             GlobalNetworkEndpoint, GlobalNetworkEndpointGroup, HaVPNGateway, HealthCheck,
+             HTTPHealthCheck, HTTPSHealthCheck, Image, ImageIAMMember, InstanceFromTemplate,
+             InstanceGroup, InstanceGroupManager, InstanceGroupNamedPort, InstanceIAMMember,
+             InstanceTemplate, InterconnectAttachment, ManagedSSLCertificate, NetworkEndpoint,
+             NetworkEndpointGroup, NetworkFirewallPolicy, NetworkFirewallPolicyAssociation,
+             NetworkFirewallPolicyRule, NetworkPeering, NetworkPeeringRoutesConfig, NodeGroup,
+             NodeTemplate, PacketMirroring, PerInstanceConfig, ProjectDefaultNetworkTier,
+             ProjectMetadata, ProjectMetadataItem, RegionAutoscaler, RegionBackendService,
+             RegionDisk, RegionDiskIAMMember, RegionDiskResourcePolicyAttachment,
+             RegionHealthCheck, RegionInstanceGroupManager, RegionNetworkEndpoint,
+             RegionNetworkEndpointGroup, RegionNetworkFirewallPolicy,
+             RegionNetworkFirewallPolicyAssociation, RegionPerInstanceConfig, RegionSSLCertificate,
+             RegionSSLPolicy, RegionSecurityPolicy, RegionTargetHTTPProxy, RegionTargetHTTPSProxy,
+             RegionTargetTCPProxy, RegionURLMap, Reservation, ResourcePolicy, Route,
+             RouterInterface, RouterPeer, SSLCertificate, SSLPolicy, SecurityPolicy,
+             ServiceAttachment, SharedVPCHostProject, SharedVPCServiceProject, Snapshot,
+             SnapshotIAMMember, SubnetworkIAMMember, TargetGRPCProxy, TargetHTTPProxy,
+             TargetHTTPSProxy, TargetInstance, TargetPool, TargetSSLProxy, TargetTCPProxy, URLMap,
+             VPNGateway, VPNTunnel]
+
+  - name: gcp-container
+    source: ghcr.io/crossplane-contrib/provider-gcp-container:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-container:v2.6.0 in cloud/cluster/xrd/providers.yaml
+    schemas: packages/providers/gcp-container/models
+    groups: [container.gcp.m.upbound.io]
+    used:
+      - kind: Cluster
+        group: container.gcp.m.upbound.io
+        by: [cloud/cluster/gcp]
+      - kind: NodePool
+        group: container.gcp.m.upbound.io
+        by: [cloud/cluster/gcp]
+    unused: [Registry]
+
+  - name: gcp-dns
+    source: ghcr.io/crossplane-contrib/provider-gcp-dns:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-dns:v2.6.0 in cloud/dns/xrd/providers.yaml
+    schemas: packages/providers/gcp-dns/models
+    groups: [dns.gcp.m.upbound.io]
+    used:
+      - kind: ManagedZone
+        group: dns.gcp.m.upbound.io
+        by: [cloud/dns/gcp]
+      - kind: RecordSet
+        group: dns.gcp.m.upbound.io
+        by: [cloud/dns/gcp]
+    unused: [ManagedZoneIAMMember, Policy, ResponsePolicy, ResponsePolicyRule]
+
+  - name: gcp-kms
+    source: ghcr.io/crossplane-contrib/provider-gcp-kms:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-kms:v2.6.0 in cloud/kms/xrd/providers.yaml
+    schemas: packages/providers/gcp-kms/models
+    groups: [kms.gcp.m.upbound.io]
+    used:
+      - kind: CryptoKey
+        group: kms.gcp.m.upbound.io
+        by: [cloud/kms/gcp]
+      - kind: KeyRing
+        group: kms.gcp.m.upbound.io
+        by: [cloud/kms/gcp]
+    unused: [CryptoKeyIAMMember, CryptoKeyVersion, KeyRingIAMMember, KeyRingImportJob,
+             SecretCiphertext]
+
+  - name: gcp-pubsub
+    source: ghcr.io/crossplane-contrib/provider-gcp-pubsub:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-pubsub:v2.6.0 in cloud/queue/xrd/providers.yaml
+    schemas: packages/providers/gcp-pubsub/models
+    groups: [pubsub.gcp.m.upbound.io]
+    used:
+      - kind: Subscription
+        group: pubsub.gcp.m.upbound.io
+        by: [cloud/queue/gcp]
+      - kind: Topic
+        group: pubsub.gcp.m.upbound.io
+        by: [cloud/queue/gcp]
+    unused: [LiteReservation, LiteSubscription, LiteTopic, Schema, SubscriptionIAMMember,
+             TopicIAMMember]
+
+  - name: gcp-redis
+    source: ghcr.io/crossplane-contrib/provider-gcp-redis:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-redis:v2.6.0 in cloud/redis/xrd/providers.yaml
+    schemas: packages/providers/gcp-redis/models
+    groups: [redis.gcp.m.upbound.io]
+    used:
+      - kind: Instance
+        group: redis.gcp.m.upbound.io
+        by: [cloud/redis/gcp]
+    unused: [Cluster, ClusterUserCreatedConnections]
+
+  - name: gcp-sql
+    source: ghcr.io/crossplane-contrib/provider-gcp-sql:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-sql:v2.6.0 in cloud/postgres/xrd/providers.yaml
+    schemas: packages/providers/gcp-sql/models
+    groups: [sql.gcp.m.upbound.io]
+    used:
+      - kind: Database
+        group: sql.gcp.m.upbound.io
+        by: [cloud/postgres/gcp]
+      - kind: DatabaseInstance
+        group: sql.gcp.m.upbound.io
+        by: [cloud/postgres/gcp]
+      - kind: User
+        group: sql.gcp.m.upbound.io
+        by: [cloud/postgres/gcp]
+    unused: [SSLCert, SourceRepresentationInstance]
+
+  - name: gcp-storage
+    source: ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0 in cloud/bucket/xrd/providers.yaml
+    schemas: packages/providers/gcp-storage/models
+    groups: [storage.gcp.m.upbound.io]
+    used:
+      - kind: Bucket
+        group: storage.gcp.m.upbound.io
+        by: [cloud/bucket/gcp, cloud/name/gcp]
+    unused: [BucketAccessControl, BucketACL, BucketIAMMember, BucketIAMPolicy, BucketObject,
+             DefaultObjectAccessControl, DefaultObjectACL, HMACKey, ManagedFolder,
+             ManagedFolderIAMMember, Notification, ObjectAccessControl, ObjectACL]
+
+  - name: helm
+    source: ghcr.io/crossplane-contrib/provider-helm:v1.3.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-helm:v1.3.0 in cloud/cluster/xrd/providers.yaml, cloud/email/xrd/providers.yaml, cloud/kms/xrd/providers.yaml, cloud/postgres/xrd/providers.yaml, cloud/redis/xrd/providers.yaml, cloud/registry/xrd/providers.yaml
+    schemas: packages/providers/helm/models
+    groups: [helm.m.crossplane.io]
+    used:
+      - kind: ProviderConfig
+        group: helm.m.crossplane.io
+        by: [cloud/cluster/onprem]
+      - kind: Release
+        group: helm.m.crossplane.io
+        by: [cloud/cluster/onprem, cloud/email/stalwart, cloud/kms/xrd, cloud/postgres/xrd,
+             cloud/queue/xrd, cloud/redis/valkey, cloud/registry/zot]
+      - kind: ClusterProviderConfig
+        group: helm.m.crossplane.io
+        by: [cloud/email/xrd, cloud/kms/xrd, cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd,
+             cloud/registry/xrd]
+    unused: [ProviderConfigUsage]
+
+  - name: vault
+    source: xpkg.upbound.io/upbound/provider-vault:v4.0.3
+    installedBy: Provider xpkg.upbound.io/upbound/provider-vault:v4.0.3 in cloud/kms/xrd/providers.yaml
+    schemas: packages/providers/vault/models
+    groups: [transit.vault.m.upbound.io, vault.m.upbound.io, vault.vault.m.upbound.io]
+    used:
+      - kind: SecretBackendKey
+        group: transit.vault.m.upbound.io
+        by: [cloud/kms/openbao]
+      - kind: Mount
+        group: vault.vault.m.upbound.io
+        by: [cloud/kms/openbao]
+      - kind: ClusterProviderConfig
+        group: vault.m.upbound.io
+        by: [cloud/kms/xrd]
+    unused: [Audit, Policy, Token, VaultNamespace, ProviderConfig, ProviderConfigUsage]

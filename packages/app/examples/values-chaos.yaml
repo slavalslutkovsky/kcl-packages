@@ -1,0 +1,57 @@
+# Chaos engineering values (Helm-style) → app.Release with Chaos Mesh faults.
+# Renders like values-backend.yaml (`kcl run /abs/path/to/packages/app -q`)
+# plus one Chaos Mesh experiment per `chaos:` entry, each pinned to this
+# workload's own pods (app=<name> in `namespace`) — nothing else is ever
+# selected. Needs Chaos Mesh on the cluster (devkit.toml installs it).
+#
+# Without `schedule` an entry is a one-shot experiment: it starts as soon as
+# it is applied and stops after `duration`. With `schedule` (cron) it becomes a
+# Chaos Mesh Schedule that recurs. Delete the object to stop it either way.
+# Keep chaos in an overlay (values.staging.yaml) rather than the base if the
+# same values also drive production.
+
+workload:
+  name: zerg-api
+  namespace: zerg
+  component: api-server
+  image: yurikrupnik/zerg-api:latest
+  port: 8080
+  readinessProbe:
+    type: http
+    path: /ready
+    port: 8080
+  hpa:
+    minReplicas: 2
+    maxReplicas: 10
+  chaos:
+    # Kill one replica every ten minutes: exercises the HPA floor and readiness gating.
+    - name: kill-one
+      type: pod-kill
+      schedule: "*/10 * * * *"
+    # 200ms ± 50ms on all outbound traffic of one pod for two minutes.
+    - name: slow-net
+      type: delay
+      latency: 200ms
+      jitter: 50ms
+      duration: 2m
+    # Drop a quarter of the packets on half of the pods.
+    - name: lossy
+      type: loss
+      loss: "25"
+      mode: fixed-percent
+      value: "50"
+    # Cut the database off (both directions) for the default 30s.
+    - name: cut-db
+      type: partition
+      direction: both
+      externalTargets: ["postgres-rw.dbs.svc"]
+    # Two stress-ng workers at 80% of a core each, nightly at 03:00.
+    - name: hot-cpu
+      type: cpu
+      workers: 2
+      load: 80
+      schedule: "0 3 * * *"
+    # 256MB of pressure inside the container: does the limit hold?
+    - name: memory-pressure
+      type: memory
+      size: 256MB

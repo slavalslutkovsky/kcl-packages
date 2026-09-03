@@ -1,0 +1,16 @@
+apiVersion: platform.example.org/v1alpha1
+kind: Component
+metadata:
+  namespace: default              # both Flux objects are created here, unnamespaced by the module
+  name: app1                      # names the OCIRepository AND the Kustomization
+spec:
+  source:
+    kind: OCIRepository           # what `flux push artifact` produces (see `just component-push`)
+    url: oci://172.18.0.100:80/components/app1  # the in-cluster address of the kind registry
+    ref:
+      tag: v1                     # only the keys set here are forwarded to Flux
+    insecure: true                # the local kind-registry speaks plain HTTP
+    interval: 1m                  # how fast a newly pushed artifact is noticed
+  deliver:
+    kind: Kustomization           # plain YAML; kustomize-controller generates the kustomization.yaml
+    targetNamespace: default      # overrides whatever namespace the manifests declare

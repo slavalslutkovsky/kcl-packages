@@ -25,6 +25,18 @@ lol:
     nx release version patch --dry-run --first-release
 gets:
     kubectl get --raw /api/v1/pods --v=6 | jless
+
+# ─── Render locally with the kcl CLI ─────────────────────────────────────────
+#   just app <values.yaml> [env]        one app release (packages/app)
+#   just manager [values.yaml] [env]    the cluster manager (packages/manager):
+#                                       Flux-delivered charts + cluster-scope chaos
+# Both print a manifest stream: pipe into `kubectl apply -f -`. `env` picks the
+# <stem>.<env>.yaml overlay next to the values file.
+app values env="":
+    kcl run packages/app -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+manager values="packages/manager/examples/values.yaml" env="":
+    kcl run packages/manager -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
 # ─── Local platform (devkit) ──────────────────────────────────────────────────
 #
 # `just up` is the whole local platform in one command:
@@ -177,12 +189,16 @@ seed-iam-providers:
 
 # The cluster Composition also composes IAM roles on AWS (EKS cannot exist
 # without them), so it shares the aws-iam schema package with `seed-iam-providers`.
+# The onprem backend adopts an existing cluster and installs Flux/Crossplane
+# into it through provider-helm, reusing the helm schema package pinned by
+# `seed-redis-providers`.
 # Bootstrap/refresh the Kubernetes providers used by the cluster Composition.
 seed-cluster-providers:
     just provider aws-eks                ghcr.io/crossplane-contrib/provider-aws-eks:v2.6.0                eks
     just provider aws-iam                ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0                iam
     just provider gcp-container          ghcr.io/crossplane-contrib/provider-gcp-container:v2.6.0          container
     just provider azure-containerservice ghcr.io/crossplane-contrib/provider-azure-containerservice:v2.6.0 containerservice
+    just provider helm                   ghcr.io/crossplane-contrib/provider-helm:v1.3.0                   helm
 
 # Azure splits the VM (compute) from its NIC and public IP (network), so the
 # vm Composition needs both azure providers.
@@ -443,9 +459,10 @@ secrets-check *files:
     done
     exit $fail
 
-# Type-check the nx-kcl plugin (create-nodes, executors, generators).
+# Type-check the TypeScript in tools/ (the nx-kcl plugin and the bench harness).
 typecheck:
     {{ tsc }} --noEmit -p tools/nx-kcl/tsconfig.json
+    {{ tsc }} --noEmit -p tools/bench/tsconfig.json
 
 # Merge, revert and fixup!/squash! subjects are git's own wording, so they pass
 # through untouched.
@@ -538,6 +555,26 @@ kclx-install version="v0.1.0": kclx-image registry
         -l pkg.crossplane.io/function=function-kcl --ignore-not-found
     echo "function-kclx {{ version }} installed"
 
+# ─── Benchmark: function-kcl vs kclx vs function-python ───────────────────────
+#
+# The three composition-function runtimes render the SAME Compositions
+# (packages/cloud/bucket/aws and packages/platform/appstack/stack) over gRPC
+# RunFunction, plus a Python port of the bucket Composition
+# (tools/bench/scripts/bucket_aws.py). Latency is measured on the RPC — no
+# `crossplane render`, no YAML parsing, no process spawn in the sample — and the
+# desired state of every runtime is diffed against upstream function-kcl, so a
+# behavioural divergence fails the run rather than hiding behind a fast number.
+
+#   just bench --iterations 50 --only kcl,kclx --scenario bucket-aws
+# Benchmark the runtimes; writes tools/bench/out/{results.json,report.html}.
+bench *args: kclx-image
+    node tools/bench/src/main.ts {{ args }}
+
+# Screenshots it to tools/bench/out/report.png as the visual artefact.
+# Assert the benchmark report's tables against the measured data in Chromium.
+bench-verify *args:
+    node tools/bench/src/verify.ts {{ args }}
+
 # ─── End-to-end on a real cluster ─────────────────────────────────────────────
 #
 # `just e2e bucket` (or `just e2e redis`) does the whole thing: Kind cluster via
@@ -589,6 +626,36 @@ e2e-kclx: kclx-test
     # the XRD creates; deps is idempotent, so just run it again.
     devkit cluster deps || devkit cluster deps
     just e2e-status
+
+#   just component-push app1 v1
+# kustomize-controller synthesises a kustomization.yaml when the artifact has
+# none, so a bare manifest stream is enough. Pushed via {{ registry_push }}
+# (host side); the cluster pulls the same blob from {{ registry_ip }}:80, which
+# is why the example XR sets `insecure: true`.
+# Render an app values file and push it to the local registry as a Flux artifact.
+component-push name="app1" tag="v1": registry
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="tmp/components/{{ name }}"
+    mkdir -p "$dir"
+    kcl run packages/app -D values=manifests/apps/{{ name }}.yaml > "$dir/manifests.yaml"
+    flux push artifact oci://{{ registry_push }}/components/{{ name }}:{{ tag }} \
+        --path="$dir" --source=kcl-packages --revision={{ tag }}
+
+#   just e2e-component
+# The kclx cluster (Flux comes up in devkit wave 0), the `component` module's
+# Crossplane layer (waves 2-5), and the artifact its example XR pulls. Adding a
+# component after this is one `kubectl apply` of a Component XR — no Composition
+# change, no devkit row.
+# Dynamic components end-to-end on a real cluster.
+e2e-component: e2e-kclx component-push
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just e2e-publish component     # the KCL package the Composition pulls
+    # Waves 2-5 again, now that component-flux is in the registry.
+    devkit cluster deps || devkit cluster deps
+    kubectl -n default wait --for=condition=Ready component/app1 --timeout=5m
+    kubectl -n default get component,ocirepository,kustomization,helmrelease
 
 # Kind cluster (devkit) + local registry + cluster deps (Crossplane, pinned in
 # devkit.toml [[deps]]) + function runtime config.

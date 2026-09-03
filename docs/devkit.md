@@ -145,8 +145,8 @@ Keys this repo sets, and what they drive:
 | `cluster.db_workers` | `1` | One tainted database-dedicated worker. |
 | `cluster.ingress` | `true` | Passed as `-D ingress=true` to the cluster KCL package, which binds host ports 80/443. Set it to `false` if something already listens there — the flag can only force it on. |
 | `cluster.kcl_package` / `kcl_tag` | *(commented out)* | Falls back to `oci://docker.io/yurikrupnik/cluster` @ `0.0.6`. The Kind topology comes from this repo's own `packages/cluster` KCL package, rendered by `kcl run <pkg> --tag <tag>`. Uncomment and bump `kcl_tag` in step with releases of that package. |
-| `[[deps]]` waves 0–1 | n8s, web, openbao, crossplane 2.3.4, pgbouncer, openebs, vcluster, external-secrets, kubeblocks(-crds), cert-manager, flagger | The platform charts, `helm upgrade --install --wait`. |
-| `[[deps]]` waves 2–5 | `crossplane-functions`, `bucket-xrd`, `bucket-providers`, `bucket-composition-{aws,azure,gcp,rustfs}`, `bucket-examples` | The Crossplane stack under test, `kubectl apply --server-side` in dependency order. See [Waves](#waves-the-crossplane-stack-under-test). |
+| `[[deps]]` waves 0–1 | n8s, web, openbao, crossplane 2.3.4, pgbouncer, openebs, vcluster, external-secrets, kubeblocks(-crds), cert-manager, flagger, chaos-mesh, flux2 | The platform charts, `helm upgrade --install --wait`. `flux2` is here because the `component` module composes Flux objects directly, so its controllers and CRDs must predate wave 2. `chaos-mesh` is the operator behind the `app` package's `chaos:` faults (chaos-daemon pinned to Kind's containerd socket, dashboard off). |
+| `[[deps]]` waves 2–5 | `crossplane-functions`, `bucket-xrd`, `bucket-providers`, `bucket-composition-{aws,azure,gcp,rustfs}`, `bucket-examples`, `component-xrd`, `component-providers`, `component-composition-flux`, `component-examples` | The Crossplane stack under test, `kubectl apply --server-side` in dependency order. See [Waves](#waves-the-crossplane-stack-under-test). |
 | `secrets.config` / `output` | `.vals.yaml` → `.env` | Inputs to `devkit secrets fetch`. |
 | `tilt.enabled` | `true` | Whether `devkit up` starts Tilt (unused by `just e2e`). |
 | `[[endpoints]]` | Tilt UI only | Printed after `devkit up`. Replaces the default five. |
@@ -198,12 +198,12 @@ re-running it after editing a version upgrades in place.
 
 | wave | rows | why here and not earlier |
 |---|---|---|
-| 0 | the platform charts + `kubeblocks-crds` | helm runs with `--wait`, so when wave 0 finishes the crossplane deployment is up and the `pkg.crossplane.io` / `apiextensions.crossplane.io` APIs are registered |
+| 0 | the platform charts + `kubeblocks-crds` | helm runs with `--wait`, so when wave 0 finishes the crossplane deployment is up and the `pkg.crossplane.io` / `apiextensions.crossplane.io` APIs are registered. `flux2` lands here too: the `component` module composes `source.toolkit.fluxcd.io` / `kustomize.toolkit.fluxcd.io` / `helm.toolkit.fluxcd.io` objects, so those CRDs and controllers must already exist |
 | 1 | `kubeblocks` | its chart templates `lookup` the CRDs applied in wave 0 |
-| 2 | `crossplane-functions`, `bucket-xrd` | the composition functions the Compositions run, and the XRD that defines the composite API — both are instances of wave 0's Crossplane CRDs |
-| 3 | `bucket-providers` | the providers whose CRDs the composed managed resources are instances of; a wave of their own so the (slow) package pulls start before the Compositions and examples land |
-| 4 | `bucket-composition-{aws,azure,gcp,rustfs}` | a Composition's `compositeTypeRef` names wave 2's XRD API and its `functionRef` names wave 2's Functions |
-| 5 | `bucket-examples` | the "run" step: each example XR is an instance of the composite CRD Crossplane derives from wave 2's XRD, and applying it is what makes Crossplane call the function and create managed resources |
+| 2 | `crossplane-functions`, `bucket-xrd`, `component-xrd` | the composition functions the Compositions run, and the XRDs that define the composite APIs — all instances of wave 0's Crossplane CRDs |
+| 3 | `bucket-providers`, `component-providers` | the providers whose CRDs the composed managed resources are instances of; a wave of their own so the (slow) package pulls start before the Compositions and examples land. `component-providers` installs no provider at all — it is the `rbac.crossplane.io/aggregate-to-crossplane` ClusterRole without which Crossplane may not compose Flux kinds |
+| 4 | `bucket-composition-{aws,azure,gcp,rustfs}`, `component-composition-flux` | a Composition's `compositeTypeRef` names wave 2's XRD API and its `functionRef` names wave 2's Functions |
+| 5 | `bucket-examples`, `component-examples` | the "run" step: each example XR is an instance of the composite CRD Crossplane derives from wave 2's XRD, and applying it is what makes Crossplane call the function and create managed resources. The `component` examples additionally need the OCI artifact they point at — `just component-push` |
 
 Wave 0 is load-bearing in a way the later waves are not: helm's `--wait` is the
 only synchronisation in the whole sequence. Waves 2–5 are `kubectl apply
@@ -212,7 +212,7 @@ only synchronisation in the whole sequence. Waves 2–5 are `kubectl apply
 #### What devkit applies, and what `just` has to build first
 
 `devkit cluster deps` only applies. It cannot build an image, side-load one into
-Kind, build or push an xpkg, or publish a KCL package, so three artefacts must
+Kind, build or push an xpkg, or publish a KCL package, so these artefacts must
 already exist by the time it runs:
 
 | artefact | produced by | consumed by |
@@ -220,6 +220,7 @@ already exist by the time it runs:
 | the `kind-registry` container, joined to the docker `kind` network (`kind-registry:80` in-cluster, `localhost:5001` from the host) | `just registry` | everything below |
 | `function-kclx-runtime:dev` in the Kind nodes' image store, and the xpkg at `172.18.0.100:80/function-kclx:v0.1.0` | `just kclx-install` | wave 2, via `manifests/crossplane/functions.yaml` |
 | the module's published KCL packages and the mirrored `k8s` schema package | `just e2e-publish bucket` (which runs `registry-seed-k8s` first) | wave 4's Compositions, pulled by the function at render time |
+| the OCI artifact a `Component` XR pulls (`172.18.0.100:80/components/app1:v1`) | `just component-push app1 v1` | wave 5's `component-examples`, pulled by the Flux source-controller |
 
 Wave 4 applies the **committed** Composition files, untouched: `spec.source`
 still reads `oci://docker.io/yurikrupnik/bucket-gcp?tag=0.1.0`. Nothing rewrites

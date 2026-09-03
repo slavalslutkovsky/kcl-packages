@@ -1,0 +1,31 @@
+# Cluster prerequisites for the Component Composition.
+#
+# NOT a Provider manifest — there is no Crossplane provider here to install.
+# The Composition composes FluxCD objects (source.toolkit.fluxcd.io,
+# kustomize.toolkit.fluxcd.io, helm.toolkit.fluxcd.io) directly, exactly as the
+# cnpg postgres backend composes a postgresql.cnpg.io Cluster; the controllers
+# that reconcile them come from the flux2 helm chart, installed alongside
+# Crossplane rather than by it.
+#
+# What IS needed is permission. Crossplane's own ServiceAccount is granted
+# rights over composed kinds by the rbac-manager, which aggregates every
+# ClusterRole labelled rbac.crossplane.io/aggregate-to-crossplane=true. CRDs
+# installed by a Crossplane package get that automatically; CRDs installed by a
+# helm chart do not, so composing a Flux kind fails with a forbidden error
+# until this ClusterRole exists.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: flux:aggregate-to-crossplane
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups: [source.toolkit.fluxcd.io]
+    resources: [ocirepositories, gitrepositories, helmrepositories]
+    verbs: ["*"]
+  - apiGroups: [kustomize.toolkit.fluxcd.io]
+    resources: [kustomizations]
+    verbs: ["*"]
+  - apiGroups: [helm.toolkit.fluxcd.io]
+    resources: [helmreleases]
+    verbs: ["*"]

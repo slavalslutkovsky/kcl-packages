@@ -47,6 +47,10 @@
       "type": "boolean",
       "description": "Print the full XR spec and metadata (crossplane render --include-full-xr).",
       "default": false
+    },
+    "requiredResources": {
+      "type": "string",
+      "description": "YAML file or directory of cluster objects to mock for a Composition that asks Crossplane to fetch them (crossplane render --required-resources). Defaults to <xrdDir>/required-resources when that directory exists; an explicit path that does not exist is an error."
     }
   },
   "additionalProperties": false

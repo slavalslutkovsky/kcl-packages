@@ -1,0 +1,88 @@
+# The paid-feature record, one per tenant namespace.
+#
+# A plain CustomResourceDefinition and NOT an XRD, deliberately: an Entitlement
+# is an *input* to composition, never something Crossplane composes. Giving it
+# an XRD would demand a Composition, and an XR with no Composition sits
+# permanently unsynced.
+#
+# Cluster-scoped, because the tenant must not be able to write its own
+# entitlement: a namespaced record would live inside the namespace it grants,
+# and anyone with edit rights there could upgrade their own plan. Whatever owns
+# billing writes these; nothing in this repo creates one.
+#
+# `metadata.name` MUST equal the tenant's namespace. That is the join key the
+# Composition uses (`packages/platform/entitlement/lib.k` `request()` asks for
+# the record named after the XR's namespace), and Crossplane fetches it by name.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: entitlements.platform.example.org
+spec:
+  group: platform.example.org
+  scope: Cluster
+  names:
+    kind: Entitlement
+    listKind: EntitlementList
+    plural: entitlements
+    singular: entitlement
+    shortNames: [ent]
+    categories: [crossplane]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: What one tenant namespace has paid for.
+          properties:
+            spec:
+              type: object
+              properties:
+                plan:
+                  type: string
+                  enum: [free, team, enterprise]
+                  default: free
+                  description: |
+                    Informational, and the input to `entitlement.at_least()` for
+                    capabilities whose SHAPE differs by plan. It does NOT grant
+                    anything on its own — `features` is the only authority, so
+                    adding a capability to a plan can never retroactively
+                    entitle a tenant that did not buy it.
+                features:
+                  type: array
+                  default: []
+                  items: {type: string}
+                  description: |
+                    Feature keys this tenant may compose. A Composition asks for
+                    exactly one key (`entitlement.resolve(params, oxr, "forgejo")`)
+                    and fails the render with a named fatal result when the key
+                    is absent. Keys in use: `forgejo` (a Forge instance),
+                    `repository` (objects inside a forge).
+                quota:
+                  type: object
+                  default: {}
+                  additionalProperties: {type: integer}
+                  description: |
+                    Numeric caps per key, enforced by `entitlement.within_quota()`.
+                    An absent key means the capability's own default applies.
+                    Keys in use: `repositories`.
+                reference:
+                  type: string
+                  description: Opaque handle into the billing system (subscription id, customer id) — carried for support, never read by a Composition.
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              description: Free-form, written by the billing system if it wants to record sync state. No Composition reads it.
+      additionalPrinterColumns:
+        - name: PLAN
+          type: string
+          jsonPath: .spec.plan
+        - name: FEATURES
+          type: string
+          jsonPath: .spec.features
+        - name: AGE
+          type: date
+          jsonPath: .metadata.creationTimestamp

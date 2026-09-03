@@ -1,4 +1,8 @@
 [dependencies]
+  [dependencies.chaos-mesh]
+    name = "chaos-mesh"
+    full_name = "chaos-mesh_0.0.1"
+    version = "0.0.1"
   [dependencies.external-secrets]
     name = "external-secrets"
     full_name = "external-secrets_0.18.2"

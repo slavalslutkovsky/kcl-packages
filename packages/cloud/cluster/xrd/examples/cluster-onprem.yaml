@@ -1,0 +1,25 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: KubernetesCluster
+metadata:
+  namespace: default
+  name: web-cluster
+spec:
+  region: dc1                        # a site label; the cluster is wherever the kubeconfig points
+  kubeconfigSecret: web-cluster-kubeconfig  # Secret in this namespace, key `kubeconfig`
+  bootstrap:
+    flux:                            # fluxcd-community flux2 chart -> flux-system
+      enabled: true
+    crossplane:                      # crossplane chart -> crossplane-system
+      enabled: true
+    sync:                            # flux2-sync: GitRepository + Kustomization, once Flux is up
+      url: https://github.com/example/fleet
+      branch: main
+      path: ./clusters/web-cluster
+      # secretRef: fleet-auth        # Git credentials Secret in the adopted cluster's flux-system
+  deletionPolicy: Delete             # Orphan keeps Flux/Crossplane installed when the XR goes
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: onprem

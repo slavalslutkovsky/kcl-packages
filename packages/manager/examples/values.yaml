@@ -1,0 +1,117 @@
+# Cluster manager values → manager.Manager. Render with
+#   kcl run /abs/path/to/packages/manager -D values=<this file> -q | kubectl apply -f -
+# Three concerns in one file: the platform charts Flux should keep installed,
+# cluster-scope chaos experiments, and orchestrated chaos runs (Workflows).
+#
+# Flux must already be on the cluster (devkit.toml installs it). Do not list a
+# chart here that devkit.toml also installs: helm-controller would take over
+# the same release and the two would fight.
+
+name: platform
+namespace: flux-system            # where the HelmRepository / HelmRelease objects live
+
+dependencies:
+  # The operator behind `app`'s `chaos:` faults and everything under chaos: below.
+  - name: chaos-mesh
+    repo: https://charts.chaos-mesh.org
+    version: 2.8.4
+    namespace: chaos-mesh
+    values:                       # same settings as the devkit.toml row, as a values map
+      chaosDaemon:
+        runtime: containerd
+        socketPath: /run/containerd/containerd.sock
+      dashboard:
+        create: false
+  # The operator behind `app`'s `scaler:` (ScaledObject).
+  - name: keda
+    repo: https://kedacore.github.io/charts
+    version: 2.17.2
+    namespace: keda
+  # An OCI-hosted chart, and a dependency edge: helm-controller installs it
+  # only once keda is Ready (devkit.toml's `wave`, per chart). `install` /
+  # `upgrade` are HelmRelease.spec fields as-is (typed by the Flux CRD schema),
+  # merged over the manager defaults; this chart ships CRDs that must be
+  # replaced on upgrade.
+  - name: kube-prometheus-stack
+    repo: oci://ghcr.io/prometheus-community/charts
+    version: 77.5.0
+    namespace: monitoring
+    dependsOn: [keda]
+    install: {crds: CreateReplace}
+    upgrade: {crds: CreateReplace}
+
+chaos:
+  namespace: chaos-mesh           # where the experiments / Workflows are created
+  paused: false                   # true → every experiment and Schedule below is applied paused
+  namespaces: [zerg, dbs]         # labelled chaos-mesh.org/inject=enabled
+
+  # Cluster-scope experiments: an `app` fault with an explicit target.
+  experiments:
+    # Kill one random backend pod anywhere in zerg every hour.
+    - name: zerg-random-kill
+      type: pod-kill
+      target:
+        namespaces: [zerg]
+        labels: {app.kubernetes.io/component: api-server}
+      schedule: "0 * * * *"
+    # 512MB of memory pressure on every Running pod on one node, for 5 minutes.
+    - name: node-memory-pressure
+      type: memory
+      mode: all
+      size: 512MB
+      workers: 2
+      duration: 5m
+      target:
+        namespaces: [zerg, dbs]
+        nodes: [kcl-e2e-worker]
+        phases: [Running]
+    # 10% packet loss between zerg and the database namespace's Postgres.
+    - name: zerg-db-loss
+      type: loss
+      loss: "10"
+      mode: fixed-percent
+      value: "30"
+      duration: 2m
+      externalTargets: [postgres-rw.dbs.svc]
+      target:
+        namespaces: [zerg]
+
+  # Managed runs: several faults under one deadline, one Workflow object.
+  workflows:
+    - name: game-day
+      deadline: 30m
+      pauseBetween: 5m            # Suspend between serial steps
+      target:
+        namespaces: [zerg]
+      steps:
+        - name: kill-half
+          type: pod-kill
+          mode: fixed-percent
+          value: "50"
+        - name: cut-db
+          type: partition
+          direction: both
+          externalTargets: [postgres-rw.dbs.svc]
+          duration: 2m
+        - name: cpu-burn
+          type: cpu
+          workers: 4
+          load: 90
+          duration: 3m
+          target:                 # a step may narrow the workflow target
+            namespaces: [zerg]
+            labels: {app: zerg-api}
+    - name: everything-at-once
+      parallel: true
+      deadline: 10m
+      target:
+        namespaces: [zerg]
+      steps:
+        - name: latency
+          type: delay
+          latency: 300ms
+          duration: 5m
+        - name: memory
+          type: memory
+          size: 256MB
+          duration: 5m

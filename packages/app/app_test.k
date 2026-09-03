@@ -227,6 +227,15 @@ test_examples_valid = lambda {
     cli = Release {**yaml.decode(file.read("examples/values-cli.yaml"))}
     assert renderRelease(cli)[0].kind == "Job", "cli example (no schedule) → Job"
     assert cli.task.command == ["/app/migrate"]
+
+    ch = Release {**yaml.decode(file.read("examples/values-chaos.yaml"))}
+    assert [m.kind for m in renderRelease(ch)] == ["Deployment", "Service", "HorizontalPodAutoscaler", "Schedule", "NetworkChaos", "NetworkChaos", "NetworkChaos", "Schedule", "StressChaos"], "chaos example → core + one Chaos Mesh object per fault"
+
+    wk = Release {**yaml.decode(file.read("examples/values-worker.yaml"))}
+    wkOut = renderRelease(wk)
+    assert [m.kind for m in wkOut] == ["Deployment", "ScaledObject", "ConfigMap"], "worker example → Deployment (no Service) + KEDA ScaledObject + ConfigMap"
+    assert wkOut[0].spec?.replicas == Undefined, "worker Deployment leaves replicas to KEDA"
+    assert wkOut[1].spec.minReplicaCount == 0 and wkOut[1].spec.triggers[0].$type == "nats-jetstream"
 }
 
 # ── Release: whole-app values.yaml → workload + config + externalSecret ───────
@@ -372,6 +381,9 @@ test_scaler_or_hpa_valid_paths = lambda {
     assert [m.kind for m in render(wh)][2] == "HorizontalPodAutoscaler", "hpa path"
     ws = Workload {name = "x", image = "i", port = 8080, scaler = {cpu = 70}}
     assert [m.kind for m in render(ws)][2] == "ScaledObject", "scaler path"
+    # idleReplicas → idleReplicaCount (0 is a real value, not "unset")
+    wi = Workload {name = "x", image = "i", port = 8080, scaler = {cpu = 70, minReplicas = 1, idleReplicas = 0}}
+    assert render(wi)[2].spec.idleReplicaCount == 0, "idleReplicas 0 is emitted"
 }
 
 # mutual exclusion (hpa AND scaler) is enforced by the schema `check` block.
@@ -392,6 +404,138 @@ test_replicas_ownership = lambda {
     assert deps.spec?.replicas == Undefined, "scaler → spec.replicas omitted"
 }
 
+# ── Chaos Mesh faults: one experiment per fault, pinned to this workload ──────
+test_chaos_one_shot = lambda {
+    w = Workload {**yaml.decode("""\
+name: zerg-api
+namespace: zerg
+image: yurikrupnik/zerg-api:latest
+chaos:
+  - name: kill
+    type: pod-kill
+  - name: flaky
+    type: pod-failure
+    duration: 1m
+    mode: fixed-percent
+    value: "50"
+  - name: restart
+    type: container-kill
+    containerNames: [zerg-api]
+  - name: slow
+    type: delay
+    latency: 200ms
+    jitter: 50ms
+    correlation: "25"
+    externalTargets: [postgres-rw.dbs.svc]
+  - name: lossy
+    type: loss
+    loss: "30"
+  - name: cut
+    type: partition
+    direction: both
+    externalTargets: [postgres-rw.dbs.svc]
+  - name: cpu
+    type: cpu
+    workers: 2
+    load: 80
+  - name: mem
+    type: memory
+    size: 256MB
+""")}
+    out = render(w)
+    kinds = [m.kind for m in out]
+    assert kinds == ["Deployment", "Service", "PodChaos", "PodChaos", "PodChaos", "NetworkChaos", "NetworkChaos", "NetworkChaos", "StressChaos", "StressChaos"], "one object per fault, after the core resources: ${kinds}"
+    faults = out[2::]
+    # every experiment is namespaced with the workload and selects only its pods
+    assert all_true([f.apiVersion == "chaos-mesh.org/v1alpha1" for f in faults])
+    assert all_true([f.metadata.namespace == "zerg" for f in faults]), "every fault in the workload namespace"
+    assert all_true([f.metadata.labels["app.kubernetes.io/name"] == "zerg-api" for f in faults])
+    assert all_true([f.spec.selector.namespaces == ["zerg"] for f in faults]), "every selector pinned to the namespace"
+    assert all_true([f.spec.selector.labelSelectors == {app = "zerg-api"} for f in faults]), "every selector pinned to the workload"
+    names = [f.metadata.name for f in faults]
+    assert names == ["zerg-api-kill", "zerg-api-flaky", "zerg-api-restart", "zerg-api-slow", "zerg-api-lossy", "zerg-api-cut", "zerg-api-cpu", "zerg-api-mem"], "named <workload>-<fault>: ${names}"
+
+    kill = faults[0]
+    assert kill.spec.action == "pod-kill" and kill.spec.mode == "one"
+    assert kill.spec?.duration == Undefined, "pod-kill is instantaneous: no duration"
+    flaky = faults[1]
+    assert flaky.spec.action == "pod-failure" and flaky.spec.duration == "1m"
+    assert flaky.spec.mode == "fixed-percent" and flaky.spec.value == "50"
+    assert faults[2].spec.action == "container-kill" and faults[2].spec.containerNames == ["zerg-api"]
+
+    slow = faults[3]
+    assert slow.spec.action == "delay" and slow.spec.direction == "to" and slow.spec.duration == "30s"
+    assert slow.spec.delay.latency == "200ms" and slow.spec.delay.jitter == "50ms" and slow.spec.delay.correlation == "25"
+    assert slow.spec.externalTargets == ["postgres-rw.dbs.svc"]
+    lossy = faults[4]
+    assert lossy.spec.action == "loss" and lossy.spec.loss.loss == "30" and lossy.spec.loss?.correlation == Undefined
+    assert lossy.spec?.delay == Undefined and lossy.spec?.externalTargets == Undefined
+    cut = faults[5]
+    assert cut.spec.action == "partition" and cut.spec.direction == "both"
+    assert cut.spec?.delay == Undefined and cut.spec?.loss == Undefined
+
+    cpu = faults[6]
+    assert cpu.spec.stressors.cpu.workers == 2 and cpu.spec.stressors.cpu.load == 80
+    assert cpu.spec.stressors?.memory == Undefined
+    mem = faults[7]
+    assert mem.spec.stressors.memory.workers == 1 and mem.spec.stressors.memory.size == "256MB"
+    assert mem.spec.stressors?.cpu == Undefined
+}
+
+test_chaos_schedule = lambda {
+    w = Workload {**yaml.decode("""\
+name: zerg-api
+namespace: zerg
+image: yurikrupnik/zerg-api:latest
+chaos:
+  - name: kill
+    type: pod-kill
+    schedule: "*/10 * * * *"
+  - name: slow
+    type: delay
+    schedule: "0 3 * * *"
+    concurrencyPolicy: Allow
+    historyLimit: 5
+  - name: cpu
+    type: cpu
+    schedule: "0 4 * * *"
+""")}
+    out = render(w)
+    scheds = out[2::]
+    assert [m.kind for m in scheds] == ["Schedule", "Schedule", "Schedule"], "schedule → Schedule, whatever the fault type"
+    kill = scheds[0]
+    assert kill.spec.schedule == "*/10 * * * *" and kill.spec.$type == "PodChaos"
+    assert kill.spec.concurrencyPolicy == "Forbid" and kill.spec.historyLimit == 1
+    assert kill.spec.podChaos.action == "pod-kill"
+    assert kill.spec.podChaos.selector.namespaces == ["zerg"], "embedded spec keeps the pinned selector"
+    assert kill.spec?.networkChaos == Undefined and kill.spec?.stressChaos == Undefined
+    slow = scheds[1]
+    assert slow.spec.$type == "NetworkChaos" and slow.spec.networkChaos.delay.latency == "100ms"
+    assert slow.spec.concurrencyPolicy == "Allow" and slow.spec.historyLimit == 5
+    assert scheds[2].spec.$type == "StressChaos" and scheds[2].spec.stressChaos.stressors.cpu.load == 100
+}
+
+test_chaos_release_order = lambda {
+    # faults sit between the autoscaler and the Release-level ConfigMap/ExternalSecret
+    r = Release {**yaml.decode("""\
+workload:
+  name: zerg-api
+  namespace: zerg
+  image: yurikrupnik/zerg-api:latest
+  scaler:
+    cpu: 70
+  chaos:
+    - name: kill
+      type: pod-kill
+config:
+  PORT: "8080"
+""")}
+    kinds = [m.kind for m in renderRelease(r)]
+    assert kinds == ["Deployment", "Service", "ScaledObject", "PodChaos", "ConfigMap"], "release with chaos: ${kinds}"
+}
+
+# invalid faults (no namespace, fixed mode without value, delay with direction
+# from, duplicate names) are rejected by the schema `check` blocks.
 test_backend()
 test_frontend()
 test_task_job()
@@ -405,3 +549,6 @@ test_scaler_cpu_mem()
 test_scaler_scale_to_zero()
 test_scaler_or_hpa_valid_paths()
 test_replicas_ownership()
+test_chaos_one_shot()
+test_chaos_schedule()
+test_chaos_release_order()

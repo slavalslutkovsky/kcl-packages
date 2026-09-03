@@ -1,0 +1,16 @@
+apiVersion: platform.example.org/v1alpha1
+kind: Component
+metadata:
+  namespace: default              # the OCIRepository and the HelmRelease both land here
+  name: podinfo                   # names both, and is what a sibling's spec.dependsOn would point at
+spec:
+  source:
+    kind: OCIRepository           # an OCI-packaged chart, not an artifact of manifests
+    url: oci://ghcr.io/stefanprodan/charts/podinfo  # public registry, so no secretRef
+    ref:
+      semver: ">=6.0.0 <7.0.0"    # newest 6.x, re-resolved on every source interval
+  deliver:
+    kind: HelmRelease             # -> source gets a layerSelector, release gets a chartRef
+    targetNamespace: default      # where the chart's own resources are created
+    values:
+      replicaCount: 1             # free-form, passed through verbatim as spec.values

@@ -30,6 +30,11 @@ db_workers = 1              # tainted db-dedicated workers
 ingress = true        # binds host ports 80/443 on the control plane
 #kcl_package = "oci://docker.io/yurikrupnik/cluster"
 #kcl_tag = "0.0.6"
+
+[cluster.kcl_args]      # MUST sit directly after [cluster]'s scalar keys
+oidc_bucket = "my-oidc-bucket"
+oidc_id = "arus-dev"
+
 [secrets]
 config = ".vals.yaml"       # vals config file
 output = ".env"
@@ -143,6 +148,43 @@ repo = "https://flagger.app"
 version = "1.44.0"
 namespace = "flagger"
 
+# Chaos Mesh — the operator behind the app package's `chaos:` faults
+# (packages/app renders chaos-mesh.org PodChaos / NetworkChaos / StressChaos /
+# Schedule). Chart 2.8.4 is Chaos Mesh v2.8.4, the ref the
+# packages/providers/chaos-mesh schema package was generated from; keep them in
+# step. Kind nodes run containerd, and chaos-daemon must talk to that socket
+# to kill containers / shape their network. The dashboard is off: nothing here
+# uses it and it is a pod.
+[[deps]]
+name = "chaos-mesh"
+repo = "https://charts.chaos-mesh.org"
+version = "2.8.4"
+namespace = "chaos-mesh"
+set = [
+    "chaosDaemon.runtime=containerd",
+    "chaosDaemon.socketPath=/run/containerd/containerd.sock",
+    "dashboard.create=false",
+]
+
+# Flux itself — not a Crossplane provider. The `component` module composes
+# source.toolkit.fluxcd.io / kustomize.toolkit.fluxcd.io / helm.toolkit.fluxcd.io
+# objects directly, so these controllers and their CRDs must exist before its
+# XRD (wave 2) is of any use. Chart 2.19.0 is Flux 2.9.1: source-controller
+# v1.9.2, kustomize-controller v1.9.2, helm-controller v1.6.2 — the refs the
+# packages/providers/flux-* schema packages were generated from. Keep them in
+# step. The image automation, reflection and notification controllers are off:
+# nothing here uses them and each one is a pod.
+[[deps]]
+name = "flux2"
+repo = "https://fluxcd-community.github.io/helm-charts"
+version = "2.19.0"
+namespace = "flux-system"
+set = [
+    "imageAutomationController.create=false",
+    "imageReflectionController.create=false",
+    "notificationController.create=false",
+]
+
 # ─── Crossplane stack under test (waves 2-5) ──────────────────────────────────
 #
 # Wave 0 above brings up the crossplane chart itself (helm --wait), so from
@@ -202,6 +244,31 @@ wave = 4
 [[deps]]
 name = "bucket-examples"
 manifest = "packages/cloud/bucket/xrd/examples/"
+wave = 5
+
+# The `component` module: one namespaced XR per deployable component, composed
+# into a Flux source + Kustomization/HelmRelease pair. providers.yaml here is
+# not a Provider — it is the aggregated ClusterRole that lets Crossplane compose
+# Flux kinds at all. The example XR pulls the artifact `just component-push`
+# pushes to the local registry.
+[[deps]]
+name = "component-xrd"
+manifest = "packages/platform/component/xrd/xrd.yaml"
+wave = 2
+
+[[deps]]
+name = "component-providers"
+manifest = "packages/platform/component/xrd/providers.yaml"
+wave = 3
+
+[[deps]]
+name = "component-composition-flux"
+manifest = "packages/platform/component/flux/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "component-examples"
+manifest = "packages/platform/component/xrd/examples/"
 wave = 5
 
 [tilt]

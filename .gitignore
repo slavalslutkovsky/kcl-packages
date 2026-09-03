@@ -10,5 +10,7 @@ oci/
 # scratch dir: `just seed-queue-providers` downloads CRDs here
 tmp/
 .task
+# benchmark artefacts: `just bench` writes results.json/report.html/report.png
+tools/bench/out/
 # Rust build output (`rust/Cargo.lock` is committed on purpose)
 rust/target/

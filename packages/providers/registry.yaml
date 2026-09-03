@@ -26,8 +26,9 @@
 #   install   package ref installed as a pkg.crossplane.io Provider.
 #             Omitted  -> "<image>:<tag>". "none" -> nothing is installed
 #             (the CRDs come from an operator, not a Crossplane provider).
-#   modules   cloud modules whose Compositions render against it; [] means the
-#             schemas are generated and available but not wired into an XRD yet
+#   modules   modules whose renderers compose it: a cloud module
+#             (packages/cloud/<module>) or a top-level package such as `app`;
+#             [] means the schemas are generated and available but not wired in yet
 #   notes     why this row looks the way it does
 version: 1
 
@@ -354,15 +355,17 @@ providers:
     service: helm
     image: ghcr.io/crossplane-contrib/provider-helm
     tag: v1.3.0
-    modules: [email, kms, postgres, redis, registry]
+    modules: [cluster, email, forge, kms, postgres, redis, registry]
     notes: >-
       Must be v1.x — the first line that ships the namespaced
       helm.m.crossplane.io CRDs the Compositions render. Backs the stalwart
       (email), valkey (redis) and zot (registry) charts, installs the
-      CloudNativePG operator for the cnpg postgres backend, and installs the
-      OpenBao server the openbao kms backend keys live in. Its manifests in
-      xrd/providers.yaml carry the extra ServiceAccount / ClusterRoleBinding /
-      DeploymentRuntimeConfig the chart installs need.
+      CloudNativePG operator for the cnpg postgres backend, installs the
+      OpenBao server the openbao kms backend keys live in, and bootstraps
+      FluxCD/Crossplane into adopted clusters for the onprem cluster backend
+      (through a per-XR ProviderConfig carrying the cluster's kubeconfig). Its
+      manifests in xrd/providers.yaml carry the extra ServiceAccount /
+      ClusterRoleBinding / DeploymentRuntimeConfig the chart installs need.
 
   - name: vault
     cloud: kubernetes
@@ -379,6 +382,28 @@ providers:
       its `operator init` and its unseal are prerequisites, exactly like the
       cnpg operator (see kms/xrd/providerconfigs.yaml). `kcl import` buckets
       the v1alpha1 schemas under models/unknown/.
+
+  - name: http
+    cloud: kubernetes
+    service: http
+    image: xpkg.crossplane.io/crossplane-contrib/provider-http
+    tag: v1.0.15
+    install: xpkg.crossplane.io/crossplane-contrib/provider-http:v1.0.15
+    modules: [repository]
+    notes: >-
+      A GENERIC HTTP provider, driving the Forgejo REST API directly, because
+      no maintained typed Forgejo/Gitea Crossplane provider exists:
+      arch-err/provider-forgejo's controller.Setup returns nil (it registers no
+      reconciler, so its CRDs never move), rossigee/provider-gitea is
+      single-maintainer, amd64-only and vendors a forked crossplane-runtime,
+      and crossplane-contrib/provider-jet-gitea has been archived since the
+      Terrajet era. The repository module therefore composes
+      http.m.crossplane.io Requests whose four jq mappings (CREATE / OBSERVE /
+      UPDATE / REMOVE) are the Forgejo v1 API calls. `service: http` is the API
+      GROUP prefix, not a kind: image-sourced rows filter CRDs on
+      `.spec.group | test("^<service>\.")`, and the whole group is one
+      provider. Distributed on xpkg.crossplane.io only — it has no ghcr.io
+      mirror.
 
   - name: cnpg
     cloud: kubernetes
@@ -410,3 +435,68 @@ providers:
       have Knative Serving installed at this ref. The CRD list is explicit
       because the other files in that directory are git symlinks into vendor/
       (unreadable via raw.githubusercontent) or internal API groups.
+
+  - name: flux-source
+    cloud: kubernetes
+    service: source
+    repo: fluxcd/source-controller
+    ref: v1.9.2
+    crdPath: config/crd/bases
+    scope: cluster
+    install: none
+    modules: [component, manager]
+    notes: >-
+      Flux source-controller CRDs (OCIRepository, GitRepository,
+      HelmRepository), not a Crossplane provider: the component module composes
+      a namespaced source.toolkit.fluxcd.io/v1 object directly. Flux itself is
+      installed by the flux2 helm chart — keep `ref` in step with the
+      source-controller shipped by the chart version pinned there.
+
+  - name: flux-kustomize
+    cloud: kubernetes
+    service: kustomize
+    repo: fluxcd/kustomize-controller
+    ref: v1.9.2
+    crdPath: config/crd/bases
+    scope: cluster
+    install: none
+    modules: [component]
+    notes: >-
+      Flux kustomize-controller CRD (Kustomization) — the delivery half of the
+      component module. Same deal as flux-source: installed by the flux2 chart,
+      never by Crossplane.
+
+  - name: flux-helm
+    cloud: kubernetes
+    service: helm
+    repo: fluxcd/helm-controller
+    ref: v1.6.2
+    crdPath: config/crd/bases
+    scope: cluster
+    install: none
+    modules: [component, manager]
+    notes: >-
+      Flux helm-controller CRD (HelmRelease) — the chart-shaped delivery half
+      of the component module. The helm-controller versions independently of
+      the source and kustomize controllers, hence the different `ref`.
+
+  - name: chaos-mesh
+    cloud: kubernetes
+    service: chaos-mesh
+    repo: chaos-mesh/chaos-mesh
+    ref: v2.8.4
+    crdPath: config/crd/bases
+    scope: cluster
+    install: none
+    modules: [app, manager]
+    notes: >-
+      Operator CRDs, not a Crossplane provider: the app package renders
+      chaos-mesh.org/v1alpha1 PodChaos / NetworkChaos / StressChaos (or a
+      Schedule wrapping one) directly against a Workload's own pods, and the
+      manager package renders the same kinds with a free selector plus
+      Workflows for orchestrated runs. Chaos
+      Mesh itself is installed by the chaos-mesh helm chart in devkit.toml —
+      keep `ref` in step with the chart version pinned there. `service` is
+      the API group: every CRD file is chaos-mesh.org_<plural>.yaml, so the
+      whole group is imported; packages/providers/crds.yaml says which kinds
+      are rendered.

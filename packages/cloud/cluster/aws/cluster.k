@@ -46,6 +46,7 @@ render = lambda oxr, ocds {
 
     _subnets = _spec?.network?.subnets or []
     assert len(_subnets) > 0, "cluster-aws: spec.network.subnets is required — an EKS cluster cannot exist without subnets"
+    assert not _spec?.kubeconfigSecret and not _spec?.bootstrap, "cluster-aws: spec.kubeconfigSecret and spec.bootstrap are onprem-only — a provisioned cluster publishes its own kubeconfig (status.kubeconfigSecret) and is handed over bare"
 
     _count = _spec?.nodeCount or 2
     _as = _spec?.autoscaling

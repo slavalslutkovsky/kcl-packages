@@ -12,6 +12,14 @@ import {
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
+/**
+ * The `k8s` schema package version every generated provider package depends on.
+ * Keep it in step with the justfile `registry-seed-k8s` mirror: a Composition
+ * rendered in-cluster resolves this dependency from the local registry, so a
+ * package pinned at anything else fails with `package 'k8s:<v>' not found`.
+ */
+const K8S_SCHEMA_VERSION = '1.32.4';
+
 export interface ImportCrdGeneratorSchema {
   name: string;
   directory?: string;
@@ -288,11 +296,20 @@ export default async function importCrdGenerator(
     rmSync(join(pkgAbs, 'models', 'kcl.mod'), { force: true });
     rmSync(join(pkgAbs, 'models', 'kcl.mod.lock'), { force: true });
 
-    // Generated CRD schemas import the `k8s` module (for ObjectMeta).
+    // Generated CRD schemas import the `k8s` module (for ObjectMeta). Pin it:
+    // a bare `kcl mod add k8s` takes whatever is newest the day the package is
+    // generated, which then fails to resolve on a cluster whose registry only
+    // mirrors the version the rest of the repo uses (justfile
+    // `registry-seed-k8s`). Every provider package must agree on this.
     try {
-      execFileSync('kcl', ['mod', 'add', 'k8s'], { cwd: pkgAbs, stdio: 'inherit' });
+      execFileSync('kcl', ['mod', 'add', `k8s:${K8S_SCHEMA_VERSION}`], {
+        cwd: pkgAbs,
+        stdio: 'inherit',
+      });
     } catch {
-      logger.warn(`Could not add the k8s dependency; run \`nx run ${name}:add k8s\`.`);
+      logger.warn(
+        `Could not add the k8s dependency; run \`nx run ${name}:add k8s:${K8S_SCHEMA_VERSION}\`.`
+      );
     }
 
     if (tmp) rmSync(tmp, { recursive: true, force: true });

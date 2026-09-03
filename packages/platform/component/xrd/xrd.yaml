@@ -1,0 +1,194 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: components.platform.example.org
+spec:
+  scope: Namespaced
+  group: platform.example.org
+  names:
+    kind: Component
+    plural: components
+  # One implementation (FluxCD), so a Component never has to select a backend.
+  defaultCompositionRef:
+    name: component-flux
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                One deployable component of the platform: WHERE its manifests
+                come from (an OCI artifact, a Git repository or a Helm
+                repository) and HOW they are applied (a Kustomization or a
+                HelmRelease).
+
+                Unlike the cloud.example.org capabilities this XR composes no
+                cloud resources and no managed resources at all — it composes
+                two FluxCD objects directly, in the XR's own namespace, and lets
+                the Flux controllers do the pulling, the diffing and the
+                pruning. Adding a component to a cluster is therefore a single
+                namespaced XR, with no Composition edit and no new module.
+
+                The split is deliberate: the source half is a cache of remote
+                content that many things may read, the delivery half is the
+                thing that owns cluster state. Both are named after the XR, so
+                spec.dependsOn can point at sibling Components by their XR name.
+              properties:
+                source:
+                  type: object
+                  description: |
+                    Where the component's manifests or chart come from — one
+                    source.toolkit.fluxcd.io/v1 object, named after this XR.
+
+                    Only the fields every source kind shares are modelled here;
+                    authentication beyond a single Secret (workload identity,
+                    proxies, signature verification) is deliberately not
+                    exposed, since it would leak Flux's full API surface into
+                    the platform contract.
+                  properties:
+                    kind:
+                      type: string
+                      enum: [OCIRepository, GitRepository, HelmRepository]
+                      default: OCIRepository
+                      description: |
+                        Which Flux source kind to create. OCIRepository pulls an
+                        OCI artifact (what `flux push artifact` produces) or an
+                        OCI-packaged Helm chart; GitRepository clones a branch,
+                        tag or semver range; HelmRepository indexes a classic
+                        or OCI Helm repository and only makes sense with
+                        deliver.kind HelmRelease.
+                    url:
+                      type: string
+                      description: 'Source URL, in the scheme its kind demands: oci:// for OCIRepository, http(s):// or ssh:// for GitRepository, http(s):// or oci:// for HelmRepository.'
+                    ref:
+                      type: object
+                      default: {}
+                      description: Which revision to track. Only the fields set here are forwarded, so Flux applies its own precedence (digest > semver > tag for OCI, name > tag > semver > branch for Git). Ignored by HelmRepository, which resolves versions per chart instead.
+                      properties:
+                        tag:
+                          type: string
+                          description: Exact OCI tag or Git tag to pull.
+                        branch:
+                          type: string
+                          description: Git branch to check out. GitRepository only — an OCI registry has no branches.
+                        semver:
+                          type: string
+                          description: 'Semver range, e.g. ">=6.0.0 <7.0.0"; the newest matching tag is pulled and re-resolved on every interval.'
+                        digest:
+                          type: string
+                          description: 'Immutable OCI digest (sha256:<hash>), which pins the artifact exactly. OCIRepository only.'
+                    interval:
+                      type: string
+                      default: 1m
+                      description: How often the source is re-checked upstream. This is the latency of "a new artifact was pushed" -> "the cluster notices"; the delivery object's own spec.interval only governs re-applying what has already been fetched.
+                    insecure:
+                      type: boolean
+                      default: false
+                      description: Allow a plain-HTTP (non-TLS) OCI registry. Needed by the in-cluster kind registry, which serves HTTP; rejected for the Git and Helm source kinds, where the Composition fails the render instead of silently ignoring it.
+                    secretRef:
+                      type: string
+                      description: Name of an EXISTING Secret in this namespace holding the source credentials — dockerconfigjson for OCI, username/password or SSH identity for Git, username/password for Helm. The Component manages no secret material itself.
+                  required:
+                    - url
+                deliver:
+                  type: object
+                  default: {}
+                  description: |
+                    How the fetched content becomes cluster state — one
+                    Kustomization or one HelmRelease, named after this XR and
+                    bound to the source above.
+
+                    Kustomization applies plain YAML (kustomize-controller
+                    generates a kustomization.yaml when the artifact has none);
+                    HelmRelease installs a chart, either straight from an
+                    OCIRepository (chartRef) or by name out of a Helm or Git
+                    source (chart + version).
+                  properties:
+                    kind:
+                      type: string
+                      enum: [Kustomization, HelmRelease]
+                      default: Kustomization
+                      description: Which Flux delivery kind to create. Kustomization cannot read a HelmRepository, so that combination fails the render.
+                    path:
+                      type: string
+                      default: ./
+                      description: Kustomization spec.path — directory inside the source holding the manifests. Ignored by HelmRelease, whose chart location comes from chart/chartRef instead.
+                    chart:
+                      type: string
+                      description: Chart name inside the source. REQUIRED for a HelmRelease fed by a HelmRepository or GitRepository; must NOT be needed for an OCIRepository, whose artifact IS the chart and is referenced with chartRef.
+                    version:
+                      type: string
+                      description: Semver range for chart. Only meaningful alongside chart; the OCIRepository form pins the version through source.ref instead.
+                    values:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                      description: Helm values, passed through verbatim as HelmRelease spec.values. Free-form by nature, hence unvalidated. Ignored by Kustomization, which has no values concept (use postBuild substitution upstream instead).
+                    targetNamespace:
+                      type: string
+                      description: Namespace the workload is created in — Kustomization spec.targetNamespace (which overrides whatever the manifests declare) or HelmRelease spec.targetNamespace. Unset leaves the manifests/chart to decide, which for a Kustomization means this namespace.
+                    prune:
+                      type: boolean
+                      default: true
+                      description: Kustomization spec.prune — garbage-collect resources that disappear from the source. On by default, which is what makes the source the single truth. Ignored by HelmRelease, where Helm owns the release's resource set.
+                    wait:
+                      type: boolean
+                      default: true
+                      description: Kustomization spec.wait — health-check everything applied before reporting Ready, so the XR's status.ready means the workload is actually up. Ignored by HelmRelease, which always waits on the release.
+                    timeout:
+                      type: string
+                      default: 5m
+                      description: Timeout for one apply/health-check pass (Kustomization spec.timeout) or one Helm action (HelmRelease spec.timeout).
+                interval:
+                  type: string
+                  default: 5m
+                  description: Reconcile interval of the DELIVERY object — how often the fetched revision is re-applied and drift corrected. Independent of source.interval, which decides how often new content is looked for.
+                dependsOn:
+                  type: array
+                  default: []
+                  items: {type: string}
+                  description: Names of sibling Components in this namespace that must be Ready first. Forwarded as the delivery object's spec.dependsOn, so ordering is enforced by the Flux controller and not by apply order. Names are XR names, because every composed object is named after its XR.
+                suspend:
+                  type: boolean
+                  default: false
+                  description: Stop reconciling the delivery object, leaving what is already applied in place. The source keeps fetching, so resuming applies the newest revision immediately.
+                serviceAccountName:
+                  type: string
+                  description: Name of a ServiceAccount in this namespace for the Flux controller to impersonate while applying. The mechanism for scoping a component's blast radius — without it the controller applies with its own cluster-admin-grade identity.
+              required:
+                - source
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True only when BOTH composed Flux objects report Ready — content fetched AND applied. False while either is progressing, failing or has not been observed yet.
+                sourceReady:
+                  type: boolean
+                  description: Ready condition of the composed source object. False here means the content could not be fetched at all (bad URL, missing tag, missing credentials).
+                deliveryReady:
+                  type: boolean
+                  description: Ready condition of the composed Kustomization or HelmRelease. False here with sourceReady true means the content was fetched but could not be applied.
+                sourceRevision:
+                  type: string
+                  description: 'Revision of the artifact the source last fetched, copied from its status.artifact.revision (e.g. v1@sha256:… for OCI, main@sha1:… for Git). What the cluster COULD have.'
+                appliedRevision:
+                  type: string
+                  description: Revision actually applied — the Kustomization's status.lastAppliedRevision or the HelmRelease's newest history entry's chart version. What the cluster DOES have; a lag behind sourceRevision means delivery is still catching up.
+                message:
+                  type: string
+                  description: Ready-condition message of whichever composed object is not ready, so a stuck component can be diagnosed without listing the Flux objects. Empty when ready.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: SOURCE
+          type: string
+          jsonPath: .status.sourceRevision
+        - name: APPLIED
+          type: string
+          jsonPath: .status.appliedRevision

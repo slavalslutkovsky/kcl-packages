@@ -1,0 +1,40 @@
+# Event-driven worker values (Helm-style) → app.Release with a KEDA ScaledObject.
+# Renders like values-backend.yaml (`kcl run /abs/path/to/packages/app -q`)
+# but with `scaler:` instead of `hpa:`: a keda.sh/v1alpha1 ScaledObject that
+# scales the Deployment on queue lag and down to zero when idle. Needs KEDA on
+# the cluster (the manager package's examples/values.yaml installs it).
+#
+# `cpu` / `memory` under `scaler:` are convenience shortcuts for KEDA's built-in
+# utilization triggers; `triggers:` is passthrough for any KEDA scaler
+# (nats-jetstream, kafka, prometheus, cron, …). The Deployment omits
+# spec.replicas so GitOps never fights the autoscaler over the count.
+
+workload:
+  name: zerg-email-nats
+  namespace: zerg
+  component: worker
+  image: yurikrupnik/zerg-email-nats:latest
+  port: 8081
+  prometheus: false
+  service: false                    # pull-based consumer: nothing dials in
+  envFrom:
+    - kind: secret
+      name: zerg-shared-secrets
+  scaler:
+    minReplicas: 0                  # scale-to-zero between bursts
+    maxReplicas: 10
+    pollingInterval: 5
+    cooldownPeriod: 60
+    triggers:
+      - type: nats-jetstream
+        metadata:
+          natsServerMonitoringEndpoint: nats.nats.svc:8222
+          account: "$G"
+          stream: EMAILS
+          consumer: email-worker
+          lagThreshold: "10"
+
+# → ConfigMap "zerg-email-nats-config"
+config:
+  NATS_URL: nats://nats.nats.svc:4222
+  NATS_STREAM: EMAILS

@@ -1,0 +1,32 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "bench",
+  "projectType": "application",
+  "tags": ["lang:ts", "area:tools"],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "cwd": "{workspaceRoot}",
+        "command": "tsc -p tools/bench/tsconfig.json --noEmit"
+      }
+    },
+    "bench": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "cwd": "{workspaceRoot}",
+        "command": "node tools/bench/src/main.ts"
+      }
+    },
+    "verify": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "cwd": "{workspaceRoot}",
+        "command": "node tools/bench/src/verify.ts"
+      }
+    }
+  }
+}

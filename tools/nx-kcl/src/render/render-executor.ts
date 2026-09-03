@@ -20,6 +20,12 @@ export interface KclRenderExecutorOptions {
   keepContainer?: boolean;
   functionResults?: boolean;
   fullXr?: boolean;
+  /**
+   * Cluster objects a gated Composition asks Crossplane to fetch (required
+   * resources), mocked for a local render. File or directory; defaults to
+   * `<xrdDir>/required-resources` when that directory exists.
+   */
+  requiredResources?: string;
 }
 
 /** The function name whose source we redirect at the working tree. */
@@ -220,6 +226,19 @@ export default async function kclRenderExecutor(
   }
   const examplePath = resolveExample(options.example, join(xrdDir, 'examples'), projectName);
 
+  // A Composition that gates on a cluster object (see
+  // packages/platform/entitlement) asks Crossplane to fetch it; locally there
+  // is no cluster, so the object is mocked from disk. An explicit path that
+  // does not exist is an error — silently rendering the ungated path would
+  // report a pending no-op as success.
+  const requiredResources = options.requiredResources
+    ? join(context.root, options.requiredResources)
+    : join(xrdDir, 'required-resources');
+  if (options.requiredResources && !existsSync(requiredResources)) {
+    throw new Error(`Required resources not found: ${requiredResources}`);
+  }
+  const mockRequired = existsSync(requiredResources) ? requiredResources : undefined;
+
   const functionsYaml = readFileSync(functionsPath, 'utf-8');
   const image = options.image ?? readFunctionPackage(functionsYaml, KCL_FUNCTION);
   if (!image) {
@@ -276,10 +295,14 @@ export default async function kclRenderExecutor(
       examplePath,
       stagedComposition,
       stagedFunctions,
+      ...(mockRequired ? ['--required-resources', mockRequired] : []),
       ...(options.functionResults ? ['--include-function-results'] : []),
       ...(options.fullXr ? ['--include-full-xr'] : []),
     ];
-    console.log(`Rendering ${projectName} with ${basename(examplePath)}\n`);
+    console.log(
+      `Rendering ${projectName} with ${basename(examplePath)}` +
+        `${mockRequired ? ` and required resources from ${basename(mockRequired)}` : ''}\n`
+    );
     const result = spawnSync('crossplane', args, { cwd: context.root, stdio: 'inherit' });
     if (result.error) {
       throw new Error(

@@ -2,19 +2,28 @@
 Application Kubernetes manifests — typed schemas + renderers (single source of truth).
 
 Two archetypes, one package:
-  • Workload → long-running apps (backend APIs, frontend/static apps): Deployment
-    (+ Service, + optional HPA). Backend and frontend are the SAME archetype with
-    different field values (e.g. prometheus on/off, nginx volumes, uid/gid).
+  • Workload → long-running apps (backend APIs, frontend/static apps, queue
+    workers): Deployment (+ Service, + optional autoscaler: native HPA or a KEDA
+    ScaledObject, which also does scale-to-zero and event-driven triggers).
+    Backend and frontend are the SAME archetype with different field values
+    (e.g. prometheus on/off, nginx volumes, uid/gid).
   • Task → run-to-completion CLI apps: a batch/v1 Job, or a CronJob when `schedule`
     is set. Reuses the same container atoms (env/envFrom/security) as Workload.
 
-Core resources use the typed `k8s` package and ExternalSecret uses the typed
-`external-secrets` package, so rendered output is checked against the real
-Kubernetes / CRD APIs. The usual path is a Helm-style values.yaml that is a
-`Release` (a `workload:` or `task:` + optional `config:`/`externalSecret:`),
+Core resources use the typed `k8s` package, ExternalSecret the typed
+`external-secrets` package, and chaos experiments the `chaos-mesh` schema
+package (packages/providers/chaos-mesh), so rendered output is checked against
+the real Kubernetes / CRD APIs. The usual path is a Helm-style values.yaml that
+is a `Release` (a `workload:` or `task:` + optional `config:`/`externalSecret:`),
 rendered by the package's own main.k with no local main.k needed. In code:
 `import app` and call `app.renderRelease(app.Release {**yaml.decode(...)})`, or
 the lower-level `app.render(w)` / `app.renderTask(t)`. See examples/.
+
+Chaos engineering: a Workload's `chaos:` is a list of `Fault`s, each rendered
+as a Chaos Mesh experiment (PodChaos / NetworkChaos / StressChaos, or a
+Schedule around one) pinned to that workload's own pods. Chaos Mesh over
+Litmus because its experiments are self-contained CRs: no per-experiment
+ChaosExperiment install from a hub, no chaos ServiceAccount per namespace.
 """
 
 import k8s.api.apps.v1 as appsv1
@@ -23,6 +32,10 @@ import k8s.api.autoscaling.v2 as autoscalingv2
 import k8s.api.batch.v1 as batchv1
 import external_secrets.v1 as esv1
 import keda.v1alpha1 as keda
+import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_pod_chaos as cmpod
+import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_network_chaos as cmnet
+import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_stress_chaos as cmstress
+import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_schedule as cmschedule
 
 # ── Component schemas ────────────────────────────────────────────────────────
 schema Probe:
@@ -79,16 +92,70 @@ schema Scaler:
     triggers: [{str:}] = []
     pollingInterval?: int
     cooldownPeriod?: int
-    # → idleReplicaCount (only valid with minReplicas 0)
+    # → idleReplicaCount: replicas while every trigger is inactive; KEDA only
+    # supports 0 here and it must be below minReplicas
     idleReplicas?: int
     # → advanced.horizontalPodAutoscalerConfig.behavior
     behavior?: {str:}
 
     check:
         cpu or memory or triggers, "Scaler needs at least one of cpu, memory, or triggers"
+        idleReplicas == Undefined or idleReplicas < minReplicas, "idleReplicas (${idleReplicas}) must be below minReplicas (${minReplicas}); KEDA supports only 0"
+
+schema Fault:
+    """
+    One Chaos Mesh fault injected into this workload's own pods. The selector is
+    always `app=<name>` in the workload's namespace — a Fault never carries one,
+    so its blast radius is exactly this workload. `type` picks the experiment:
+      pod-kill | pod-failure | container-kill  → PodChaos
+      delay | loss | partition                 → NetworkChaos
+      cpu | memory                             → StressChaos
+    Without `schedule` it is a one-shot experiment that runs for `duration` as
+    soon as it is applied (pod-kill is instantaneous). With `schedule` (cron)
+    it is wrapped in a Chaos Mesh Schedule and recurs.
+    """
+    # → "<workload>-<name>"
+    name: str
+    $type: "pod-kill" | "pod-failure" | "container-kill" | "delay" | "loss" | "partition" | "cpu" | "memory"
+    # how many of the workload's pods are hit
+    mode: "one" | "all" | "fixed" | "fixed-percent" | "random-max-percent" = "one"
+    # fixed: pod count; fixed-percent / random-max-percent: 0-100
+    value?: str
+    duration: str = "30s"
+    # delay
+    latency: str = "100ms"
+    jitter?: str
+    correlation?: str
+    # loss: percent of packets, 0-100
+    loss: str = "10"
+
+    # delay / loss / partition: which traffic. Without a target Chaos Mesh only
+    # shapes outbound (`to`) traffic; a partition may also cut `from` / `both`.
+    direction: "to" | "from" | "both" = "to"
+    # delay / loss / partition: only traffic to these IPs or hostnames (default: all)
+    externalTargets?: [str]
+    # cpu / memory: stress-ng workers
+    workers: int = 1
+    # cpu: load per worker, percent of one core
+    load: int = 100
+    # memory: per-worker allocation, e.g. "256MB" or "50%"
+    size?: str
+    # container-kill / cpu / memory: default the workload's own container
+    containerNames?: [str]
+    # cron → a Chaos Mesh Schedule instead of a one-shot experiment
+    schedule?: str
+    # Schedule only: skip a tick while the previous run is still active
+    concurrencyPolicy: "Forbid" | "Allow" = "Forbid"
+    # Schedule only: finished experiments kept for inspection
+    historyLimit: int = 1
+
+    check:
+        mode in ["one", "all"] or value, "mode ${mode} needs `value` (a pod count or a percent)"
+        direction == "to" or $type == "partition", "${$type} without a target can only shape outbound (`to`) traffic; use `partition` for from/both"
+        $type != "partition" or direction == "to" or externalTargets, "a partition with direction ${direction} needs `externalTargets`"
 
 schema Workload:
-    """A deployable long-running application: Deployment (+ Service, + optional HPA)."""
+    """A deployable long-running application: Deployment (+ Service, + optional HPA or KEDA ScaledObject, + Chaos Mesh faults)."""
     name: str = "app"
     namespace?: str
     component: str = "server"
@@ -119,11 +186,15 @@ schema Workload:
     hpa?: Hpa
     # KEDA ScaledObject (preferred)
     scaler?: Scaler
+    # Chaos Mesh experiments against this workload's pods (needs `namespace`)
+    chaos: [Fault] = []
     podAnnotations: {str:str} = {}
     extraManifests: [{str:}] = []
 
     check:
         not (hpa and scaler), "use either `hpa` (native) or `scaler` (KEDA), not both"
+        not chaos or namespace, "chaos faults need an explicit `namespace`: the experiment selector is pinned to it"
+        len(chaos) == len({f.name: 1 for f in chaos}), "chaos fault names must be unique"
 
 schema Task:
     """A run-to-completion CLI workload: Job, or CronJob when `schedule` is set."""
@@ -181,6 +252,8 @@ schema Release:
     """
     workload?: Workload
     task?: Task
+    #opts: Taks
+    #opts: {str:ste}
     config?: {str:str}
     externalSecret?: ExternalSecretSpec
 
@@ -349,6 +422,100 @@ _scaler = lambda w: Workload -> keda.ScaledObject {
     }
 }
 
+# ── Chaos Mesh renderers ─────────────────────────────────────────────────────
+# The spec builders take the pod selector explicitly so the `manager` package
+# can reuse them for cluster-scope experiments and Workflows. Inside `app` the
+# selector is always this workload's pods and nothing else; Chaos Mesh label
+# selectors are cluster-wide unless `namespaces` pins them, hence the Workload
+# check that `chaos` needs a namespace.
+_faultSelector = lambda w: Workload -> {str:} {
+    {namespaces = [w.namespace], labelSelectors = {app = w.name}}
+}
+
+_faultMeta = lambda w: Workload, f: Fault -> {str:} {
+    {name = "${w.name}-${f.name}", namespace = w.namespace, labels = _labels(w)}
+}
+
+_podChaosSpec = lambda f: Fault, selector: {str:} -> {str:} {
+    {
+        action = f.$type
+        mode = f.mode
+        selector = selector
+        # pod-kill is instantaneous: a duration would only make Chaos Mesh
+        # hold the experiment open (and re-kill under a Schedule)
+    } | ({duration = f.duration} if f.$type != "pod-kill" else {}) | ({value = f.value} if f.value else {}) | ({containerNames = f.containerNames} if f.containerNames else {})
+}
+
+_networkChaosSpec = lambda f: Fault, selector: {str:} -> {str:} {
+    {
+        action = f.$type
+        mode = f.mode
+        selector = selector
+        direction = f.direction
+        duration = f.duration
+    } | ({value = f.value} if f.value else {}) | ({externalTargets = f.externalTargets} if f.externalTargets else {}) | ({
+        delay = {latency = f.latency} | ({jitter = f.jitter} if f.jitter else {}) | ({correlation = f.correlation} if f.correlation else {})
+    } if f.$type == "delay" else {
+        loss = {loss = f.loss} | ({correlation = f.correlation} if f.correlation else {})
+    } if f.$type == "loss" else {})
+}
+
+_stressChaosSpec = lambda f: Fault, selector: {str:} -> {str:} {
+    {
+        mode = f.mode
+        selector = selector
+        duration = f.duration
+        stressors = {
+            cpu = {workers = f.workers, load = f.load}
+        } if f.$type == "cpu" else {
+            memory = {workers = f.workers} | ({size = f.size} if f.size else {})
+        }
+    } | ({value = f.value} if f.value else {}) | ({containerNames = f.containerNames} if f.containerNames else {})
+}
+
+faultKind = lambda f: Fault -> str {
+    """Chaos Mesh kind a fault renders to: PodChaos, NetworkChaos or StressChaos."""
+    "PodChaos" if f.$type in ["pod-kill", "pod-failure", "container-kill"] else "NetworkChaos" if f.$type in ["delay", "loss", "partition"] else "StressChaos"
+}
+
+faultSpec = lambda f: Fault, selector: {str:} -> {str:} {
+    """The <kind>Spec for a fault against `selector` (a Chaos Mesh pod selector: namespaces, labelSelectors, …)."""
+    _kind = faultKind(f)
+    _podChaosSpec(f, selector) if _kind == "PodChaos" else _networkChaosSpec(f, selector) if _kind == "NetworkChaos" else _stressChaosSpec(f, selector)
+}
+
+experiment = lambda f: Fault, selector: {str:}, metadata: {str:} -> any {
+    """
+    A typed Chaos Mesh object for a fault: the one-shot PodChaos / NetworkChaos /
+    StressChaos, or a Schedule embedding it when `f.schedule` is set.
+    `metadata` is used as given (name, namespace, labels, annotations).
+    """
+    _kind = faultKind(f)
+    _spec = faultSpec(f, selector)
+    cmschedule.Schedule {
+        metadata = metadata
+        spec = {
+            schedule = f.schedule
+            $type = _kind
+            concurrencyPolicy = f.concurrencyPolicy
+            historyLimit = f.historyLimit
+        } | ({podChaos = _spec} if _kind == "PodChaos" else {networkChaos = _spec} if _kind == "NetworkChaos" else {stressChaos = _spec})
+    } if f.schedule else cmpod.PodChaos {
+        metadata = metadata
+        spec = _spec
+    } if _kind == "PodChaos" else cmnet.NetworkChaos {
+        metadata = metadata
+        spec = _spec
+    } if _kind == "NetworkChaos" else cmstress.StressChaos {
+        metadata = metadata
+        spec = _spec
+    }
+}
+
+_fault = lambda w: Workload, f: Fault -> any {
+    experiment(f, _faultSelector(w), _faultMeta(w, f))
+}
+
 # ── Task (Job / CronJob) renderers ───────────────────────────────────────────
 _taskLabels = lambda t: Task -> {str:str} {
     {
@@ -436,8 +603,8 @@ mergeValues = lambda base: {str:}, overlay: {str:} -> {str:} {
 }
 
 render = lambda w: Workload -> [any] {
-    """All manifests for a long-running workload: Deployment, optional Service, optional HPA, extras."""
-    [_deployment(w)] + ([_service(w)] if w.service else []) + ([_hpa(w)] if w.hpa else []) + ([_scaler(w)] if w.scaler else []) + w.extraManifests
+    """All manifests for a long-running workload: Deployment, optional Service, optional HPA/ScaledObject, Chaos Mesh faults, extras."""
+    [_deployment(w)] + ([_service(w)] if w.service else []) + ([_hpa(w)] if w.hpa else []) + ([_scaler(w)] if w.scaler else []) + [_fault(w, f) for f in w.chaos] + w.extraManifests
 }
 
 renderTask = lambda t: Task -> [any] {

@@ -24,6 +24,8 @@ render = lambda oxr, ocds {
     _region = _spec.region
     _mp = _orphan_policies if (_spec?.deletionPolicy or "Delete") == "Orphan" else Undefined
 
+    assert not _spec?.kubeconfigSecret and not _spec?.bootstrap, "cluster-gcp: spec.kubeconfigSecret and spec.bootstrap are onprem-only — a provisioned cluster publishes its own kubeconfig (status.kubeconfigSecret) and is handed over bare"
+
     _count = _spec?.nodeCount or 2
     _as = _spec?.autoscaling
     _subnets = _spec?.network?.subnets or []

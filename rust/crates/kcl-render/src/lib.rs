@@ -20,7 +20,7 @@ pub mod deps;
 pub mod engine;
 pub mod source;
 
-pub use compose::{Composed, Desired, Ready, Target};
+pub use compose::{Composed, Desired, Ready, RequiredResource, Requirements, SelectorMatch, Target};
 pub use engine::{Engine, Options, Rendered, Request};
 pub use source::Source;
 

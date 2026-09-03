@@ -25,6 +25,7 @@ render = lambda oxr, ocds {
     assert _spec?.region, "cluster-azure: spec.region is required (the Azure location of the cluster)"
     assert _spec?.resourceGroup, "cluster-azure: spec.resourceGroup is required (the Resource Group the cluster lives in)"
     assert not _spec?.spot, "cluster-azure: spec.spot is not expressible — AKS requires its default (System) node pool on regular capacity"
+    assert not _spec?.kubeconfigSecret and not _spec?.bootstrap, "cluster-azure: spec.kubeconfigSecret and spec.bootstrap are onprem-only — a provisioned cluster publishes its own kubeconfig (status.kubeconfigSecret) and is handed over bare"
 
     _count = _spec?.nodeCount or 2
     _as = _spec?.autoscaling

@@ -22,21 +22,23 @@ spec:
                 Portable managed Kubernetes cluster. Every field below is a
                 COMMON parameter mapped to each cloud's native resources (AWS
                 EKS Cluster + NodeGroup + the IAM roles they require, GCP GKE
-                Cluster + NodePool, Azure AKS KubernetesCluster). Fields a
-                backend cannot express make the render FAIL with a clear
+                Cluster + NodePool, Azure AKS KubernetesCluster) — or, for the
+                onprem backend, to an EXISTING cluster adopted through its
+                kubeconfig and bootstrapped with FluxCD and Crossplane. Fields
+                a backend cannot express make the render FAIL with a clear
                 message rather than silently changing the cluster shape.
               properties:
                 region:
                   type: string
-                  description: Cloud region/location for the control plane and nodes.
+                  description: Cloud region/location for the control plane and nodes. On-prem, a free-form site/datacenter label (the cluster is wherever its kubeconfig points).
                 version:
                   type: string
-                  description: Kubernetes minor version, e.g. "1.32". EKS version / GKE minMasterVersion / AKS kubernetesVersion. Omit for the provider default.
+                  description: Kubernetes minor version, e.g. "1.32". EKS version / GKE minMasterVersion / AKS kubernetesVersion. Omit for the provider default. The onprem backend rejects it — an existing cluster runs what it runs.
                 nodeCount:
                   type: integer
                   default: 2
                   minimum: 1
-                  description: Worker nodes when autoscaling is off; the initial/desired size when it is on.
+                  description: Worker nodes when autoscaling is off; the initial/desired size when it is on. Ignored by the onprem backend.
                 autoscaling:
                   type: object
                   description: Node autoscaling bounds. EKS scalingConfig / GKE NodePool autoscaling / AKS enableAutoScaling+minCount+maxCount.
@@ -54,7 +56,7 @@ spec:
                   type: string
                   enum: [small, medium, large, xlarge]
                   default: small
-                  description: 'Abstract node shape, mapped per cloud: small 2vCPU/4-8GB (t3.medium / e2-medium / Standard_B2s), medium 2/8 (m5.large / e2-standard-2 / Standard_D2s_v5), large 4/16 (m5.xlarge / e2-standard-4 / Standard_D4s_v5), xlarge 8/32 (m5.2xlarge / e2-standard-8 / Standard_D8s_v5).'
+                  description: 'Abstract node shape, mapped per cloud: small 2vCPU/4-8GB (t3.medium / e2-medium / Standard_B2s), medium 2/8 (m5.large / e2-standard-2 / Standard_D2s_v5), large 4/16 (m5.xlarge / e2-standard-4 / Standard_D4s_v5), xlarge 8/32 (m5.2xlarge / e2-standard-8 / Standard_D8s_v5). Ignored by the onprem backend.'
                 machineType:
                   type: string
                   description: Native instance/machine/VM type that overrides the nodeSize mapping (e.g. m5.large, e2-standard-4, Standard_D4s_v5).
@@ -76,11 +78,64 @@ spec:
                 resourceGroup:
                   type: string
                   description: Azure-only — the Resource Group the cluster lives in. Required by the azure backend.
+                kubeconfigSecret:
+                  type: string
+                  description: On-prem only — name of a Secret in this namespace holding a kubeconfig for the EXISTING cluster under the key `kubeconfig` (the same key the cloud backends publish theirs under, see status.kubeconfigSecret). Required by the onprem backend; the cloud backends reject it.
+                bootstrap:
+                  type: object
+                  description: On-prem only — what the onprem backend installs into the adopted cluster, each a pinned Helm release driven from this cluster through provider-helm. The cloud backends reject it (a provisioned cluster is handed over bare).
+                  properties:
+                    flux:
+                      type: object
+                      description: FluxCD (the fluxcd-community `flux2` chart) into flux-system.
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: true
+                        version:
+                          type: string
+                          description: flux2 chart version; omit for the pinned default.
+                    crossplane:
+                      type: object
+                      description: Crossplane (the `crossplane` chart) into crossplane-system, so the adopted cluster can compose its own resources.
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: true
+                        version:
+                          type: string
+                          description: crossplane chart version; omit for the pinned default.
+                    sync:
+                      type: object
+                      description: The GitOps entrypoint — a Flux GitRepository + Kustomization (the `flux2-sync` chart) in flux-system that pulls everything else the cluster runs. Needs flux; installed once Flux is observed deployed.
+                      properties:
+                        url:
+                          type: string
+                          description: Git repository URL (https or ssh).
+                        branch:
+                          type: string
+                          default: main
+                          description: Branch to track; ignored when tag is set.
+                        tag:
+                          type: string
+                          description: Git tag to pin instead of a branch.
+                        path:
+                          type: string
+                          default: ./
+                          description: Directory inside the repository to apply.
+                        secretRef:
+                          type: string
+                          description: Secret IN THE ADOPTED CLUSTER's flux-system namespace holding the Git credentials (username/password for https, identity/known_hosts for ssh).
+                        interval:
+                          type: string
+                          default: 5m
+                          description: How often the repository is polled and the path re-applied.
+                      required: [url]
                 deletionPolicy:
                   type: string
                   enum: [Delete, Orphan]
                   default: Delete
-                  description: What happens to the cloud cluster when this resource is deleted; maps to Crossplane managementPolicies (Orphan keeps the external cluster).
+                  description: What happens to the cloud cluster when this resource is deleted; maps to Crossplane managementPolicies (Orphan keeps the external cluster). On-prem the cluster is never touched — Orphan keeps what bootstrap installed, Delete uninstalls it.
                 tags:
                   type: object
                   additionalProperties:
@@ -96,7 +151,7 @@ spec:
                   description: True once the control plane is reachable.
                 provider:
                   type: string
-                  description: Cloud backend that fulfilled the claim (aws | gcp | azure).
+                  description: Backend that fulfilled the claim (aws | gcp | azure | onprem).
                 endpoint:
                   type: string
                   description: Kubernetes API server endpoint.
@@ -105,7 +160,7 @@ spec:
                   description: Kubernetes version actually running.
                 kubeconfigSecret:
                   type: string
-                  description: Name of the namespace-local connection Secret carrying the kubeconfig/credentials.
+                  description: Name of the namespace-local Secret carrying the kubeconfig/credentials — written by the cloud backends, supplied via spec.kubeconfigSecret for onprem.
                 name:
                   type: string
                   description: Provider-side cluster name.

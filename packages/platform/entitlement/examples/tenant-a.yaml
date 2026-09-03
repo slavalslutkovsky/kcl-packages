@@ -1,0 +1,23 @@
+# A paying tenant. The name IS the namespace the grant applies to.
+apiVersion: platform.example.org/v1alpha1
+kind: Entitlement
+metadata:
+  name: tenant-a
+spec:
+  plan: team                     # free | team | enterprise — informational + at_least()
+  features:                      # the authority: a Composition fails unless its key is here
+    - forgejo                    # may run a Forge instance
+    - repository                 # may manage repositories inside a forge
+  quota:
+    repositories: 50             # cap enforced by entitlement.within_quota()
+  reference: sub_1P9xyzExample   # opaque billing handle, never read by a Composition
+---
+# A free tenant, kept as the negative case: applying a Forge XR in namespace
+# `tenant-free` must fail the render with a named fatal result, not provision.
+apiVersion: platform.example.org/v1alpha1
+kind: Entitlement
+metadata:
+  name: tenant-free
+spec:
+  plan: free
+  features: []

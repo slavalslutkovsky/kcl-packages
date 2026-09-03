@@ -63,23 +63,52 @@ and it exposes the same KCL contract, so every package under
 `packages/cloud/**` runs unchanged:
 
 ```python
-_params = option("params")   # oxr, dxr, ocds, dcds, ctx + spec.params
+_params = option("params")   # oxr, dxr, ocds, dcds, ctx, requiredResources,
+                             # extraResources + spec.params
 items = [...]                # only the top-level `items` list is composed
 ```
 
 * `ocds` / `dcds` keep function-kcl's capitalised Go field names —
   `option("params").ocds["managed"]?.Resource?.status?.atProvider`.
+* `requiredResources` / `extraResources` are
+  `{"<key>": [{"Resource": {...}}]}` — the same Go field name again. A key
+  appears only on the call *after* the module asked for it, and a lookup that
+  matched nothing comes back as `[]`, so the idiom is
+  `_ents = option("params")?.requiredResources?.entitlement` followed by
+  `if _ents != Undefined`.
 * `metadata.annotations["krm.kcl.dev/composition-resource-name"]` names a
   composed resource (falling back to `metadata.name`) and is stripped from the
   output; `krm.kcl.dev/ready` (`True|False|Unspecified`) forces readiness.
 * Under the default target, an item whose GVK equals the composite's
   contributes only its `status` to the XR; other targets: `Resources`,
   `PatchDesired`, `PatchResources`, `XR`.
+* Under the default target, an item whose `apiVersion` is
+  `meta.krm.kcl.dev/v1alpha1` is not composed at all. `RequiredResources` and
+  `ExtraResources` carry a `requirements` map of
+  `{apiVersion, kind, name?, namespace?, matchLabels?}` — `name` wins over
+  `matchLabels`, and no `namespace` means cluster-scoped — which becomes
+  `RunFunctionResponse.requirements`. Crossplane fetches the matches and calls
+  the function again, up to five times while the requirements keep changing.
+
+  ```python
+  items = [{
+      apiVersion = "meta.krm.kcl.dev/v1alpha1"
+      kind = "RequiredResources"
+      requirements.entitlement = {
+          apiVersion = "platform.example.org/v1alpha1"
+          kind = "Entitlement"
+          name = _params.oxr.spec.team
+      }
+  }]
+  ```
+
 * Render failures come back as a **fatal result** on the XR, not a gRPC error.
 
 Not supported, and rejected with a fatal result rather than silently ignored:
-`spec.credentials` (registry pulls are anonymous) and `spec.dependencies`
-(declare dependencies in the package's own `kcl.mod`).
+`spec.credentials` (registry pulls are anonymous), `spec.dependencies`
+(declare dependencies in the package's own `kcl.mod`), and every other
+`meta.krm.kcl.dev/v1alpha1` kind (`CompositeConnectionDetails`, `Conditions`,
+`Events`, `Context`), which are rejected by name.
 
 Local development against a real Composition:
 

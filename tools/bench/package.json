@@ -1,0 +1,13 @@
+{
+  "name": "bench",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Benchmark harness comparing Crossplane composition-function runtimes on identical Compositions.",
+  "dependencies": {
+    "@grpc/grpc-js": "^1.13.4",
+    "@grpc/proto-loader": "^0.7.15",
+    "puppeteer": "^24.10.2",
+    "yaml": "^2.9.0"
+  }
+}
