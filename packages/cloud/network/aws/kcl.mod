@@ -1,7 +1,7 @@
 [package]
 name = "network-aws"
 edition = "v0.12.3"
-version = "0.1.3"
+version = "0.1.4"
 
 [dependencies]
 aws-ec2 = { path = "../../../providers/aws-ec2" }

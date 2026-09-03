@@ -1,7 +1,7 @@
 [package]
 name = "registry-aws"
 edition = "v0.12.3"
-version = "0.1.3"
+version = "0.1.4"
 
 [dependencies]
 aws-ecr = { path = "../../../providers/aws-ecr" }

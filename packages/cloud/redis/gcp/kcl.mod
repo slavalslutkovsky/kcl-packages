@@ -1,7 +1,7 @@
 [package]
 name = "redis-gcp"
 edition = "v0.12.3"
-version = "0.1.3"
+version = "0.1.4"
 
 [dependencies]
 gcp-redis = { path = "../../../providers/gcp-redis" }
