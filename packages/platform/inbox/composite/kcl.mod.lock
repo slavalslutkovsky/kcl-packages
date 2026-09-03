@@ -1,8 +1,8 @@
 [dependencies]
   [dependencies.bucket-xrd]
     name = "bucket-xrd"
-    full_name = "bucket-xrd_0.1.0"
-    version = "0.1.0"
+    full_name = "bucket-xrd_0.1.1"
+    version = "0.1.1"
   [dependencies.k8s]
     name = "k8s"
     full_name = "k8s_1.32.4"
@@ -13,5 +13,5 @@
     oci_tag = "1.32.4"
   [dependencies.queue-xrd]
     name = "queue-xrd"
-    full_name = "queue-xrd_0.1.0"
-    version = "0.1.0"
+    full_name = "queue-xrd_0.1.1"
+    version = "0.1.1"
