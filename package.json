@@ -12,7 +12,7 @@
     "@swc-node/register": "^1.11.1",
     "@swc/core": "^1.15.43",
     "@types/node": "^20.19.43",
-    "nx": "23.0.1",
+    "nx": "23.0.2",
     "nx-kcl": "workspace:*",
     "typescript": "5.9.3"
   }
