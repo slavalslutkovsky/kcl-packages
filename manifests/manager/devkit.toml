@@ -1,0 +1,30 @@
+# devkit config for the manager e2e (`just e2e-manager`). devkit discovers the
+# nearest devkit.toml walking up from $PWD, so running it from this directory
+# shadows the repo root's file: a different cluster, and Flux as the ONLY dep.
+#
+# Everything else the root file installs by helm CLI — crossplane, chaos-mesh,
+# cert-manager, keda — is what packages/manager delivers as Flux HelmReleases
+# here. A chart must have one owner, so none of those rows may appear below.
+
+[cluster]
+name = "kcl-manager"        # not kcl-e2e: `just e2e-down` must never touch this one
+workers = 1
+db_workers = 0
+ingress = false
+
+# Flux 2.9.1 (source-controller + helm-controller are what the manager render
+# needs; the chart ships the CRDs, and `helm --wait` returns once they are
+# established). Same pin and same trims as the root devkit.toml row.
+[[deps]]
+name = "flux2"
+repo = "https://fluxcd-community.github.io/helm-charts"
+version = "2.19.0"
+namespace = "flux-system"
+set = [
+    "imageAutomationController.create=false",
+    "imageReflectionController.create=false",
+    "notificationController.create=false",
+]
+
+[tilt]
+enabled = false

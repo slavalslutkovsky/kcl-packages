@@ -1,0 +1,6 @@
+# Overlay for values.yaml: the same platform on a workload cluster.
+#   just manager packages/manager/examples/values.yaml workload
+# Deep-merged over values.yaml (right wins). Only the role changes: the
+# manager-type dependencies (crossplane) drop out of the render, the
+# application ones and the issuers stay.
+role: workload

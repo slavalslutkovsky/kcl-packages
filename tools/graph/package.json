@@ -1,0 +1,11 @@
+{
+  "name": "graph",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Renders the cluster install DAG (devkit.toml waves + manager Flux dependsOn) as Mermaid.",
+  "dependencies": {
+    "smol-toml": "^1.6.1",
+    "yaml": "^2.9.0"
+  }
+}
