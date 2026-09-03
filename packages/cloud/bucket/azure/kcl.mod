@@ -1,7 +1,7 @@
 [package]
 name = "bucket-azure"
 edition = "v0.12.3"
-version = "0.1.2"
+version = "0.1.3"
 
 [dependencies]
 azure-storage = { path = "../../../providers/azure-storage" }

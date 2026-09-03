@@ -1,7 +1,7 @@
 [package]
 name = "email-aws"
 edition = "v0.12.3"
-version = "0.1.2"
+version = "0.1.3"
 
 [dependencies]
 aws-sesv2 = { path = "../../../providers/aws-sesv2" }

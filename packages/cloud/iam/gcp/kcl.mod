@@ -1,7 +1,7 @@
 [package]
 name = "iam-gcp"
 edition = "v0.12.3"
-version = "0.1.2"
+version = "0.1.3"
 
 [dependencies]
 gcp-cloudplatform = { path = "../../../providers/gcp-cloudplatform" }

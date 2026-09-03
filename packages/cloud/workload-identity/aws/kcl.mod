@@ -1,7 +1,7 @@
 [package]
 name = "workload-identity-aws"
 edition = "v0.12.3"
-version = "0.1.2"
+version = "0.1.3"
 
 [dependencies]
 aws-iam = { path = "../../../providers/aws-iam" }

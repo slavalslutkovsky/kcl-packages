@@ -1,7 +1,7 @@
 [package]
 name = "workload-identity-azure"
 edition = "v0.12.3"
-version = "0.1.2"
+version = "0.1.3"
 
 [dependencies]
 azure-managedidentity = { path = "../../../providers/azure-managedidentity" }

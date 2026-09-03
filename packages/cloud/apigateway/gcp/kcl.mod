@@ -1,7 +1,7 @@
 [package]
 name = "apigateway-gcp"
 edition = "v0.12.3"
-version = "0.1.2"
+version = "0.1.3"
 
 [dependencies]
 gcp-apigee = { path = "../../../providers/gcp-apigee" }

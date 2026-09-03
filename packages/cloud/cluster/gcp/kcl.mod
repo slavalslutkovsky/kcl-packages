@@ -1,7 +1,7 @@
 [package]
 name = "cluster-gcp"
 edition = "v0.12.3"
-version = "0.1.2"
+version = "0.1.3"
 
 [dependencies]
 gcp-container = { path = "../../../providers/gcp-container" }
