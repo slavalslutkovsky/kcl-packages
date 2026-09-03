@@ -1,8 +1,8 @@
 [dependencies]
   [dependencies.app]
     name = "app"
-    full_name = "app_0.1.2"
-    version = "0.1.2"
+    full_name = "app_0.1.3"
+    version = "0.1.3"
   [dependencies.cert-manager]
     name = "cert-manager"
     full_name = "cert-manager_0.0.1"
