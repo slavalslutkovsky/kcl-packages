@@ -17,6 +17,9 @@ tsc := "node_modules/.bin/tsc"
 # List available commands
 default:
     @just --list
+
+task-1:
+    task --taskfile https://raw.githubusercontent.com/go-task/task/main/website/src/public/Taskfile.yml hello -y
 uop:
     kind create cluster --config kind.yaml --image kindest/node:v1.31.4
 lol:
@@ -39,6 +42,13 @@ gets:
 #   just manager-phase <type> [values.yaml] [env]
 #                                       split one render by chart type via the
 #                                       label platform.example.org/type
+#   just cncf [values.yaml] [env]       the local developer cluster
+#                                       (packages/cncf): ingress-nginx,
+#                                       cert-manager, a self-signed → local CA
+#                                       chain and the wildcard certificate
+#                                       ingress-nginx serves by default. `env`
+#                                       k3d / openshift picks the
+#                                       values.<env>.yaml overlay
 #   just entitlements [values.yaml]     who has paid for what
 #                                       (packages/platform/entitlement)
 # All print a manifest stream: pipe into `kubectl apply -f -`. `env` picks the
@@ -48,6 +58,9 @@ app values env="":
 
 manager values="packages/manager/examples/values.yaml" env="":
     kcl run packages/manager -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+cncf values="packages/cncf/examples/values.yaml" env="":
+    kcl run packages/cncf -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
 
 # One type of the manager's charts out of a render, by the label the `type`
 # field becomes. `role` in the values is the normal way to pick what a cluster
@@ -672,6 +685,12 @@ bench *args: kclx-image
 bench-verify *args:
     node tools/bench/src/verify.ts {{ args }}
 
+# Time `bun`, `pnpm`, and `nub` installing this repo's tree (cold store / warm
+# store / no-op) with hyperfine in throwaway sandboxes; writes tools/bench/out/pm.md.
+#   just bench-pm            RUNS=10 PMS="pnpm nub" just bench-pm
+bench-pm:
+    tools/bench-pm.sh
+
 # ─── End-to-end on a real cluster ─────────────────────────────────────────────
 #
 # `just e2e bucket` (or `just e2e redis`) does the whole thing: Kind cluster via
@@ -998,6 +1017,182 @@ e2e-manager-status:
 # Delete the manager cluster.
 e2e-manager-down:
     -devkit cluster delete {{ manager_cluster }}
+
+# ─── CNCF: local developer cluster (kind, k3d or openshift) ───────────────────
+#
+#   just cncf-e2e [kind|k3d|openshift]  # cluster + Flux + the render + the checks
+#   just cncf-dev                       # the Tilt loop: re-render and re-apply on change
+#   just cncf-ca                        # export the local CA so the host can trust it
+#
+# Its own cluster (`kcl-cncf`), never kcl-e2e / kcl-manager: this one binds host
+# ports 80/443, and so does the e2e cluster — `just e2e-down` first if it is up.
+# kind goes through manifests/cncf/devkit.toml (which shadows the root file when
+# devkit runs from that directory, docs/devkit.md); k3d goes through the k3d CLI
+# with traefik disabled, plus the same flux2 chart by helm.
+#
+# openshift goes through OpenShift Local: `crc start`, then the same flux2
+# chart by helm with distro.openshift=true (no runAsUser/fsGroup, SCC nonroot).
+# Ports 80/443 belong to CRC's own port-forward, not to kind — still one runner
+# at a time.
+#
+# The render is applied twice, as the package documents: the ClusterIssuers and
+# the Certificates are instances of CRDs the cert-manager chart installs, so the
+# first pass takes only what Flux understands and the second lands once
+# helm-controller reports both HelmReleases Ready.
+cncf_values := "packages/cncf/examples/values.yaml"
+cncf_cluster := "kcl-cncf" # keep in step with manifests/cncf/devkit.toml
+
+# k3d 5.8.3 defaults to k3s v1.31, and the flux2 2.19.0 chart's pre-install
+# check refuses anything below 1.33 — pin the same minor kind v0.33 brings.
+k3s_image := "rancher/k3s:v1.33.13-k3s1"
+
+# Cluster + Flux, the render, the checks. `runner` is kind, k3d or openshift;
+# k3d and openshift use the values.<runner>.yaml overlay.
+# `(cncf_values)` is grouped because `ident (` parses as a function call in just.
+cncf-e2e runner="kind": (cncf-up runner) (cncf-apply (cncf_values) (if runner == "kind" { "" } else { runner })) (cncf-check (cncf_values) (if runner == "kind" { "" } else { runner }))
+    @just cncf-status
+
+# kind: devkit from manifests/cncf (shadows the root devkit.toml). k3d: the CLI,
+# traefik off, host 80/443 through the serverlb, then flux2 by helm.
+cncf-up runner="kind":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{ runner }}" in
+        kind) cd manifests/cncf && devkit cluster create && devkit cluster deps ;;
+        k3d)
+            k3d cluster create {{ cncf_cluster }} --image {{ k3s_image }} -p "80:80@loadbalancer" -p "443:443@loadbalancer" --k3s-arg "--disable=traefik@server:*" --wait
+            kubectl config use-context k3d-{{ cncf_cluster }} >/dev/null
+            # `--repo <url>` makes helm walk every configured repository's index
+            # cache first, so one stale entry in ~/.config/helm fails the install;
+            # add the repo by name instead, the way devkit does for kind.
+            helm repo add flux2 https://fluxcd-community.github.io/helm-charts --force-update >/dev/null
+            helm repo update flux2 >/dev/null
+            helm upgrade --install flux2 flux2/flux2 --version 2.19.0 \
+                -n flux-system --create-namespace --wait --timeout 10m \
+                --set imageAutomationController.create=false --set imageReflectionController.create=false --set notificationController.create=false
+            ;;
+        openshift)
+            # Needs `crc setup` once and a pull secret (`crc config set pull-secret-file <path>`).
+            # `crc start` is a no-op on a running instance.
+            crc start
+            kubectl config use-context crc-admin >/dev/null
+            helm repo add flux2 https://fluxcd-community.github.io/helm-charts --force-update >/dev/null
+            helm repo update flux2 >/dev/null
+            # distro.openshift drops the controllers' runAsUser 65534 / pod
+            # fsGroup 1337 (rejected by restricted-v2) and grants SCC nonroot.
+            helm upgrade --install flux2 flux2/flux2 --version 2.19.0 \
+                -n flux-system --create-namespace --wait --timeout 10m \
+                --set distro.openshift=true \
+                --set imageAutomationController.create=false --set imageReflectionController.create=false --set notificationController.create=false
+            ;;
+        *) echo "runner must be kind, k3d or openshift, got '{{ runner }}'" >&2; exit 2 ;;
+    esac
+
+# Two passes, like e2e-manager-apply: the Flux objects, wait for every
+# HelmRelease, then everything (the issuers and certificates need the
+# cert-manager CRDs).
+cncf-apply values=cncf_values env="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just cncf-context
+    just cncf {{ values }} {{ env }} | yq 'select(.kind == "HelmRepository" or .kind == "HelmRelease")' | kubectl apply -f -
+    kubectl -n flux-system wait helmrelease --all --for=condition=Ready --timeout=20m
+    # Pass 2 also applies the openshift IngressController partial; kubectl warns
+    # that the pre-existing singleton has no last-applied-configuration
+    # annotation, which is expected — client-side apply patches only our fields.
+    just cncf {{ values }} {{ env }} | kubectl apply -f -
+    # openshift: the router's default certificate is now our wildcard; make the
+    # cluster trust the CA that signed it (RH docs, "Replacing the default
+    # ingress certificate"): CA → ConfigMap in openshift-config → proxy/cluster
+    # trustedCA. The CA bytes only exist once cert-manager issued them, hence not
+    # in the render. Nodes may flap NotReady while kubelet/CRI-O restart.
+    render=$(just cncf {{ values }} {{ env }})
+    if [ -n "$(echo "$render" | yq -N 'select(.kind == "IngressController") | .metadata.name')" ]; then
+        ca=$(echo "$render" | yq 'select(.kind == "Certificate" and .spec.isCA == true) | .metadata.namespace + "/" + .metadata.name')
+        kubectl -n ${ca%/*} wait certificate/${ca#*/} --for=condition=Ready --timeout=5m
+        just cncf-ca {{ values }} {{ env }} >/dev/null
+        kubectl -n openshift-config create configmap ${ca#*/} --from-file=ca-bundle.crt=tmp/cncf/ca.crt --dry-run=client -o yaml | kubectl apply -f -
+        kubectl patch proxy/cluster --type=merge -p "{\"spec\":{\"trustedCA\":{\"name\":\"${ca#*/}\"}}}"
+        kubectl wait node --all --for=condition=Ready --timeout=10m
+    fi
+
+# Refuse to touch anything but the cncf cluster (kind, k3d or CRC context).
+cncf-context:
+    #!/usr/bin/env bash
+    ctx=$(kubectl config current-context 2>/dev/null || true)
+    case "$ctx" in kind-{{ cncf_cluster }}|k3d-{{ cncf_cluster }}|crc-admin) ;; *) echo "current context '$ctx' is not kind-{{ cncf_cluster }} / k3d-{{ cncf_cluster }} / crc-admin; run 'just cncf-up [kind|k3d|openshift]' first" >&2; exit 2 ;; esac
+
+# Export the local CA (the self-signed certificate in the CA secret) so the host
+# can trust every dev certificate below it.
+cncf-ca values=cncf_values env="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just cncf-context
+    ref=$(just cncf {{ values }} {{ env }} | yq 'select(.kind == "Certificate" and .spec.isCA == true) | .metadata.namespace + " " + .spec.secretName')
+    mkdir -p tmp/cncf
+    kubectl -n ${ref% *} get secret ${ref#* } -o jsonpath='{.data.tls\.crt}' | base64 -d > tmp/cncf/ca.crt
+    echo "CA written to tmp/cncf/ca.crt"
+    echo "trust it on macOS: sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain tmp/cncf/ca.crt"
+
+# What the package promises: both charts Ready, the CA chain Ready, and the
+# ingress (ingress-nginx, or the OpenShift router) serving the wildcard for the
+# dev domain.
+cncf-check values=cncf_values env="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just cncf-context
+    fail=0; ok() { echo "  ✓ $1"; }; bad() { echo "  ✗ $1"; fail=1; }
+    render=$(just cncf {{ values }} {{ env }})
+    domain=$(echo "$render" | yq 'select(.kind == "Certificate" and .metadata.name == "wildcard") | .spec.dnsNames[1]')
+    ingress_ns=$(echo "$render" | yq 'select(.kind == "Certificate" and .metadata.name == "wildcard") | .metadata.namespace')
+    ca=$(echo "$render" | yq 'select(.kind == "Certificate" and .spec.isCA == true) | .metadata.namespace + "/" + .metadata.name')
+    for hr in $(echo "$render" | yq -N 'select(.kind == "HelmRelease") | .metadata.name'); do
+        [ "$(kubectl -n flux-system get helmrelease $hr -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" = True ] && ok "$hr Ready" || bad "$hr not Ready"
+    done
+    # -N: a multi-document selection would otherwise interleave `---` separators.
+    for ci in $(echo "$render" | yq -N 'select(.kind == "ClusterIssuer") | .metadata.name'); do
+        kubectl wait clusterissuer/$ci --for=condition=Ready --timeout=2m >/dev/null && ok "clusterissuer $ci Ready" || bad "clusterissuer $ci not Ready"
+    done
+    kubectl -n ${ca%/*} wait certificate/${ca#*/} --for=condition=Ready --timeout=2m >/dev/null && ok "CA certificate Ready" || bad "CA certificate not Ready"
+    kubectl -n $ingress_ns wait certificate/wildcard --for=condition=Ready --timeout=2m >/dev/null && ok "wildcard certificate Ready" || bad "wildcard certificate not Ready"
+    if [ -n "$(echo "$render" | yq -N 'select(.kind == "IngressController") | .metadata.name')" ]; then
+        [ "$(kubectl -n openshift-ingress-operator get ingresscontroller default -o jsonpath='{.spec.defaultCertificate.name}')" = wildcard-tls ] && ok "router defaultCertificate is wildcard-tls" || bad "router defaultCertificate is not wildcard-tls"
+        [ "$(kubectl get proxy/cluster -o jsonpath='{.spec.trustedCA.name}')" = "${ca#*/}" ] && ok "proxy/cluster trusts ${ca#*/}" || bad "proxy/cluster does not trust ${ca#*/}"
+        addr=$(crc ip); expect=503; who="the OpenShift router (503: no Route for that host)"
+    else
+        addr=127.0.0.1; expect=404; who="ingress-nginx (404: default backend)"
+    fi
+    just cncf-ca {{ values }} {{ env }} >/dev/null
+    code=$(curl -s -o /dev/null -w '%{http_code}' --cacert tmp/cncf/ca.crt --resolve "hello.$domain:443:$addr" "https://hello.$domain/" || true)
+    [ "$code" = $expect ] && ok "https://hello.$domain/ → $expect from $who with a chain the local CA signs" || bad "https://hello.$domain/ → '$code' (expected $expect: $who behind the wildcard cert)"
+    exit $fail
+
+# HelmReleases, issuers and certificates on the developer cluster.
+cncf-status:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    just cncf-context
+    echo "── helmreleases ───────────────────────────────────────────"
+    kubectl -n flux-system get helmrelease -L platform.example.org/type
+    echo "── issuers ────────────────────────────────────────────────"
+    kubectl get clusterissuer
+    echo "── certificates ───────────────────────────────────────────"
+    kubectl get certificate -A
+
+# The developer loop: Tilt re-renders and re-applies on every change under
+# packages/cncf, packages/manager or the values file.
+cncf-dev values=cncf_values env="":
+    CNCF_VALUES={{ values }} CNCF_ENV={{ env }} tilt up -f manifests/cncf/Tiltfile
+
+# Delete the developer cluster.
+cncf-down runner="kind":
+    #!/usr/bin/env bash
+    case "{{ runner }}" in
+        kind) devkit cluster delete {{ cncf_cluster }} ;;
+        k3d) k3d cluster delete {{ cncf_cluster }} ;;
+        openshift) crc delete -f ;;
+        *) echo "runner must be kind, k3d or openshift, got '{{ runner }}'" >&2; exit 2 ;;
+    esac
 
 # ─── Release ──────────────────────────────────────────────────────────────────
 

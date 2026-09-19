@@ -1,0 +1,8 @@
+# The OpenShift Local (CRC) overlay for values.yaml:
+# `just cncf packages/cncf/examples/values.yaml openshift`.
+# No ingress-nginx: the OpenShift router already serves 80/443 for
+# *.apps-crc.testing, so the wildcard Certificate is issued for that domain,
+# placed in openshift-ingress and set as the router's default certificate.
+# `just cncf-apply` then trusts the local CA cluster-wide (proxy/cluster).
+runner: openshift
+domain: apps-crc.testing

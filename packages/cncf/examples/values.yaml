@@ -1,0 +1,36 @@
+# Local developer cluster values → cncf.Cncf. Render with
+#   kcl run /abs/path/to/packages/cncf -D values=<this file> -q | kubectl apply -f -
+# or `just cncf` (this file is the default), and apply it with `just cncf-apply`.
+#
+# Two passes on a bare cluster: the ClusterIssuers and the two Certificates are
+# instances of CRDs the cert-manager chart installs, so pass 1 applies the Flux
+# objects, waits for both HelmReleases to be Ready, and pass 2 applies
+# everything. Flux (source-controller + helm-controller) must already be on the
+# cluster — `just cncf-up kind|k3d|openshift` installs it.
+#
+# `runner` is how ingress-nginx is exposed on this laptop:
+#   kind → hostPort 80/443 on the ingress-ready control-plane node
+#   k3d  → a LoadBalancer Service, published by the k3d serverlb container
+#   openshift → the OpenShift router; wildcard as its default certificate, and
+#          no ingress-nginx (the router already serves 80/443)
+# values.k3d.yaml and values.openshift.yaml next to this file are those
+# overlays: `just cncf packages/cncf/examples/values.yaml k3d`.
+#
+# The certificate chain is local and offline: `local-root` (self-signed) signs
+# the CA into local-ca-tls, `local-ca` issues `*.localtest.me` from it, and
+# ingress-nginx serves that wildcard as its default TLS certificate. Trust the
+# CA on the host with `just cncf-ca`. *.localtest.me resolves to 127.0.0.1, so
+# no /etc/hosts entry is needed.
+
+name: dev
+runner: kind
+domain: localtest.me
+
+ingress:
+  className: nginx
+  default: true
+
+certs:
+  rootIssuer: local-root
+  caIssuer: local-ca
+  caSecret: local-ca-tls

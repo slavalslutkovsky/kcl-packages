@@ -6,6 +6,8 @@ oci/
 .env
 
 .claude/worktrees
+# per-developer overrides; .claude/settings.json and the skills/hooks are shared
+.claude/settings.local.json
 
 # scratch dir: `just seed-queue-providers` downloads CRDs here
 tmp/
