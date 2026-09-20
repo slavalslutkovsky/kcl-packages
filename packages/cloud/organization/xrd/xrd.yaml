@@ -1,0 +1,330 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: organizations.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: Organization
+    plural: organizations
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                The resource hierarchy of one cloud organization, declared in a
+                single XR: the folder tree, the accounts inside it, the
+                organization policies that constrain them, the org-level audit
+                configuration, and the IAM grants at the top of the tree.
+
+                Every field below is a COMMON parameter mapped onto each
+                backend's native objects:
+
+                  gcp    Folder, Project (+ ProjectService per enabled API),
+                         orgpolicy Policy, OrganizationIAMAuditConfig,
+                         Organization/FolderIAMMember
+                  aws    OrganizationalUnit, Account, Organizations Policy
+                         (service control policy) + PolicyAttachment
+                  azure  ManagementGroup, ManagementGroupPolicyAssignment,
+                         RoleAssignment scoped to the management group
+
+                The three clouds agree on the tree and disagree on everything
+                hanging off it, so a field a backend cannot honour FAILS the
+                render with a message naming the alternative — it is never
+                silently dropped. Read each field's description for the
+                backends that refuse it.
+
+                This is the "run once, own forever" XR — everything below is
+                org-wide and singular, so ONE Organization XR should exist per
+                cloud organization. Two XRs naming the same orgId with
+                different folder or policy sets fight over the same external
+                objects.
+
+                Deliberately NOT here:
+                  * service accounts and their grants — that is Identity
+                    (cloud.example.org/v1alpha1), one XR per workload identity;
+                  * per-account networks, clusters, databases — the capability
+                    XRs own those, and they take an account/project id as input;
+                  * billing accounts, creation of the organization itself and
+                    domain verification — none of the three clouds exposes them
+                    as an API a controller may create; they are bought, then
+                    referenced.
+              properties:
+                orgId:
+                  type: string
+                  minLength: 1
+                  description: 'Identifier of the hierarchy root every composed object hangs from. gcp: the numeric organization id ("477132171939"), NOT the domain. aws: the Organizations root id ("r-abc1") — the root, not the management account id, because that is what an OU or an account is parented to. azure: the name (GUID) of the parent management group, which for a whole tenant is the tenant id. Changing it on a live XR re-parents nothing: it orphans the old hierarchy and builds a new one.'
+                billingAccount:
+                  type: string
+                  description: 'Where the accounts in this hierarchy are billed. gcp: the billing account id (XXXXXX-XXXXXX-XXXXXX) linked to every project that does not override it, and a project with no billing account at all is REJECTED. aws: ignored — an account created inside an organization is consolidated onto the management account by construction, and there is nothing to link. azure: ignored, since this backend creates no subscriptions.'
+                owner:
+                  type: string
+                  description: 'Default owner email for every account that does not carry its own spec.projects[].owner. aws needs one per account and has no way to invent it; gcp ignores it, since a project is owned through IAM and not through an address.'
+                folders:
+                  type: array
+                  description: 'The folder tree — the grouping level every cloud puts between the root and the accounts (gcp Folder, aws Organizational Unit, azure Management Group). Each entry is one node; nesting is expressed with parent, which names another entry in this same list. Entries may appear in any order — the backend resolves parents by reference or by observed id, never by position.'
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 30
+                        pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                        description: Key of this folder inside the XR — referenced by other folders' parent, by projects' folder, by policies' folder and by iam entries' folder. Also the default display name. Lowercase RFC 1123 label, because it becomes part of the composed resource name and, on azure, of the management-group name.
+                      displayName:
+                        type: string
+                        maxLength: 30
+                        description: The node's display name in the console. Defaults to name. Must be unique amongst its siblings on gcp and aws; azure allows duplicates but the name (the key) stays the identifier.
+                      parent:
+                        type: string
+                        description: name of the folder this one sits under. Unset means directly under the hierarchy root (spec.orgId). A parent that is not declared in folders REJECTS the render, and so does a cycle.
+                      deletionProtection:
+                        type: boolean
+                        default: false
+                        description: 'gcp only: the API refuses to delete a protected folder. Defaults to false here (GCP''s own API default is true) so that a folder this XR created can also be removed by editing the XR. aws and azure have no such flag, so setting it true there REJECTS the render rather than pretending the node is protected.'
+                    required: [name]
+                projects:
+                  type: array
+                  description: 'The accounts inside the hierarchy — the billing and isolation unit every other capability XR targets (gcp Project, aws Account). This list is the boundary between org management and workloads. azure REJECTS it: creating a subscription needs the azurerm_subscription resource, which the installed provider family does not ship, so subscriptions are bought out of band.'
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 4
+                        maxLength: 64
+                        pattern: '^[a-z0-9][-a-z0-9]{2,62}[a-z0-9]$'
+                        description: 'Identifier of the account inside the XR: the key used by folder/policy/iam references and by the composed resource name. gcp uses it verbatim as the project id, so it additionally has to satisfy GCP''s own rule (6-30 chars, starting with a letter) — the gcp backend rejects anything else rather than letting the API do it later. aws uses it as the account name and takes the account id from the API.'
+                      displayName:
+                        type: string
+                        maxLength: 50
+                        description: Display name in the console. Defaults to name. On aws this is the account name shown in Organizations.
+                      folder:
+                        type: string
+                        description: name of the folder this account lives in. Unset puts it directly under the hierarchy root. A folder that is not declared in folders REJECTS the render.
+                      owner:
+                        type: string
+                        description: 'Email address of the account owner. aws REQUIRES it — an account is created against a unique, never-reused root email, and there is no way to invent one — so an entry without owner (and without spec.owner) fails the aws render. gcp ignores it: a project has no owner address, only IAM members.'
+                      billingAccount:
+                        type: string
+                        description: Billing account for this account, overriding spec.billingAccount. Same per-backend meaning as spec.billingAccount.
+                      services:
+                        type: array
+                        items: {type: string}
+                        description: 'gcp only: APIs to enable on the project (compute.googleapis.com, container.googleapis.com, …), one ProjectService each. They reconcile once the project exists; until then the ProjectService reports an error and Crossplane retries — normal ordering, not a failure. aws has no per-account service enablement (an AWS service is available to every account) and azure''s resource-provider registration is not modelled, so both REJECT the field.'
+                      labels:
+                        type: object
+                        additionalProperties: {type: string}
+                        description: Metadata on this account, merged over spec.tags (this wins on a key collision). GCP project labels / AWS account tags.
+                      autoCreateNetwork:
+                        type: boolean
+                        default: false
+                        description: 'gcp only: keep the legacy "default" VPC GCP creates with every project. False (the default here, unlike GCP''s own API) deletes it — a default network is an unaudited open network in every region, and the network XR is how a VPC is meant to appear. Nothing equivalent exists on aws or azure, which create no network with an account; setting it true there REJECTS the render.'
+                      whenDeleted:
+                        type: string
+                        enum: [prevent, abandon, delete]
+                        default: delete
+                        description: 'What the cloud does when the composed account object goes away, as opposed to spec.deletionPolicy, which decides whether Crossplane asks at all. gcp: prevent refuses the deletion, abandon leaves the project, delete schedules it (30-day recovery window). aws: delete closes the account (closeOnDeletion), prevent and abandon both leave it in the organization — AWS cannot refuse the removal of the managed resource, it can only decline to close the account.'
+                    required: [name]
+                policies:
+                  type: array
+                  description: |
+                    Guardrails applied to a node of the hierarchy. Each entry
+                    is one policy at one scope, and carries exactly one
+                    enforcement shape: enforce (a switch the cloud either
+                    turns on or off), or allowedValues/deniedValues/allowAll/
+                    denyAll (a list of values the cloud permits or refuses), or
+                    reset (inherit nothing).
+
+                    Backends:
+                      gcp    one Org Policy v2 Policy per entry; every shape
+                             is expressible
+                      aws    one service control policy + one attachment per
+                             entry; the value lists become the Action arrays
+                             of an SCP statement, so entries must name IAM
+                             actions. A boolean `enforce` has no SCP
+                             equivalent and REJECTS the render
+                      azure  one ManagementGroupPolicyAssignment per entry;
+                             `constraint` is a policy definition id and
+                             `enforce` maps to the enforcement mode. Value
+                             lists are policy-definition parameters, which are
+                             not portable, so they REJECT the render
+                  items:
+                    type: object
+                    properties:
+                      constraint:
+                        type: string
+                        minLength: 1
+                        description: 'What is being constrained, in the backend''s own vocabulary. gcp: an Org Policy constraint id, built-in (compute.requireOsLogin, iam.disableServiceAccountKeyCreation) or custom (custom.myConstraint), with no constraints/ prefix. aws: the name of the service control policy this entry composes. azure: the policy definition id to assign — a full /providers/Microsoft.Authorization/policyDefinitions/<id> path or the bare definition name.'
+                      folder:
+                        type: string
+                        description: name of the folder to attach the policy to. Unset attaches it to the hierarchy root, where it applies to everything beneath. A folder that is not declared in folders REJECTS the render.
+                      enforce:
+                        type: boolean
+                        description: 'A switch, for policies that have no values: gcp enforces (or explicitly un-enforces) a boolean constraint; azure turns the assignment''s enforcement mode Default/DoNotEnforce. aws has no equivalent — an SCP always names actions — and REJECTS it. Setting it together with any list field REJECTS the render everywhere.'
+                      allowedValues:
+                        type: array
+                        items: {type: string}
+                        description: 'The allow list. gcp: the values a list constraint permits (in:us-locations for gcp.resourceLocations). aws: IAM actions the SCP allows, everything else being denied. azure: not expressible (a policy assignment takes definition-specific parameters), so it REJECTS the render.'
+                      deniedValues:
+                        type: array
+                        items: {type: string}
+                        description: 'The deny list. gcp: the values a list constraint refuses. aws: IAM actions the SCP denies. azure: not expressible, so it REJECTS the render.'
+                      allowAll:
+                        type: boolean
+                        description: 'Allow every value. Mutually exclusive with denyAll and with the value lists. gcp only — aws would need an explicit Action list and azure a parameterised definition, so both REJECT it.'
+                      denyAll:
+                        type: boolean
+                        description: Deny every value. gcp only, for the same reason as allowAll.
+                      inheritFromParent:
+                        type: boolean
+                        description: 'gcp only: merge the rules set higher in the hierarchy instead of making this the new root of evaluation, for list constraints. GCP itself rejects it on boolean constraints; aws and azure have no inheritance switch and REJECT the field.'
+                      reset:
+                        type: boolean
+                        description: 'gcp only: discard everything inherited from above and fall back to the constraint''s own default. Cannot be combined with any rule field. An SCP and a policy assignment have nothing to reset — detach them instead — so aws and azure REJECT it.'
+                      dryRun:
+                        type: boolean
+                        default: false
+                        description: 'Observe the policy without blocking anything — the way to introduce a guardrail on a populated organization. gcp publishes the rules as the policy''s dry-run spec; azure assigns the definition with enforcement mode DoNotEnforce (its audit-only mode). aws has no such mode: an attached SCP always denies, so dryRun REJECTS the aws render.'
+                    required: [constraint]
+                auditLogging:
+                  type: object
+                  description: 'Organization-wide audit logging. gcp only: one OrganizationIAMAuditConfig per service, enabling the data-access log types that are not written for free. aws (an organization CloudTrail) and azure (a management-group diagnostic setting) both need a destination — a bucket, a storage account or a workspace — which this API deliberately does not carry, because it would be a cloud-specific field; both REJECT the block and leave the trail to a Bucket XR plus an explicit trail resource. Omit it to configure nothing.'
+                  properties:
+                    services:
+                      type: array
+                      items: {type: string}
+                      default: [allServices]
+                      description: Services to configure, one audit config each. "allServices" is the catch-all; naming a service (storage.googleapis.com) alongside it overrides the catch-all for that service.
+                    logTypes:
+                      type: array
+                      items:
+                        type: string
+                        enum: [ADMIN_READ, DATA_READ, DATA_WRITE]
+                      default: [ADMIN_READ, DATA_READ, DATA_WRITE]
+                      description: Which log types to enable. DATA_READ on allServices is the expensive one — it logs every object read in every bucket.
+                    exemptedMembers:
+                      type: array
+                      items: {type: string}
+                      description: 'Members whose activity is not logged (serviceAccount:…, user:…). Applied to every log type in this config; use it for high-volume automation identities, never for humans.'
+                iamBindings:
+                  type: array
+                  description: 'Access grants at the top of the hierarchy: one principal, one role, at the root or at a folder. Additive, so they never clobber grants made outside this XR. gcp composes Organization/FolderIAMMember; azure composes a RoleAssignment scoped to the management group. aws REJECTS the field — AWS Organizations has no IAM at OU scope, permissions there come from SCPs (spec.policies) and from roles inside each account (the Identity XR).'
+                  items:
+                    type: object
+                    properties:
+                      member:
+                        type: string
+                        minLength: 1
+                        description: 'The principal. gcp: an IAM member (user:a@b.com, group:team@b.com, serviceAccount:x@y.iam.gserviceaccount.com, domain:b.com, principal://… for a federated identity). azure: the object id (GUID) of the user, group or service principal — Azure role assignments take an id, not an address.'
+                      role:
+                        type: string
+                        minLength: 1
+                        description: 'The role granted. gcp: roles/resourcemanager.folderAdmin, roles/billing.user, organizations/<id>/roles/<custom>. azure: a built-in role name (Reader, Contributor) or a full role definition id.'
+                      folder:
+                        type: string
+                        description: name of the folder to grant on. Unset grants at the hierarchy root — the widest blast radius there is, so prefer a folder. A folder that is not declared in folders REJECTS the render.
+                      condition:
+                        type: object
+                        description: 'Condition narrowing the grant. gcp: an IAM condition in CEL. azure: not portable — a role-assignment condition is written in Azure''s own ABAC dialect against a different attribute set — so azure REJECTS it.'
+                        properties:
+                          expression:
+                            type: string
+                            description: The condition expression.
+                          title:
+                            type: string
+                            description: Short name for the condition; required by the GCP API, defaulted from the role when omitted.
+                          description:
+                            type: string
+                            description: What the condition restricts.
+                        required: [expression]
+                    required: [member, role]
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the cloud objects when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps the whole hierarchy). Orphan is the safe setting for a live organization — a deleted XR then stops managing the tree instead of scheduling it for deletion or closure.
+                tags:
+                  type: object
+                  additionalProperties: {type: string}
+                  description: 'Key/value metadata applied to every composed account (spec.projects[].labels wins on a collision) and, where the cloud allows it, to the folder nodes: GCP project labels, AWS OU and account tags. It reaches nothing else — GCP folders take resource-manager tag bindings rather than free-form labels, Azure management groups carry no tags at all, and policies and grants carry none on any cloud.'
+              required:
+                - orgId
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once every declared folder reports an id and every declared account reports its cloud identifier — the hierarchy exists. Says nothing about policies, grants or API enablement.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (gcp | aws | azure).
+                id:
+                  type: string
+                  description: 'Resource name of the hierarchy root: organizations/<orgId> (gcp), the Organizations root id (aws), /providers/Microsoft.Management/managementGroups/<orgId> (azure).'
+                folders:
+                  type: array
+                  description: 'One entry per declared folder, in spec order, with the id the cloud assigned. Feed folderId to anything outside this XR that has to parent onto the same tree.'
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: The spec key of the folder.
+                      folderId:
+                        type: string
+                        description: 'Id of the node, empty until the cloud creates it: GCP numeric folder id, AWS ou-… id, Azure management-group name.'
+                      parent:
+                        type: string
+                        description: 'Identifier of the parent as observed: organizations/<id> or folders/<id> (gcp), the root or parent OU id (aws), the parent management-group id (azure).'
+                projects:
+                  type: array
+                  description: One entry per declared account, in spec order. Empty on backends that compose no accounts.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: The spec key of the account.
+                      projectId:
+                        type: string
+                        description: 'Cloud identifier of the account as observed: the GCP project id (known from the spec ahead of creation) or the AWS 12-digit account id.'
+                      number:
+                        type: string
+                        description: 'Second, numeric identifier where the cloud has one — the GCP project number, which is what IAM principals and VPC Service Controls refer to. Empty on AWS, whose account id is already in projectId.'
+                folderCount:
+                  type: integer
+                  description: Number of folders this XR manages.
+                projectCount:
+                  type: integer
+                  description: Number of accounts this XR manages.
+                policyCount:
+                  type: integer
+                  description: Number of policies this XR manages.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL of the resource hierarchy.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: ORG
+          type: string
+          jsonPath: .spec.orgId
+        - name: FOLDERS
+          type: integer
+          jsonPath: .status.folderCount
+        - name: PROJECTS
+          type: integer
+          jsonPath: .status.projectCount

@@ -1,0 +1,25 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: NetworkHub
+metadata:
+  namespace: default
+  name: prod-hub-azure
+spec:
+  region: westeurope
+  resourceGroup: platform-rg     # required here; the group must already exist
+  hubCidr: 10.200.0.0/23         # the Virtual Hub's own routers live here
+  topology: isolated
+  spokes:
+    - name: shared-services
+      network: /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/platform-rg/providers/Microsoft.Network/virtualNetworks/shared-vnet
+      shared: true
+    - name: team-a
+      network: /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/team-a-rg/providers/Microsoft.Network/virtualNetworks/team-a-vnet
+    - name: team-b
+      network: /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/team-b-rg/providers/Microsoft.Network/virtualNetworks/team-b-vnet
+  deletionPolicy: Delete
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure

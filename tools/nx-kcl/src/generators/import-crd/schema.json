@@ -49,6 +49,10 @@
       "enum": ["cluster", "namespaced"],
       "description": "Which CRD flavor to import: cluster-scoped (*.upbound.io) or namespaced v2 (*.m.upbound.io).",
       "default": "cluster"
+    },
+    "sourceLabel": {
+      "type": "string",
+      "description": "Overrides the `# Source:` provenance line stamped into main.k. For --from directories built from a pinned upstream (see tools/datree-crd.sh), where the local path is meaningless."
     }
   },
   "required": ["name"]

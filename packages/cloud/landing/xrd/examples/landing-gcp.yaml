@@ -1,0 +1,29 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: LandingPage
+metadata:
+  namespace: default
+  name: acme-landing-gcp
+spec:
+  region: europe-west1           # GCS bucket location; the load balancer is global
+  domain: www.acme.example       # status.dnsTarget is the global address IP -> an A record
+  content:
+    html: |
+      <!doctype html>
+      <html lang="en"><head><meta charset="utf-8"><title>ACME</title></head>
+        <body><main><h1>ACME</h1></main></body>
+      </html>
+    files:
+      - path: 404.html
+        content: <!doctype html><html><body>Not found</body></html>
+  cdn:
+    enabled: true                # BackendBucket enableCdn behind a global HTTPS load balancer
+    ttlSeconds: 1800
+  tls:
+    enabled: true                # Google-managed SSL certificate for spec.domain
+  deletionPolicy: Delete
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp

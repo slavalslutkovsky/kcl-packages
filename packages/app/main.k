@@ -25,7 +25,13 @@ Overlay model (like kustomize overlays / helm -f base -f env):
   values.<env>.yaml   per-env diffs; deep-merged over base (right wins)
 
 Library use (typed, in code): `import app`; call app.render / app.renderTask /
-app.renderRelease / app.mergeValues. See examples/.
+app.renderRelease / app.catalogEntities / app.mergeValues. See examples/.
+
+`-D catalog=true` renders the Backstage entities of the `catalog:` block
+instead of the manifests — entities are not Kubernetes objects, so the two
+streams are never mixed:
+
+  kcl run /abs/path/to/packages/app -D values=<file> -D catalog=true -q > catalog-info.yaml
 
 With no values file present (e.g. `nx build app` from the repo root) this renders
 a built-in demo so the build still smoke-tests the package.
@@ -65,4 +71,9 @@ _values = lib.mergeValues(_baseValues, yaml.decode(file.read(_overlayPath))) if 
 
 _release: lib.Release = lib.Release {**_values}
 
-manifests.yaml_stream(lib.renderRelease(_release))
+# `-D catalog=true` switches the output to Backstage entities. Stringified
+# because -D parses an unquoted `true` as a bool.
+_catalog = str(option("catalog", default="")).lower() in ["true", "1", "yes"]
+assert not _catalog or _release.catalog, "-D catalog=true needs a `catalog:` block in '${_valuesPath}': a Backstage entity needs at least an `owner`."
+
+manifests.yaml_stream(lib.catalogEntities(_release) if _catalog else lib.renderRelease(_release))

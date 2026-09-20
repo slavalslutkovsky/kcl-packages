@@ -7,6 +7,8 @@
 #   **/kcl.mod.lock             the kcl CLI (kcl mod add/update)
 #   **/CHANGELOG.md             nx release (nx.json release.changelog.projectChangelogs)
 #   docs/install-graph.md       node tools/graph/src/install-graph.ts (just graph)
+#   catalog/crossplane.yaml     node tools/catalog/src/catalog.ts (just crossplane-catalog)
+#   docs/crossplane-graph.md    node tools/catalog/src/catalog.ts (just crossplane-catalog)
 #
 # Exit 0 with no output = no decision; the normal permission flow applies.
 set -uo pipefail
@@ -54,6 +56,12 @@ case "$rel" in
         ;;
     docs/install-graph.md)
         deny "docs/install-graph.md is generated from devkit.toml and packages/manager/examples/values.yaml by \`just graph\` (tools/graph/src/install-graph.ts); \`just graph-check\` fails the pre-commit hook when it drifts. Change the sources and regenerate."
+        ;;
+    catalog/crossplane.yaml)
+        deny "catalog/crossplane.yaml is the Backstage entity set, generated from packages/** (XRDs, Compositions, example XRs, provider schema packages) by \`just crossplane-catalog\` (tools/catalog/src/catalog.ts); \`just crossplane-catalog-check\` fails the pre-commit hook when it drifts. Entities are derived, so fix the source — the XRD, the Composition, the kcl.mod — or the emitter in tools/catalog, then regenerate."
+        ;;
+    docs/crossplane-graph.md)
+        deny "docs/crossplane-graph.md (dependency graph, usage counts, refactor findings) is generated from packages/** by \`just crossplane-catalog\` (tools/catalog/src/catalog.ts); \`just crossplane-catalog-check\` fails the pre-commit hook when it drifts. Change the packages or the emitter and regenerate."
         ;;
 esac
 

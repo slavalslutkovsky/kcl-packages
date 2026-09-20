@@ -1,0 +1,108 @@
+# The yurikrupnik.com hierarchy, declared as one XR: the folder tree, the
+# platform projects inside it, the security constraints over the whole org, org
+# -wide data-access auditing, and the two grants that let automation manage it.
+apiVersion: cloud.example.org/v1alpha1
+kind: Organization
+metadata:
+  namespace: default
+  name: yurikrupnik
+spec:
+  orgId: "477132171939"
+  billingAccount: "012345-6789AB-CDEF01"
+
+  folders:
+    - name: admin                    # automation + the management cluster
+    - name: shared-services          # network, security and artifacts for everyone
+    - name: platform                 # core platform projects
+    - name: data
+    - name: machine-learning
+    - name: mlops
+    - name: marketing
+    - name: sandbox
+    - name: workloads
+    - name: prod                     # nested: workloads/prod
+      parent: workloads
+      deletionProtection: true       # holds production projects
+    - name: staging
+      parent: workloads
+    - name: dev
+      parent: workloads
+
+  projects:
+    - name: yk-shared-vpc-host
+      displayName: Shared VPC Host
+      folder: platform
+      labels: {purpose: shared-vpc-host}
+      services: [compute.googleapis.com, dns.googleapis.com]
+    - name: yk-security-hub
+      displayName: Security Hub
+      folder: platform
+      labels: {purpose: security-hub}
+      services: [securitycenter.googleapis.com, cloudkms.googleapis.com, secretmanager.googleapis.com]
+    - name: yk-artifact-registry
+      displayName: Artifact Registry
+      folder: platform
+      labels: {purpose: artifact-registry}
+      services: [artifactregistry.googleapis.com, cloudbuild.googleapis.com]
+    - name: yk-admin-gke
+      displayName: Admin GKE
+      folder: platform
+      labels: {purpose: admin-gke}
+      services: [container.googleapis.com, compute.googleapis.com]
+    - name: yk-observability-hub
+      displayName: Observability Hub
+      folder: platform
+      labels: {purpose: observability-hub}
+      services: [monitoring.googleapis.com, logging.googleapis.com, cloudtrace.googleapis.com]
+    - name: yk-data-platform
+      displayName: Data Platform
+      folder: data
+      labels: {purpose: data-platform}
+      services: [bigquery.googleapis.com, pubsub.googleapis.com]
+
+  policies:
+    # Boolean constraints, enforced org-wide.
+    - constraint: compute.requireOsLogin
+      enforce: true
+    - constraint: compute.requireShieldedVm
+      enforce: true
+    - constraint: sql.restrictPublicIp
+      enforce: true
+    - constraint: storage.uniformBucketLevelAccess
+      enforce: true
+    - constraint: iam.disableServiceAccountKeyCreation
+      enforce: true
+    # List constraints. External IPs are denied everywhere…
+    - constraint: compute.vmExternalIpAccess
+      denyAll: true
+    # …except in the sandbox folder, which overrides the org policy.
+    - constraint: compute.vmExternalIpAccess
+      folder: sandbox
+      allowAll: true
+    # Introduced in dry-run first: log where it would bite before enforcing it.
+    - constraint: gcp.resourceLocations
+      allowedValues: ["in:eu-locations"]
+      dryRun: true
+
+  auditLogging:
+    services: [allServices]
+    logTypes: [ADMIN_READ, DATA_READ, DATA_WRITE]
+
+  iamBindings:
+    # Folder-scoped, not org-scoped: the widest grant an automation identity
+    # needs is the tree it actually manages.
+    - member: serviceAccount:crossplane@yk-admin-gke.iam.gserviceaccount.com
+      role: roles/resourcemanager.folderAdmin
+      folder: workloads
+    - member: group:platform@yurikrupnik.com
+      role: roles/resourcemanager.organizationViewer
+
+  deletionPolicy: Orphan            # a live organization is not deleted by deleting its XR
+  tags:
+    managed-by: crossplane
+    team: platform
+
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp

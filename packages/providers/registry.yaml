@@ -22,6 +22,14 @@
 #   repo      owner/repo of an operator's git repo (repo-sourced rows)
 #   ref       git ref for `repo`
 #   crdPath   directory of CRD YAMLs inside `repo`
+#   catalog   commit SHA in datreeio/CRDs-catalog (catalog-sourced rows).
+#             For operators that GENERATE their CRDs in Go at install time
+#             (KubeVirt, CDI) — no CRD YAML exists in their repo or their
+#             release assets for `repo`/`crdPath` to point at, so the schemas
+#             come from the catalog's extracted copies, rebuilt into CRDs by
+#             tools/datree-crd.sh.
+#   kinds     catalog-sourced rows only: <group>/<file>.json:<Kind> entries
+#             naming exactly which schemas to rebuild.
 #   scope     apiScope passed to the generator (default: namespaced)
 #   install   package ref installed as a pkg.crossplane.io Provider.
 #             Omitted  -> "<image>:<tag>". "none" -> nothing is installed
@@ -41,6 +49,21 @@ providers:
     tag: v2.6.0
     modules: [apigateway]
 
+  - name: aws-codeartifact
+    cloud: aws
+    service: codeartifact
+    image: ghcr.io/crossplane-contrib/provider-aws-codeartifact
+    tag: v2.6.0
+    modules: [package-registry]
+    notes: >-
+      The language-package half of the package-registry aws backend: one
+      Domain plus one polyglot Repository, which serves npm, pypi, maven,
+      cargo, nuget and generic under /<format>/<repository>/. Composed by the
+      Python function in python/function-package-registry, which is untyped by
+      design — so NO schema package is generated for this row (do not run
+      `just provider aws-codeartifact …`) and `tools/providers.sh check`
+      reports the missing packages/providers/aws-codeartifact on purpose.
+
   - name: aws-codebuild
     cloud: aws
     service: codebuild
@@ -53,18 +76,18 @@ providers:
     service: ec2
     image: ghcr.io/crossplane-contrib/provider-aws-ec2
     tag: v2.6.0
-    modules: [vm]
+    modules: [network, vm, hubspoke]
 
   - name: aws-ecr
     cloud: aws
     service: ecr
     image: ghcr.io/crossplane-contrib/provider-aws-ecr
     tag: v2.6.0
-    modules: [registry]
+    modules: [registry, package-registry]
     notes: >-
-      The registry Composition uses the per-repository resources only
-      (Repository, LifecyclePolicy, RepositoryPolicy). The account-wide ones
-      this family also ships (RegistryScanningConfiguration,
+      The registry and package-registry Compositions use the per-repository
+      resources only (Repository, LifecyclePolicy, RepositoryPolicy). The
+      account-wide ones this family also ships (RegistryScanningConfiguration,
       ReplicationConfiguration) are deliberately not composed: one XR would
       silently overwrite every other XR's settings.
 
@@ -80,7 +103,7 @@ providers:
     service: elasticache
     image: ghcr.io/crossplane-contrib/provider-aws-elasticache
     tag: v2.6.0
-    modules: [redis]
+    modules: [network, redis]
 
   - name: aws-iam
     cloud: aws
@@ -106,12 +129,47 @@ providers:
     tag: v2.6.0
     modules: [serverless]
 
+  - name: aws-organizations
+    cloud: aws
+    service: organizations
+    image: ghcr.io/crossplane-contrib/provider-aws-organizations
+    tag: v2.6.0
+    modules: [organization]
+    notes: >-
+      AWS Organizations: OrganizationalUnit, Account, Policy (service control
+      policy) and PolicyAttachment. The Organization kind itself is
+      deliberately not composed — an organization is created once, by hand,
+      from the management account, and an XR that owned it could delete every
+      account in it.
+
   - name: aws-rds
     cloud: aws
     service: rds
     image: ghcr.io/crossplane-contrib/provider-aws-rds
     tag: v2.6.0
-    modules: [postgres]
+    modules: [network, postgres]
+
+  - name: aws-acm
+    cloud: aws
+    service: acm
+    image: ghcr.io/crossplane-contrib/provider-aws-acm
+    tag: v2.6.0
+    modules: [landing]
+    notes: >-
+      Only CloudFront-facing certificates come from here, and they are always
+      created in us-east-1: CloudFront accepts a certificate from no other
+      region, whatever the bucket's region is.
+
+  - name: aws-cloudfront
+    cloud: aws
+    service: cloudfront
+    image: ghcr.io/crossplane-contrib/provider-aws-cloudfront
+    tag: v2.6.0
+    modules: [landing]
+    notes: >-
+      The only way to put TLS and a custom domain in front of an S3 bucket.
+      The landing backend pairs each Distribution with an OriginAccessControl,
+      so the bucket itself stays private.
 
   - name: aws-route53
     cloud: aws
@@ -128,7 +186,7 @@ providers:
     service: s3
     image: ghcr.io/crossplane-contrib/provider-aws-s3
     tag: v2.6.0
-    modules: [bucket]
+    modules: [bucket, landing]
     notes: >-
       Also backs the rustfs bucket backend: an in-cluster S3-compatible server
       driven through this provider with an endpoint-overriding ProviderConfig.
@@ -177,7 +235,7 @@ providers:
     service: artifact
     image: ghcr.io/crossplane-contrib/provider-gcp-artifact
     tag: v2.6.0
-    modules: [registry]
+    modules: [registry, package-registry]
     notes: >-
       Artifact Registry ships in the `artifact` family (CRD group
       artifact.gcp.m.upbound.io, kind RegistryRepository) — there is no
@@ -195,10 +253,13 @@ providers:
     service: cloudplatform
     image: ghcr.io/crossplane-contrib/provider-gcp-cloudplatform
     tag: v2.6.0
-    modules: [iam, workload-identity]
+    modules: [iam, workload-identity, organization]
     notes: >-
       GCP has no standalone iam provider — service accounts and IAM members
-      live in cloudplatform.
+      live in cloudplatform. The resource-hierarchy kinds the organization
+      module composes (Folder, Project, ProjectService,
+      OrganizationIAMAuditConfig, Organization/FolderIAMMember) are in this
+      family too.
 
   - name: gcp-cloudrun
     cloud: gcp
@@ -212,7 +273,7 @@ providers:
     service: compute
     image: ghcr.io/crossplane-contrib/provider-gcp-compute
     tag: v2.6.0
-    modules: [vm]
+    modules: [network, vm, landing]
 
   - name: gcp-container
     cloud: gcp
@@ -234,6 +295,31 @@ providers:
     image: ghcr.io/crossplane-contrib/provider-gcp-kms
     tag: v2.6.0
     modules: [kms]
+
+  - name: gcp-networkconnectivity
+    cloud: gcp
+    service: networkconnectivity
+    image: ghcr.io/crossplane-contrib/provider-gcp-networkconnectivity
+    tag: v2.6.0
+    modules: [hubspoke]
+    notes: >-
+      Network Connectivity Center: the Hub/Spoke pair is GCP's own
+      hub-and-spoke fabric, and the only one that makes spoke-to-spoke traffic
+      transitive (VPC peering never is). A STAR hub's center/edge groups are
+      created by the API itself, so the Group kind here is deliberately unused.
+
+  - name: gcp-orgpolicy
+    cloud: gcp
+    service: orgpolicy
+    image: ghcr.io/crossplane-contrib/provider-gcp-orgpolicy
+    tag: v2.6.0
+    modules: [organization]
+    notes: >-
+      Organization Policy v2 (orgpolicy.googleapis.com): kind Policy carries
+      the constraint rules an Organization XR enforces on the hierarchy. The
+      legacy v1 kinds (OrganizationPolicy/FolderPolicy under cloudplatform)
+      are deliberately not used — v2 is the only API that supports conditions
+      and dry-run policies.
 
   - name: gcp-pubsub
     cloud: gcp
@@ -261,7 +347,7 @@ providers:
     service: storage
     image: ghcr.io/crossplane-contrib/provider-gcp-storage
     tag: v2.6.0
-    modules: [bucket]
+    modules: [bucket, landing]
 
   # ── azure ───────────────────────────────────────────────────────────────────
   - name: azure-apimanagement
@@ -276,10 +362,24 @@ providers:
     service: authorization
     image: ghcr.io/crossplane-contrib/provider-azure-authorization
     tag: v2.6.0
-    modules: [iam, workload-identity]
+    modules: [iam, workload-identity, organization]
     notes: >-
       Azure splits the identity (managedidentity) from its role assignments
-      (authorization), so the iam Composition needs both.
+      (authorization), so the iam Composition needs both. The organization
+      module composes two more kinds from this family:
+      ManagementGroupPolicyAssignment and the management-group scoped
+      RoleAssignment.
+
+  - name: azure-cdn
+    cloud: azure
+    service: cdn
+    image: ghcr.io/crossplane-contrib/provider-azure-cdn
+    tag: v2.6.0
+    modules: [landing]
+    notes: >-
+      Front Door Standard (the Frontdoor* kinds), not the retired classic CDN
+      profile: it is what terminates TLS for a custom domain in front of a
+      Storage Account's static website.
 
   - name: azure-compute
     cloud: azure
@@ -300,7 +400,7 @@ providers:
     service: containerregistry
     image: ghcr.io/crossplane-contrib/provider-azure-containerregistry
     tag: v2.6.0
-    modules: [registry]
+    modules: [registry, package-registry]
 
   - name: azure-containerservice
     cloud: azure
@@ -334,20 +434,36 @@ providers:
     tag: v2.6.0
     modules: [iam, workload-identity]
 
+  - name: azure-management
+    cloud: azure
+    service: management
+    image: ghcr.io/crossplane-contrib/provider-azure-management
+    tag: v2.6.0
+    modules: [organization]
+    notes: >-
+      Management groups — Azure's folder equivalent. The family ships only
+      ManagementGroup and ManagementGroupSubscriptionAssociation; subscriptions
+      themselves live in the upstream `azure` family, which crossplane-contrib
+      does not publish at v2.x, which is why the organization module's azure
+      backend refuses spec.projects[].
+
   - name: azure-network
     cloud: azure
     service: network
     image: ghcr.io/crossplane-contrib/provider-azure-network
     tag: v2.6.0
-    modules: [vm]
-    notes: The VM's NIC and public IP live in the network family, not compute.
+    modules: [vm, hubspoke]
+    notes: >-
+      The VM's NIC and public IP live in the network family, not compute — and
+      so does Virtual WAN: the hubspoke module's Virtual Hub, its connections
+      and its custom route tables are all network kinds.
 
   - name: azure-storage
     cloud: azure
     service: storage
     image: ghcr.io/crossplane-contrib/provider-azure-storage
     tag: v2.6.0
-    modules: [bucket]
+    modules: [bucket, landing]
 
   # ── kubernetes (in-cluster backends) ────────────────────────────────────────
   - name: helm
@@ -355,15 +471,20 @@ providers:
     service: helm
     image: ghcr.io/crossplane-contrib/provider-helm
     tag: v1.3.0
-    modules: [cluster, email, forge, kms, postgres, redis, registry]
+    modules: [backup, cluster, email, forge, kms, landing, package-registry, postgres, redis, registry]
     notes: >-
       Must be v1.x — the first line that ships the namespaced
       helm.m.crossplane.io CRDs the Compositions render. Backs the stalwart
-      (email), valkey (redis) and zot (registry) charts, installs the
+      (email), valkey (redis) and zot (registry) charts, serves both
+      self-hosted package-registry backends (the same zot chart for OCI, and
+      the Forgejo chart for a registry that also speaks npm/pypi/maven/go/
+      cargo/nuget/generic), installs the
       CloudNativePG operator for the cnpg postgres backend, installs the
       OpenBao server the openbao kms backend keys live in, and bootstraps
       FluxCD/Crossplane into adopted clusters for the onprem cluster backend
-      (through a per-XR ProviderConfig carrying the cluster's kubeconfig). Its
+      (through a per-XR ProviderConfig carrying the cluster's kubeconfig),
+      serves the onprem landing page from an nginx chart, and
+      installs Velero for the backup module. Its
       manifests in xrd/providers.yaml carry the extra ServiceAccount /
       ClusterRoleBinding / DeploymentRuntimeConfig the chart installs need.
 
@@ -519,3 +640,81 @@ providers:
       `ref` in step with the chart version pinned there. `service` filters to
       the cert-manager.io group only: the acme.cert-manager.io CRDs (Challenge,
       Order) are the ACME controller's own bookkeeping, never authored here.
+
+  - name: kubevirt
+    cloud: kubernetes
+    catalog: ad3b08c5045129d7bb1eeffd8e61719b2c8dd1e2
+    kinds:
+      - kubevirt.io/virtualmachine_v1.json:VirtualMachine
+      - cdi.kubevirt.io/datavolume_v1beta1.json:DataVolume
+    scope: cluster
+    install: none
+    modules: [vm]
+    notes: >-
+      Operator CRDs, not a Crossplane provider: the kubevirt backend composes
+      a kubevirt.io/v1 VirtualMachine directly. Catalog-sourced because
+      KubeVirt and CDI BUILD their CRDs in Go inside virt-operator /
+      cdi-operator at install time — kubevirt/kubevirt ships only
+      manifests/generated/kv-resource.yaml (the operator's own KubeVirt CRD)
+      and no release asset carries VirtualMachine, so there is nothing for
+      `repo` + `crdPath` to fetch. datreeio/CRDs-catalog publishes the
+      openAPIV3Schema extracted from a live cluster;
+      tools/datree-crd.sh rebuilds the CRD envelope around it. DataVolume is
+      generated alongside because the disk import is expressed as
+      spec.dataVolumeTemplates, which CDI must be present to honour.
+
+  - name: velero
+    cloud: kubernetes
+    service: velero
+    repo: vmware-tanzu/velero
+    ref: v1.18.2
+    crdPath: config/crd/v1/bases
+    scope: cluster
+    install: none
+    modules: [backup]
+    notes: >-
+      Operator CRDs, not a Crossplane provider: the velero backend composes
+      velero.io/v1 Schedule + BackupStorageLocation (+ VolumeSnapshotLocation)
+      directly. Velero itself is installed through provider-helm by
+      backup/xrd/providerconfigs.yaml — keep `ref` in step with the chart
+      version pinned there. `service` is the API group prefix; the whole
+      velero.io group is imported and packages/providers/crds.yaml says which
+      kinds are rendered.
+
+  - name: gateway-api
+    cloud: kubernetes
+    service: gateway
+    repo: kubernetes-sigs/gateway-api
+    ref: v1.4.0
+    crdPath: config/crd/standard
+    scope: cluster
+    install: none
+    modules: [application]
+    notes: >-
+      Upstream API CRDs, not a Crossplane provider: the application module
+      composes a gateway.networking.k8s.io/v1 HTTPRoute directly. The standard
+      channel only — the experimental channel carries alpha kinds (and alpha
+      fields on HTTPRoute, e.g. retries) that nothing here renders, and an
+      experimental field silently dropped by a cluster on the standard channel
+      would be worse than not offering it. `service` is the filename prefix
+      every CRD in that directory carries. Not installed by this repo: an
+      HTTPRoute needs a Gateway API implementation (Istio, Envoy Gateway, …),
+      which is a cluster add-on.
+
+  - name: istio
+    cloud: kubernetes
+    service: crd-all
+    repo: istio/istio
+    ref: 1.28.1
+    crdPath: manifests/charts/base/files
+    scope: cluster
+    install: none
+    modules: [application]
+    notes: >-
+      Operator CRDs, not a Crossplane provider: the application module composes
+      networking.istio.io/v1 VirtualService + DestinationRule directly. Istio
+      generates every CRD into ONE multi-document file, so `crdPath` is the
+      directory that holds it and `service: crd-all` selects crd-all.gen.yaml
+      while skipping the profile-*.yaml siblings, which are not CRDs. istiod
+      itself is a cluster add-on (`devkit up --istio`), not something this repo
+      installs.

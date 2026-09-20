@@ -1,0 +1,48 @@
+apiVersion: platform.example.org/v1alpha1
+kind: Application
+metadata:
+  namespace: default
+  name: checkout-api
+spec:
+  image: ghcr.io/example/checkout-api:1.4.2
+  port: 8080                       # containerPort, Service port and route backend port
+  component: api                   # app.kubernetes.io/component
+  partOf: commerce                 # app.kubernetes.io/part-of — the system it belongs to
+  version: 1.4.2                   # app.kubernetes.io/version; metadata only, never the image
+  env:
+    LOG_LEVEL: info                # literal env vars; sorted, so a re-render never rolls the pods
+  config:
+    FEATURE_CHECKOUT_V2: "true"    # -> ConfigMap checkout-api-config, mounted with envFrom
+  health:
+    readinessPath: /healthz        # gates endpoints, and so gates the route
+    livenessPath: /livez
+  resources:
+    requests:
+      cpu: 250m                    # deep-merged onto the app package defaults
+      memory: 256Mi
+    limits:
+      memory: 512Mi                # no cpu limit: throttling protects nothing here
+  scaling:
+    minReplicas: 2                 # present => KEDA owns the replica count, spec.replicas is ignored
+    maxReplicas: 10
+    cpu: 70                        # -> KEDA cpu utilisation trigger (needs KEDA in the cluster)
+  secrets:
+    store: gcp-secret-manager      # ClusterSecretStore to read from
+    refreshInterval: 1h
+    mountAsEnv: true               # -> Secret checkout-api-secrets, mounted with envFrom
+    items:
+      - secretKey: STRIPE_API_KEY  # env var name / key in the generated Secret
+        key: checkout-stripe       # remote secret name
+      - secretKey: DATABASE_URL
+        key: checkout-db
+        property: url              # property inside a structured remote secret
+  route:
+    type: gateway-api              # none | gateway-api | istio
+    hosts:
+      - checkout.example.org
+    path: /
+    pathType: PathPrefix
+    gateway:
+      name: platform               # a SHARED gateway; this XR never creates one
+      namespace: istio-ingress
+    timeoutSeconds: 15             # -> HTTPRoute rules[].timeouts.request: 15s

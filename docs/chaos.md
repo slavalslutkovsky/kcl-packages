@@ -11,8 +11,13 @@ Two layers, one fault vocabulary:
   run several faults as one managed run, a global pause, and the platform
   charts (Chaos Mesh itself among them) as Flux HelmReleases. See
   [The manager package](#the-manager-package).
+- **`backstage`** — where a human sees it: both layers also render Backstage
+  catalog entities from the same values files, and every experiment carries the
+  `backstage.io/kubernetes-id` label of the component (or game day) it belongs
+  to, so a run shows up on its entity page. See
+  [docs/backstage.md](backstage.md).
 
-Both render with the kcl CLI and print a manifest stream:
+The two render layers print a manifest stream:
 
 ```
 just app manifests/apps/app1.yaml [env]      | kubectl apply -f -
@@ -231,7 +236,7 @@ of truth for anything meant to recur.
 |---|---|
 | `packages/app/lib.k` | `Fault` schema, `Workload.chaos`; the public `experiment` / `faultSpec` / `faultKind` renderers both packages use |
 | `packages/app/app_test.k` | `test_chaos_*` — one object per fault, pinned selector, Schedule wrapping, release ordering |
-| `packages/app/examples/values-chaos.yaml` | every fault type, one-shot and scheduled |
+| `packages/app/examples/values-chaos.yaml` | every fault type, one-shot and scheduled, plus the `catalog:` block that puts them in the portal |
 | `packages/manager/lib.k` | `Dependency`, `Target`, `Experiment`, `Step`, `Workflow`, `Chaos`, `Manager`; Flux and Workflow renderers |
 | `packages/manager/manager_test.k` | dependencies, free-target experiments, pause, serial/parallel Workflows |
 | `packages/manager/examples/values.yaml` | charts + cluster-scope experiments (incl. node memory pressure) + two Workflows |
@@ -240,3 +245,4 @@ of truth for anything meant to recur.
 | `packages/providers/crds.yaml` | which Chaos Mesh (and Litmus, and every other operator/provider) kinds are used vs unused |
 | `devkit.toml` | the `chaos-mesh` chart row: Kind runtime settings, dashboard off |
 | `justfile` | `just app`, `just manager` — render locally with the kcl CLI |
+| `docs/backstage.md` | the catalog entities both packages render, and how a fault reaches a component page |

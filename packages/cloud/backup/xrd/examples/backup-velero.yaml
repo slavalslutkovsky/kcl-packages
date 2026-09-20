@@ -1,0 +1,38 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: BackupPlan
+metadata:
+  # Velero reads Schedules and locations only from the namespace its server
+  # runs in, and a namespaced XR composes only into its own — so the plan
+  # lives here. What gets backed up is includedNamespaces, below.
+  namespace: velero
+  name: nightly
+spec:
+  schedule: "0 2 * * *"           # -> Schedule.spec.schedule; cluster timezone
+  retentionDays: 30               # -> template.ttl 720h (Velero counts in hours)
+  includedNamespaces:             # empty/omitted would mean every namespace
+    - zerg
+    - dbs
+  excludedResources:              # regenerated on restore; pure noise in a bucket
+    - events
+    - events.events.k8s.io
+  labelSelector:                  # -> template.labelSelector.matchLabels
+    backup: nightly
+  snapshotVolumes: false          # no CSI VolumeSnapshotClass on local-path storage
+  defaultVolumesToFsBackup: true  # so copy volume contents instead (needs the node-agent)
+  destination:
+    provider: aws                 # the aws plugin also drives S3-compatible servers
+    bucket: cluster-backups       # must already exist — compose a Bucket XR for that
+    prefix: kcl-e2e               # lets several clusters share one bucket
+    region: us-east-1             # -> config.region
+    s3Url: http://rustfs.rustfs.svc.cluster.local:9000  # in-cluster RustFS; also sets s3ForcePathStyle
+    credentialsSecret:
+      name: rustfs-creds          # Secret in THIS namespace
+      key: cloud                  # Velero's own convention
+  paused: false                   # true holds the plan without deleting anything
+  deletionPolicy: Delete          # ignored here; the bucket's contents survive either way
+  tags:                           # labels on each Backup, not on what is inside it
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: velero          # the flag: picks the backend (velero)

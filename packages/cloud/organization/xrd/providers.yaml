@@ -1,0 +1,51 @@
+# Crossplane providers the Organization Compositions render against. Install
+# only the families of the backend you intend to use.
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-organization-providers`) — keep them in step,
+# or the rendered manifests can reference fields the installed provider does
+# not have.
+#
+# gcp: the resource hierarchy needs two families — cloudplatform holds Folder,
+# Project, ProjectService and the IAM kinds, while organization policies live
+# in their own orgpolicy family (Org Policy v2).
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-cloudplatform
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-cloudplatform:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-orgpolicy
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-orgpolicy:v2.6.0
+---
+# aws: one family for the whole hierarchy — OrganizationalUnit, Account,
+# Policy (service control policy) and PolicyAttachment.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-organizations
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-organizations:v2.6.0
+---
+# azure: management groups come from the management family; the policy
+# assignment and the management-group scoped role assignment from
+# authorization. There is no subscription family at v2.x, which is why the
+# azure backend refuses spec.projects[].
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-management
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-management:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-authorization
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-authorization:v2.6.0

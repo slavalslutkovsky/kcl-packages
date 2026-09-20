@@ -5,14 +5,14 @@
 #  port: 7979
 #workload:
 workload:
-  name: analytic
-  namespace: zerg
+  name: todo
+  namespace: todo
 #  component: migration
 #  component: frontend
   image: nginx
 #  runAsUser: 101
 #  runAsGroup: 101
 #  prometheus: false
-#  image: yurikrupnik/zerg-api:latest
+  image: yurikrupnik/zerg-api:latest
 #  command: [ "/app/migrate" ]
 #  args: [ "up" ]

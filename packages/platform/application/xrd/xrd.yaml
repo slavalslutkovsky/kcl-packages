@@ -1,0 +1,366 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: applications.platform.example.org
+spec:
+  scope: Namespaced
+  group: platform.example.org
+  names:
+    kind: Application
+    plural: applications
+  # One implementation. The routing backend is a field (spec.route.type), not a
+  # Composition to select: everything except the route object is identical
+  # whether the mesh is Istio, a Gateway API implementation, or absent.
+  defaultCompositionRef:
+    name: application
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                One long-running HTTP application in this namespace: the
+                workload, the config and secret material it reads, and the
+                north-south route that puts it on a hostname.
+
+                This XR is a WRAPPER, not a second implementation. The
+                Deployment, Service, ConfigMap, KEDA ScaledObject and
+                ExternalSecret are rendered by the `app` package
+                (packages/app) — the same library `kcl run packages/app -D
+                values=…` and `just component-push` use — so an Application and
+                a values.yaml produce the same objects from the same code. What
+                this XRD adds on top is (1) a namespaced, RBAC-able API instead
+                of a file, (2) the wiring the values file leaves to the author:
+                `config` is mounted as envFrom, `secrets` produces an
+                ExternalSecret that is also mounted as envFrom, and (3) the
+                route, which the app package does not model at all.
+
+                Deliberately NOT exposed, because Crossplane continuously
+                re-applies desired state and these do not survive that:
+                `app`'s batch archetype (Job/CronJob — spec.template is
+                immutable and a completed Job would be recreated forever), its
+                one-shot Chaos Mesh faults, and its Backstage `catalog:` block
+                (catalog entities are not Kubernetes objects; keep rendering
+                those with `just catalog`).
+              properties:
+                image:
+                  type: string
+                  description: Container image to run, including the tag or digest. Passed to the app package verbatim as the Deployment's only container image.
+                port:
+                  type: integer
+                  default: 8080
+                  minimum: 1
+                  maximum: 65535
+                  description: Port the container listens on. Becomes the containerPort, the Service port and target port, the Prometheus scrape port, and the backend port of the route.
+                replicas:
+                  type: integer
+                  default: 2
+                  minimum: 0
+                  description: Static replica count. Ignored once `scaling` is set — the autoscaler owns the replica count from then on and the Deployment is rendered without spec.replicas so a re-apply cannot fight it.
+                component:
+                  type: string
+                  default: server
+                  description: Value of the app.kubernetes.io/component label. Free-form (api, web, worker); it is what tells two Applications of the same system apart in a dashboard.
+                partOf:
+                  type: string
+                  default: platform
+                  description: Value of the app.kubernetes.io/part-of label — the system this application belongs to.
+                version:
+                  type: string
+                  description: Value of the app.kubernetes.io/version label. Unset leaves the app package default (0.1.0); this is metadata only and never selects the image.
+                prometheus:
+                  type: boolean
+                  default: true
+                  description: Stamp prometheus.io/scrape, port and path pod annotations. Turn off for an application that exposes no metrics endpoint, so a scrape does not log a 404 every interval.
+                metricsPath:
+                  type: string
+                  default: /metrics
+                  description: Value of the prometheus.io/path pod annotation. Ignored when prometheus is false.
+                env:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Literal environment variables, rendered as container env entries sorted by name so a re-render never restarts the pods through key order alone. For anything sensitive use `secrets`; for anything bulky use `config`.
+                config:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Non-secret configuration. Rendered as a ConfigMap named "<app>-config" AND mounted into the container with envFrom, which is the wiring a values.yaml has to write by hand. Changing a value here does not restart the pods — the Deployment spec is unchanged — so read it at request time or restart the rollout.
+                resources:
+                  type: object
+                  description: Container resource requests and limits. Unset leaves the app package defaults (requests 250m/128Mi, limit 512Mi, no CPU limit — CPU limits throttle before they protect).
+                  properties:
+                    requests:
+                      type: object
+                      properties:
+                        cpu:
+                          type: string
+                          description: CPU request as a Kubernetes quantity, e.g. 250m.
+                        memory:
+                          type: string
+                          description: Memory request as a Kubernetes quantity, e.g. 128Mi.
+                    limits:
+                      type: object
+                      properties:
+                        cpu:
+                          type: string
+                          description: CPU limit as a Kubernetes quantity. Usually best left unset.
+                        memory:
+                          type: string
+                          description: Memory limit as a Kubernetes quantity, e.g. 512Mi.
+                health:
+                  type: object
+                  description: HTTP health probes. Only paths are configurable; both probe the container `port`, because a probe against a port the Service does not carry proves nothing about the traffic path.
+                  properties:
+                    readinessPath:
+                      type: string
+                      description: HTTP path of the readiness probe — gates endpoints, and so gates the route. Unset renders no readiness probe, which makes a pod routable the moment its container starts.
+                    livenessPath:
+                      type: string
+                      description: HTTP path of the liveness probe — a failure restarts the container. Unset renders none; prefer leaving it unset over pointing it at a path that depends on a downstream service.
+                    startupPath:
+                      type: string
+                      description: HTTP path of the startup probe, which suspends the liveness probe until the application has come up. Use for slow starters instead of inflating the liveness failure threshold.
+                    failureThreshold:
+                      type: integer
+                      default: 3
+                      minimum: 1
+                      description: Consecutive failures before a probe is considered failed. Applies to every probe rendered here.
+                    periodSeconds:
+                      type: integer
+                      default: 10
+                      minimum: 1
+                      description: Probe interval in seconds. Applies to every probe rendered here.
+                scaling:
+                  type: object
+                  description: |
+                    Autoscaling with KEDA (a ScaledObject, not a bare HPA — it
+                    is a superset: the same CPU and memory utilisation triggers,
+                    plus event-driven ones and scale-to-zero). Present means the
+                    autoscaler owns the replica count and `replicas` is ignored.
+                    Requires KEDA in the cluster.
+                  properties:
+                    minReplicas:
+                      type: integer
+                      default: 1
+                      minimum: 0
+                      description: Floor. 0 is scale-to-zero, which only makes sense with a trigger that can wake the application up again.
+                    maxReplicas:
+                      type: integer
+                      default: 10
+                      minimum: 1
+                      description: Ceiling.
+                    cpu:
+                      type: integer
+                      minimum: 1
+                      maximum: 100
+                      description: Target CPU utilisation percentage, rendered as a KEDA cpu trigger.
+                    memory:
+                      type: integer
+                      minimum: 1
+                      maximum: 100
+                      description: Target memory utilisation percentage, rendered as a KEDA memory trigger.
+                    triggers:
+                      type: array
+                      description: Passthrough KEDA triggers for anything event-driven (nats-jetstream, kafka, prometheus, cron, …). At least one of cpu, memory or triggers must be set, otherwise the ScaledObject has nothing to scale on and the render fails.
+                      items:
+                        type: object
+                        properties:
+                          type:
+                            type: string
+                            description: KEDA scaler name, e.g. nats-jetstream.
+                          metricType:
+                            type: string
+                            enum: [AverageValue, Value, Utilization]
+                            description: How KEDA feeds the metric to the HPA. Leave unset for the scaler's own default.
+                          name:
+                            type: string
+                            description: Trigger name, used in the generated HPA metric name.
+                          metadata:
+                            type: object
+                            additionalProperties:
+                              type: string
+                            description: Scaler-specific settings, verbatim.
+                        required:
+                          - type
+                secrets:
+                  type: object
+                  description: |
+                    Secret material fetched from an external store by
+                    external-secrets. Renders an ExternalSecret whose target
+                    Secret is named "<app>-secrets" and, unless disabled, mounts
+                    that Secret with envFrom. Nothing secret is ever written
+                    into this XR — only the coordinates of what to fetch.
+                  properties:
+                    store:
+                      type: string
+                      default: gcp-secret-manager
+                      description: 'Name of the ClusterSecretStore to read from. Cluster-scoped on purpose: a namespaced SecretStore would let a tenant point at a store the platform did not vet.'
+                    refreshInterval:
+                      type: string
+                      default: 1h
+                      description: How often external-secrets re-reads the remote values.
+                    mountAsEnv:
+                      type: boolean
+                      default: true
+                      description: Mount the generated Secret into the container with envFrom. Turn off when the application reads the Secret from a file or through a sidecar.
+                    items:
+                      type: array
+                      minItems: 1
+                      description: What to fetch. Each item becomes one key of the generated Secret.
+                      items:
+                        type: object
+                        properties:
+                          secretKey:
+                            type: string
+                            description: Key in the generated Secret (and, when mounted, the environment variable name).
+                          key:
+                            type: string
+                            description: Remote secret name in the store.
+                          property:
+                            type: string
+                            description: Property inside the remote secret, for stores whose secrets are structured.
+                        required:
+                          - secretKey
+                          - key
+                  required:
+                    - items
+                route:
+                  type: object
+                  description: |
+                    North-south HTTP routing. The Gateway itself is NOT created
+                    here: a per-application Gateway means a load balancer per
+                    application, so `gateway` REFERENCES a shared one that the
+                    platform owns. Both backends attach to a shared gateway and
+                    produce the same reachability; they differ in what else they
+                    can express (retries and traffic policy are Istio-only).
+                  properties:
+                    type:
+                      type: string
+                      enum: [none, gateway-api, istio]
+                      default: none
+                      description: Which route object to render. `gateway-api` → one gateway.networking.k8s.io/v1 HTTPRoute. `istio` → one networking.istio.io/v1 VirtualService plus a DestinationRule. `none` → no route at all; the application is reachable only through its ClusterIP Service.
+                    hosts:
+                      type: array
+                      minItems: 1
+                      items:
+                        type: string
+                      description: Hostnames to serve. HTTPRoute spec.hostnames / VirtualService spec.hosts. Required as soon as type is not none — an unhosted route would attach to every hostname the gateway serves.
+                    path:
+                      type: string
+                      default: /
+                      description: Path to match. HTTPRoute match path value / VirtualService uri match.
+                    pathType:
+                      type: string
+                      enum: [PathPrefix, Exact]
+                      default: PathPrefix
+                      description: How `path` is matched. PathPrefix → HTTPRoute PathPrefix / Istio uri.prefix; Exact → HTTPRoute Exact / Istio uri.exact.
+                    gateway:
+                      type: object
+                      description: The shared gateway this route attaches to. Required as soon as type is not none.
+                      properties:
+                        name:
+                          type: string
+                          description: Gateway name. HTTPRoute parentRef name / Istio VirtualService gateways entry.
+                        namespace:
+                          type: string
+                          description: Namespace the gateway lives in. Defaults to the Application's own namespace. Cross-namespace attachment needs the gateway to allow it — a ReferenceGrant for Gateway API, nothing for Istio.
+                        sectionName:
+                          type: string
+                          description: Gateway API only — the listener on the Gateway to attach to (parentRef sectionName). Unset attaches to every listener whose hostname and protocol match. Ignored by the istio backend, which selects a server by hostname.
+                      required:
+                        - name
+                    timeoutSeconds:
+                      type: integer
+                      minimum: 1
+                      description: Per-request timeout. HTTPRoute rules[].timeouts.request / VirtualService http[].timeout. Unset leaves the implementation default (Istio disables the timeout, Gateway API implementations vary).
+                    retries:
+                      type: object
+                      description: Istio-only retry policy (VirtualService http[].retries). IGNORED by the gateway-api backend — retries are not in the standard HTTPRoute channel, and silently emitting an experimental field would be worse than dropping it.
+                      properties:
+                        attempts:
+                          type: integer
+                          minimum: 1
+                          description: Retry attempts per request.
+                        perTryTimeoutSeconds:
+                          type: integer
+                          minimum: 1
+                          description: Timeout of one attempt.
+                        retryOn:
+                          type: string
+                          default: connect-failure,refused-stream,unavailable,5xx
+                          description: Envoy retry conditions, comma-separated.
+                    trafficPolicy:
+                      type: object
+                      description: Istio-only DestinationRule traffic policy for calls to this application's Service, north-south and east-west alike. IGNORED by the gateway-api backend, which has no equivalent object.
+                      properties:
+                        loadBalancer:
+                          type: string
+                          enum: [ROUND_ROBIN, LEAST_REQUEST, RANDOM]
+                          description: Load balancing across the application's endpoints. Unset leaves the mesh default.
+                        maxConnections:
+                          type: integer
+                          minimum: 1
+                          description: Upstream connection pool ceiling (TCP maxConnections). The knob that stops one caller from exhausting the application.
+                        outlierDetection:
+                          type: boolean
+                          default: false
+                          description: Eject endpoints that return consecutive 5xx (5 errors, 30s base ejection, up to half the pool). Cheap circuit breaking for a workload with more than one replica.
+              required:
+                - image
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True when the Deployment has at least one available replica and, if a route was asked for, the route object exists and is accepted. An application nobody can reach is not ready.
+                workloadReady:
+                  type: boolean
+                  description: Deployment readiness alone — availableReplicas > 0. Tells a pull-failure apart from a routing problem.
+                routeReady:
+                  type: boolean
+                  description: Route readiness. Gateway API — the Accepted condition of the HTTPRoute's parent. Istio — the VirtualService exists (Istio publishes no status on it). Absent when route.type is none.
+                replicas:
+                  type: integer
+                  description: Deployment status.replicas — pods the controller currently owns.
+                availableReplicas:
+                  type: integer
+                  description: Deployment status.availableReplicas — pods passing their readiness probe and past minReadySeconds.
+                serviceName:
+                  type: string
+                  description: Name of the in-cluster Service, for east-west callers. Equals the Application name.
+                endpoint:
+                  type: string
+                  description: Cluster-local address of the Service, <name>.<namespace>.svc.cluster.local:<port>.
+                url:
+                  type: string
+                  description: External URL, https://<first host><path>. Absent when route.type is none.
+                hosts:
+                  type: array
+                  items:
+                    type: string
+                  description: Hostnames the route serves, echoed from spec.route.hosts.
+                route:
+                  type: string
+                  description: Routing backend in effect (none | gateway-api | istio), so a consumer does not have to re-read the spec to know which objects exist.
+                message:
+                  type: string
+                  description: Why the application is not ready, when it is not. Empty once ready.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: AVAILABLE
+          type: integer
+          jsonPath: .status.availableReplicas
+        - name: ROUTE
+          type: string
+          jsonPath: .status.route
+        - name: URL
+          type: string
+          jsonPath: .status.url

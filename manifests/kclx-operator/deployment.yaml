@@ -1,0 +1,138 @@
+# The controller and the REST API, both from the one `kclx` image that also
+# serves the Crossplane composition function (`rust/Dockerfile`). That image's
+# entrypoint is `/kclx function` — the subcommand is part of it — so `args`
+# alone would append to it (`/kclx function operator run`). Each Deployment
+# therefore replaces `command` as well.
+#
+# `function-kclx-runtime:dev` is what `just kclx-image` builds and
+# `just kclx-operator-install` side-loads onto the Kind nodes; a real cluster
+# wants a pushed, digest-pinned reference here instead.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kclx-operator
+  namespace: kclx-system
+  labels:
+    app.kubernetes.io/name: kclx-operator
+spec:
+  # Two controllers would fight over the same objects: every apply is forced
+  # server-side apply under the same field manager, so the loser silently
+  # re-applies over the winner, forever. Leader election is not implemented;
+  # one replica is the contract.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kclx-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kclx-operator
+    spec:
+      serviceAccountName: kclx-operator
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: operator
+          image: function-kclx-runtime:dev
+          command: [/kclx]
+          args: [operator, run]
+          env:
+            # Pulled OCI packages land here. Not a volume on purpose: the
+            # cache is disposable and must die with the pod.
+            - name: KCLX_CACHE_DIR
+              value: /tmp/kclx
+            - name: RUST_LOG
+              value: kclx=info,kcl_operator=info
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: cache
+              mountPath: /tmp
+      volumes:
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kclx-api
+  namespace: kclx-system
+  labels:
+    app.kubernetes.io/name: kclx-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kclx-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kclx-api
+    spec:
+      serviceAccountName: kclx-api
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: api
+          image: function-kclx-runtime:dev
+          command: [/kclx]
+          args: [api, --addr, 0.0.0.0:8080]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: KCLX_CACHE_DIR
+              value: /tmp/kclx
+            - name: RUST_LOG
+              value: kclx=info,kcl_operator=info
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          # /readyz asks the API server for its version: a pod that cannot
+          # reach the cluster serves nothing useful.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: cache
+              mountPath: /tmp
+      volumes:
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kclx-api
+  namespace: kclx-system
+spec:
+  selector:
+    app.kubernetes.io/name: kclx-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

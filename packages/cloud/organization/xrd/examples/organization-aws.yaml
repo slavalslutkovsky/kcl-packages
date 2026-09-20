@@ -1,0 +1,61 @@
+# One AWS organization, declared as one XR: the organizational-unit tree, the
+# member accounts inside it, and the two service control policies that constrain
+# them — one over the whole organization, one over the sandbox only.
+#
+# Placement on AWS is a SECOND PASS (no parentId reference exists in the
+# provider's schemas), so a fresh render of this file shows the root-level OUs,
+# both policy documents and the root-scoped attachment. The nested OU, the two
+# accounts and the sandbox attachment appear once the OUs above them report an
+# id — watch status.ready for the tree being complete.
+apiVersion: cloud.example.org/v1alpha1
+kind: Organization
+metadata:
+  namespace: default
+  name: example-aws
+spec:
+  orgId: r-example1                     # the Organizations ROOT id, not the management account id
+  owner: aws-accounts@example.com       # default root email; every account needs one
+
+  folders:
+    - name: workloads
+    - name: prod                        # nested: workloads/prod
+      parent: workloads
+      displayName: Production
+    - name: sandbox
+
+  projects:
+    - name: platform-prod
+      displayName: Platform Production
+      folder: prod
+      owner: aws-platform-prod@example.com
+      whenDeleted: prevent              # removing the XR must not close a production account
+      labels: {purpose: platform}
+    - name: platform-sandbox
+      displayName: Platform Sandbox
+      folder: sandbox
+      labels: {purpose: sandbox}        # whenDeleted defaults to delete: a sandbox is closed with it
+
+  policies:
+    # Organization-wide: nobody anywhere turns off the audit trail or walks out
+    # of the organization, however much IAM they hold inside their account.
+    - constraint: deny-dangerous-org-actions
+      deniedValues:
+        - cloudtrail:StopLogging
+        - cloudtrail:DeleteTrail
+        - organizations:LeaveOrganization
+    # Sandbox only: experiments may not buy long-term commitments.
+    - constraint: sandbox-deny-commitments
+      folder: sandbox
+      deniedValues:
+        - ec2:PurchaseReservedInstancesOffering
+        - savingsplans:CreateSavingsPlan
+
+  deletionPolicy: Orphan                # a live organization is not deleted by deleting its XR
+  tags:
+    managed-by: crossplane
+    team: platform
+
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws

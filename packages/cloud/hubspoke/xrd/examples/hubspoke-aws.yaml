@@ -1,0 +1,33 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: NetworkHub
+metadata:
+  namespace: default
+  name: prod-hub
+spec:
+  # Every attachment is created in this region: a Transit Gateway attaches
+  # VPCs in its own region only.
+  region: eu-west-1
+  topology: isolated             # mesh | isolated (workload spokes see shared ones only)
+  summaryCidr: 10.0.0.0/8        # route installed in each routeTableIds entry toward the gateway
+  amazonSideAsn: 64512
+  spokes:
+    - name: shared-services
+      network: vpc-0aa11bb22cc33dd44        # Network XR status.id
+      subnets: [subnet-0aa1, subnet-0aa2]   # one per AZ; no ENI, no traffic
+      routeTableIds: [rtb-0shared1]
+      shared: true                          # reachable by every spoke
+    - name: team-a
+      network: vpc-0bb11bb22cc33dd44
+      subnets: [subnet-0bb1, subnet-0bb2]
+      routeTableIds: [rtb-0teama1, rtb-0teama2]
+    - name: team-b
+      network: vpc-0cc11bb22cc33dd44
+      subnets: [subnet-0cc1, subnet-0cc2]
+      routeTableIds: [rtb-0teamb1]
+  deletionPolicy: Delete
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws            # the flag: picks the backend (aws | gcp | azure)

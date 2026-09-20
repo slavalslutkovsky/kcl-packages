@@ -10,6 +10,13 @@ _storage_class = {"standard" = "STANDARD", "nearline" = "NEARLINE", "cold" = "CO
 # Crossplane management policy set for the Orphan deletion policy (everything but Delete).
 _orphan_policies = ["Observe", "Create", "Update", "LateInitialize"]
 
+# How Crossplane relates to the cloud bucket, for status.mode:
+# created (Crossplane made it) | observe (adopted, read-only) | managed (adopted, Crossplane writes).
+mode_of = lambda oxr -> str {
+    _imp = oxr.spec?.$import
+    "created" if not _imp?.existingName else ("observe" if (_imp?.mode or "observe") == "observe" else "managed")
+}
+
 # One abstract lifecycleRules entry -> zero/one/two native GCS lifecycle rules.
 _gcp_lifecycle = lambda r: any -> [any] {
     _prefix = r?.prefix or ""
@@ -45,6 +52,23 @@ render = lambda oxr {
 
     _del = _spec?.deletionPolicy or "Delete"
 
+    # Import: adopt an existing GCS bucket. Its name is the provider identifier,
+    # so pinning crossplane.io/external-name is the whole adoption; observe mode
+    # keeps Crossplane read-only until the old tool has let go.
+    _imp = _spec?.$import
+    _existing = _imp?.existingName
+    _observe = _existing and (_imp?.mode or "observe") == "observe"
+    _mp = ["Observe"] if _observe else (_orphan_policies if _del == "Orphan" else Undefined)
+    _annos = {"krm.kcl.dev/composition-resource-name" = "managed"}
+    if _existing:
+        _annos |= {"crossplane.io/external-name" = _existing}
+
+    if _imp?.source:
+        _annos |= {"cloud.example.org/imported-from" = _imp.source}
+
+    if _imp?.address:
+        _annos |= {"cloud.example.org/import-address" = _imp.address}
+
     # Native lifecycle = storageClass tier transition + any explicit rules.
     _lifecycle: [any] = []
     _sc = _spec?.storageClass
@@ -57,9 +81,9 @@ render = lambda oxr {
     _lifecycle += [_x for _r in (_spec?.lifecycleRules or []) for _x in _gcp_lifecycle(_r)]
 
     [backend.Bucket {
-        metadata.annotations = {"krm.kcl.dev/composition-resource-name" = "managed"}
-        if _del == "Orphan":
-            spec.managementPolicies = _orphan_policies
+        metadata.annotations = _annos
+        if _mp:
+            spec.managementPolicies = _mp
         spec.forProvider.location = _spec.region
         spec.forProvider.forceDestroy = _spec?.forceDestroy or False
         spec.forProvider.versioning = {enabled = _versioning}
@@ -104,13 +128,14 @@ render = lambda oxr {
 # Build the desired composite carrying observed status back to the XR.
 status = lambda oxr, ocds {
     _at = (ocds["managed"]?.Resource?.status?.atProvider) if ("managed" in ocds) else Undefined
-    _name = (_at?.id) or oxr.metadata.name
+    _name = (_at?.id) or oxr.spec?.$import?.existingName or oxr.metadata.name
     _dxr = {
         apiVersion = oxr?.apiVersion or "cloud.example.org/v1alpha1"
         kind = oxr?.kind or "Bucket"
         metadata.name = oxr.metadata.name
         status = {
             provider = "gcp"
+            mode = mode_of(oxr)
             ready = _at != Undefined and (_at?.id or "") != ""
             bucketName = _name
             "cloud-url" = "https://console.cloud.google.com/storage/browser/${_name}"

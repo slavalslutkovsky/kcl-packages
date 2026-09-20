@@ -207,6 +207,61 @@ test_status_observed = lambda {
     assert dxr.kind == "Bucket", "dxr kind must echo the composite"
 }
 
+# 11) import: every MR is pinned to the existing bucket by external-name and,
+#     in the default observe mode, carries managementPolicies=[Observe];
+#     companions name the bucket directly instead of resolving the selector.
+test_import_observe = lambda {
+    oxr = {metadata.name = "demo", spec = {region = "us-east-1", storageClass = "archive", import = {existingName = "legacy-assets-8f3a", source = "terraform", address = "aws_s3_bucket.assets"}}}
+    items = bucket.render(oxr)
+    _unpinned = [_i.kind for _i in items if _i.metadata.annotations?["crossplane.io/external-name"] != "legacy-assets-8f3a"]
+    assert _unpinned == [], "every MR must pin external-name to the existing bucket, missing on: ${_unpinned}"
+    _not_observe = [_i.kind for _i in items if _i.spec.managementPolicies != ["Observe"]]
+    assert _not_observe == [], "observe mode must set [Observe] on every MR, missing on: ${_not_observe}"
+    assert items[0].metadata.annotations["cloud.example.org/imported-from"] == "terraform", "source must be recorded"
+    assert items[0].metadata.annotations["cloud.example.org/import-address"] == "aws_s3_bucket.assets", "address must be recorded"
+    _v = _by_kind(items, "BucketVersioning")
+    assert _v.spec.forProvider.bucket == "legacy-assets-8f3a", "companions must name the bucket directly"
+    assert _v.spec.forProvider?.bucketSelector == Undefined, "no selector when the bucket is named"
+    _lc = _by_kind(items, "BucketLifecycleConfiguration")
+    assert _lc.metadata.annotations["crossplane.io/external-name"] == "legacy-assets-8f3a", "lifecycle companion is keyed by bucket too"
+}
+
+# 12) import mode=manage hands writes to Crossplane: no [Observe], and
+#     deletionPolicy decides the policies exactly as for a created bucket.
+test_import_manage = lambda {
+    oxr = {metadata.name = "demo", spec = {region = "us-east-1", deletionPolicy = "Orphan", import = {existingName = "legacy", mode = "manage"}}}
+    items = bucket.render(oxr)
+    assert items[0].metadata.annotations["crossplane.io/external-name"] == "legacy", "external-name still pinned in manage mode"
+    _wrong = [_i.kind for _i in items if _i.spec.managementPolicies != _orphan]
+    assert _wrong == [], "manage + Orphan must stamp the orphan policies everywhere, wrong on: ${_wrong}"
+    oxr2 = {metadata.name = "demo", spec = {region = "us-east-1", import = {existingName = "legacy", mode = "manage"}}}
+    items2 = bucket.render(oxr2)
+    assert items2[0].spec.managementPolicies != ["Observe"] and items2[0].spec.managementPolicies != _orphan, "manage + Delete leaves the provider default policies"
+}
+
+# 13) no import block: nothing is pinned, no provenance annotations.
+test_no_import_no_pin = lambda {
+    items = bucket.render({metadata.name = "demo", spec = {region = "us-east-1"}})
+    assert items[0].metadata.annotations?["crossplane.io/external-name"] == Undefined, "a created bucket must not pin external-name"
+    assert items[0].metadata.annotations?["cloud.example.org/imported-from"] == Undefined, "no provenance without import"
+    _v = _by_kind(items, "BucketVersioning")
+    assert _v.spec.forProvider.bucketSelector.matchControllerRef == True, "created buckets bind companions via the selector"
+}
+
+# 14) status.mode tells created from observe from managed, and an adopted
+#     bucket reports its existing name before the provider observes anything.
+test_status_mode = lambda {
+    _created = bucket.status({metadata.name = "demo", spec = {region = "us-east-1"}}, {})
+    assert _created.status.mode == "created", "no import -> created"
+    assert _created.status.bucketName == "demo", "created bucket is named after the XR until observed"
+    _obs = bucket.status({metadata.name = "demo", spec = {region = "us-east-1", import = {existingName = "legacy"}}}, {})
+    assert _obs.status.mode == "observe", "import defaults to observe"
+    assert _obs.status.bucketName == "legacy", "adopted bucket reports its existing name"
+    assert _obs.status.url == "s3://legacy", "url follows the existing name"
+    _man = bucket.status({metadata.name = "demo", spec = {region = "us-east-1", import = {existingName = "legacy", mode = "manage"}}}, {})
+    assert _man.status.mode == "managed", "import mode=manage -> managed"
+}
+
 test_render_minimal()
 test_storage_class_archive()
 test_versioning_suspended()
@@ -222,3 +277,7 @@ test_retention_compliance()
 test_kitchen_sink()
 test_status_pre_creation()
 test_status_observed()
+test_import_observe()
+test_import_manage()
+test_no_import_no_pin()
+test_status_mode()

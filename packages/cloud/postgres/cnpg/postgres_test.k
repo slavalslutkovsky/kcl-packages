@@ -79,6 +79,89 @@ test_labels = lambda {
     assert _cs({region = "in-cluster"})?.inheritedMetadata == Undefined, "no labels unless asked for"
 }
 
+# ---- render: backup ---------------------------------------------------------
+
+# The object store is the switch: no spec.backup, no backup block at all —
+# and snapshotRetentionDays on its own cannot conjure one, because retention
+# is an expiry rule over backups that have somewhere to live.
+test_backup_unset = lambda {
+    assert _cs({region = "in-cluster"})?.backup == Undefined, "no object store -> no backup block"
+    _plain = postgres.render(_build({region = "in-cluster"}))
+    _retained = postgres.render(_build({region = "in-cluster", snapshotRetentionDays = 14}))
+    assert _plain == _retained, "snapshotRetentionDays alone must not change the render: there is nowhere to keep anything"
+}
+
+_s3 = {bucket = "pg-backups", path = "prod/demo", endpoint = "http://rustfs.rustfs.svc.cluster.local:9000", credentialsSecret = {name = "rustfs-creds", regionKey = "REGION"}}
+
+# The self-hosted case: an in-cluster S3-compatible server reached by an
+# explicit endpoint, with keys in a Secret.
+test_backup_s3 = lambda {
+    _b = _cs({region = "in-cluster", backup = _s3}).backup.barmanObjectStore
+    assert _b.destinationPath == "s3://pg-backups/prod/demo", "destinationPath is the bucket URL plus the path prefix"
+    assert _b.endpointURL == "http://rustfs.rustfs.svc.cluster.local:9000", "an S3-compatible server is reached through endpointURL"
+    assert _b.s3Credentials.accessKeyId.name == "rustfs-creds", "the credential Secret must be wired to the access key"
+    assert _b.s3Credentials.accessKeyId.key == "ACCESS_KEY_ID", "the access key defaults to CNPG's own key name"
+    assert _b.s3Credentials.secretAccessKey.name == "rustfs-creds", "the credential Secret must be wired to the secret key"
+    assert _b.s3Credentials.secretAccessKey.key == "ACCESS_SECRET_KEY", "the secret key defaults to CNPG's own key name"
+    assert _b.s3Credentials.region.name == "rustfs-creds", "the region lives in the same Secret"
+    assert _b.s3Credentials.region.key == "REGION", "CNPG takes the region only as a Secret key reference, never as a literal"
+    assert _b.s3Credentials?.inheritFromIAMRole == Undefined, "a named Secret must not also claim an ambient identity"
+    assert _b?.googleCredentials == Undefined, "one provider, one credential block"
+    assert _b?.azureCredentials == Undefined, "one provider, one credential block"
+}
+
+test_backup_s3_minimal = lambda {
+    _b = _cs({region = "in-cluster", backup = {bucket = "pg-backups", credentialsSecret = {name = "s3-creds", accessKeyIdKey = "id", secretAccessKeyKey = "secret"}}}).backup.barmanObjectStore
+    assert _b.destinationPath == "s3://pg-backups", "no path -> the bucket root, where CNPG separates clusters by serverName"
+    assert _b?.endpointURL == Undefined, "no endpoint -> the SDK's own endpoint discovery, i.e. AWS"
+    assert _b.s3Credentials.accessKeyId.key == "id", "an explicit key name must win"
+    assert _b.s3Credentials.secretAccessKey.key == "secret", "an explicit key name must win"
+    assert _b.s3Credentials?.region == Undefined, "no regionKey -> leave the region to the SDK"
+}
+
+# No Secret named means the pods' own cloud identity, which is the only shape
+# that keeps a long-lived key out of the cluster.
+test_backup_ambient_identity = lambda {
+    _aws = _cs({region = "in-cluster", backup = {bucket = "pg-backups"}}).backup.barmanObjectStore.s3Credentials
+    assert _aws.inheritFromIAMRole == True, "no Secret on s3 -> IRSA"
+    assert _aws?.accessKeyId == Undefined, "an ambient identity carries no keys"
+    _gcp = _cs({region = "in-cluster", backup = {provider = "gcs", bucket = "pg-backups"}}).backup.barmanObjectStore.googleCredentials
+    assert _gcp.gkeEnvironment == True, "no Secret on gcs -> Workload Identity"
+    assert _gcp?.applicationCredentials == Undefined, "an ambient identity carries no JSON file"
+    _azure = _cs({region = "in-cluster", backup = {provider = "azure", bucket = "pgbackups", endpoint = "https://acme.blob.core.windows.net"}}).backup.barmanObjectStore.azureCredentials
+    assert _azure.inheritFromAzureAD == True, "no Secret on azure -> Entra ID"
+    assert _azure?.storageKey == Undefined, "an ambient identity carries no storage key"
+}
+
+test_backup_gcs = lambda {
+    _b = _cs({region = "in-cluster", backup = {provider = "gcs", bucket = "pg-backups", path = "demo", endpoint = "http://ignored:9000", credentialsSecret = {name = "gcs-creds"}}}).backup.barmanObjectStore
+    assert _b.destinationPath == "gs://pg-backups/demo", "GCS gets barman's gs:// scheme"
+    assert _b?.endpointURL == Undefined, "GCS has no endpoint override, so endpoint must be dropped"
+    assert _b.googleCredentials.applicationCredentials.name == "gcs-creds", "the credential Secret must be wired to the JSON file"
+    assert _b.googleCredentials.applicationCredentials.key == "gcsCredentials", "GCS authenticates with one JSON file under CNPG's conventional key"
+}
+
+# Azure has no scheme of its own: the storage account name lives in the host
+# of the blob service URL, so the endpoint IS the first half of the path.
+test_backup_azure = lambda {
+    _b = _cs({region = "in-cluster", backup = {provider = "azure", bucket = "pgbackups", path = "demo", endpoint = "https://acme.blob.core.windows.net", credentialsSecret = {name = "azure-creds", accessKeyIdKey = "AZURE_STORAGE_ACCOUNT", secretAccessKeyKey = "AZURE_STORAGE_KEY"}}}).backup.barmanObjectStore
+    assert _b.destinationPath == "https://acme.blob.core.windows.net/pgbackups/demo", "the Azure destination is built from the blob service URL"
+    assert _b?.endpointURL == Undefined, "the endpoint is already inside destinationPath, so it must not be repeated"
+    assert _b.azureCredentials.storageAccount.name == "azure-creds", "the credential Secret must be wired to the storage account"
+    assert _b.azureCredentials.storageAccount.key == "AZURE_STORAGE_ACCOUNT", "Azure's identity half is the storage account name"
+    assert _b.azureCredentials.storageKey.name == "azure-creds", "both halves come from the same Secret"
+    assert _b.azureCredentials.storageKey.key == "AZURE_STORAGE_KEY", "Azure's secret half is the storage key"
+}
+
+# Retention is the EXISTING snapshotRetentionDays, in barman's <n>[dwm]
+# spelling — one knob for every backend rather than a second in-cluster one.
+test_backup_retention = lambda {
+    assert _cs({region = "in-cluster", backup = _s3}).backup.retentionPolicy == "7d", "snapshotRetentionDays defaults to 7 -> 7d"
+    assert _cs({region = "in-cluster", backup = _s3, snapshotRetentionDays = 30}).backup.retentionPolicy == "30d", "snapshotRetentionDays must become the retention policy"
+    assert _cs({region = "in-cluster", backup = _s3, snapshotRetentionDays = 0})?.backup?.retentionPolicy == Undefined, "0 means keep forever: barman has no way to spell 'never expire' but an absent rule"
+    assert _cs({region = "in-cluster", backup = _s3, snapshotRetentionDays = 0}).backup.barmanObjectStore.destinationPath == "s3://pg-backups/prod/demo", "0 retention must still back up — the object store is the switch"
+}
+
 # ---- render: workload identity ------------------------------------------------
 
 # There is no cloud IAM in-cluster; the XRD documents the block as ignored, so

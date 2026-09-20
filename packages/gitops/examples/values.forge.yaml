@@ -1,0 +1,18 @@
+# Overlay for `-D env=forge`: the switch that closes the loop.
+#
+# Apply it only AFTER the history is inside the forge:
+#
+#   git remote add forge https://git.yurikrupnik.com/yurikrupnik-org/gitops.git
+#   git push forge main
+#
+# From then on Flux clones the forge's own copy — the GitRepository url becomes
+# http://git-http.platform.svc:3000/yurikrupnik-org/gitops.git — and GitHub is
+# just the seed. `source.url` stays in the base values so the way back is
+# dropping `-D env=forge`, not an edit.
+source:
+  origin: forge
+  # Flux needs its own credential for the forge too: basic auth, not the
+  # `authorization` header the Repository XRs use.
+  #   kubectl -n flux-system create secret generic forge-auth \
+  #     --from-literal=username=gitops-bot --from-literal=password="$FORGEJO_PAT"
+  secretRef: forge-auth

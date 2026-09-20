@@ -1,0 +1,113 @@
+[dependencies]
+  [dependencies.app]
+    name = "app"
+    full_name = "app_0.1.4"
+    version = "0.1.4"
+  [dependencies.aws-ec2]
+    name = "aws-ec2"
+    full_name = "aws-ec2_0.0.1"
+    version = "0.0.1"
+  [dependencies.aws-eks]
+    name = "aws-eks"
+    full_name = "aws-eks_0.0.1"
+    version = "0.0.1"
+  [dependencies.aws-iam]
+    name = "aws-iam"
+    full_name = "aws-iam_0.0.1"
+    version = "0.0.1"
+  [dependencies.aws-rds]
+    name = "aws-rds"
+    full_name = "aws-rds_0.0.1"
+    version = "0.0.1"
+  [dependencies.azure-compute]
+    name = "azure-compute"
+    full_name = "azure-compute_0.0.1"
+    version = "0.0.1"
+  [dependencies.azure-containerservice]
+    name = "azure-containerservice"
+    full_name = "azure-containerservice_0.0.1"
+    version = "0.0.1"
+  [dependencies.azure-dbforpostgresql]
+    name = "azure-dbforpostgresql"
+    full_name = "azure-dbforpostgresql_0.0.1"
+    version = "0.0.1"
+  [dependencies.azure-network]
+    name = "azure-network"
+    full_name = "azure-network_0.0.1"
+    version = "0.0.1"
+  [dependencies.chaos-mesh]
+    name = "chaos-mesh"
+    full_name = "chaos-mesh_0.0.1"
+    version = "0.0.1"
+  [dependencies.cluster-aws]
+    name = "cluster-aws"
+    full_name = "cluster-aws_0.1.4"
+    version = "0.1.4"
+  [dependencies.cluster-azure]
+    name = "cluster-azure"
+    full_name = "cluster-azure_0.1.4"
+    version = "0.1.4"
+  [dependencies.cluster-gcp]
+    name = "cluster-gcp"
+    full_name = "cluster-gcp_0.1.4"
+    version = "0.1.4"
+  [dependencies.external-secrets]
+    name = "external-secrets"
+    full_name = "external-secrets_0.18.2"
+    version = "0.18.2"
+    sum = "GKneYUgJl+jFFWRI2NlOwPYVtDTYW/DRb6JHh1tNPqU="
+    reg = "ghcr.io"
+    repo = "kcl-lang/external-secrets"
+    oci_tag = "0.18.2"
+  [dependencies.gcp-compute]
+    name = "gcp-compute"
+    full_name = "gcp-compute_0.0.1"
+    version = "0.0.1"
+  [dependencies.gcp-container]
+    name = "gcp-container"
+    full_name = "gcp-container_0.0.1"
+    version = "0.0.1"
+  [dependencies.gcp-sql]
+    name = "gcp-sql"
+    full_name = "gcp-sql_0.0.1"
+    version = "0.0.1"
+  [dependencies.k8s]
+    name = "k8s"
+    full_name = "k8s_1.32.4"
+    version = "1.32.4"
+    sum = "WrltC/mTXtdzmhBZxlvM71wJL5C/UZ/vW+bF3nFvNbM="
+    reg = "ghcr.io"
+    repo = "kcl-lang/k8s"
+    oci_tag = "1.32.4"
+  [dependencies.keda]
+    name = "keda"
+    full_name = "keda_0.1.3"
+    version = "0.1.3"
+    sum = "j5ejIjCuVQqNySmZZFMG+h0AuoizLEiK+sqwMWqj0u8="
+    reg = "ghcr.io"
+    repo = "kcl-lang/keda"
+    oci_tag = "0.1.3"
+  [dependencies.postgres-aws]
+    name = "postgres-aws"
+    full_name = "postgres-aws_0.1.4"
+    version = "0.1.4"
+  [dependencies.postgres-azure]
+    name = "postgres-azure"
+    full_name = "postgres-azure_0.1.4"
+    version = "0.1.4"
+  [dependencies.postgres-gcp]
+    name = "postgres-gcp"
+    full_name = "postgres-gcp_0.1.4"
+    version = "0.1.4"
+  [dependencies.vm-aws]
+    name = "vm-aws"
+    full_name = "vm-aws_0.1.4"
+    version = "0.1.4"
+  [dependencies.vm-azure]
+    name = "vm-azure"
+    full_name = "vm-azure_0.1.4"
+    version = "0.1.4"
+  [dependencies.vm-gcp]
+    name = "vm-gcp"
+    full_name = "vm-gcp_0.1.4"
+    version = "0.1.4"

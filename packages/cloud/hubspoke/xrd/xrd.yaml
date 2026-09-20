@@ -1,0 +1,202 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: networkhubs.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: NetworkHub
+    plural: networkhubs
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Hub-and-spoke connectivity for networks that already exist: one
+                managed transit fabric plus one attachment per spoke network.
+                Every field below is a COMMON parameter mapped onto each
+                cloud's native hub:
+
+                  aws    Transit Gateway + one TransitGatewayVpcAttachment per
+                         spoke VPC (+ Transit Gateway route tables, their
+                         associations and propagations, and an optional route
+                         toward the gateway in each spoke's own route tables)
+                  gcp    Network Connectivity Center Hub + one VPC Spoke per
+                         spoke network (presetTopology MESH or STAR)
+                  azure  Virtual WAN + Virtual Hub + one VirtualHubConnection
+                         per spoke VNet (+ a custom hub route table when the
+                         spokes must not see each other)
+
+                This XR does NOT create the spoke networks. It attaches them:
+                spokes[].network names a network that already exists — the one
+                a `Network` XR (cloud.example.org/v1alpha1) reports as
+                status.id / status.selfLink. Keeping the two apart is what lets
+                a spoke be detached without touching the network, and a hub be
+                deleted without deleting anything that carries workloads.
+
+                Fields a backend cannot express are documented as ignored
+                rather than silently dropped.
+              properties:
+                region:
+                  type: string
+                  description: Cloud region of the hub. AWS creates the Transit Gateway and every attachment here, so a spoke VPC in another region cannot be attached by this XR (that needs a peering attachment). Azure is the Virtual Hub location. Ignored by gcp, whose NCC hub is a global resource — its spokes name their own region through the network they link.
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the existing resource group the Virtual WAN and the Virtual Hub are created in. Required by the azure backend, ignored elsewhere.
+                hubCidr:
+                  type: string
+                  description: 'Azure-only — the Virtual Hub''s own address space (a /23 or larger, not overlapping any spoke). Azure runs routers inside the hub and they need addresses. Required by the azure backend. Ignored by aws and gcp: a Transit Gateway and an NCC hub are control-plane objects with no subnet of their own.'
+                topology:
+                  type: string
+                  enum: [mesh, isolated]
+                  default: mesh
+                  description: |
+                    Who may talk to whom once attached.
+
+                    mesh — every spoke reaches every other spoke. AWS leaves
+                    the Transit Gateway's default route table doing the
+                    association and the propagation; gcp uses an NCC hub with
+                    presetTopology MESH; azure lets every connection use the
+                    hub's default route table.
+
+                    isolated — a spoke reaches only the spokes marked
+                    shared: true (the shared-services pattern), never another
+                    workload spoke. AWS composes two Transit Gateway route
+                    tables and wires associations and propagations by hand;
+                    gcp switches the hub to presetTopology STAR and puts each
+                    spoke in the hub's center or edge group; azure adds a
+                    custom hub route table that only shared connections
+                    propagate into. This mode needs at least one shared spoke
+                    on every backend — a hub where nothing may reach anything
+                    is rejected rather than built.
+                summaryCidr:
+                  type: string
+                  default: 10.0.0.0/8
+                  description: 'AWS-only — destination of the route installed toward the Transit Gateway in each route table listed in spokes[].routeTableIds. One summary route is what makes traffic actually leave a spoke VPC; the Transit Gateway itself only routes what already reached it. Ignored by gcp and azure, which program the spoke side themselves (NCC installs hub routes in each VPC, Virtual WAN owns the connection''s routing).'
+                amazonSideAsn:
+                  type: integer
+                  default: 64512
+                  description: AWS-only — BGP ASN of the Transit Gateway's Amazon side. Only matters once a VPN or Direct Connect attachment is added (this XR composes neither), but it cannot be changed after creation, so it is settable here. Ignored by gcp and azure.
+                spokes:
+                  type: array
+                  minItems: 1
+                  description: The networks to attach. One entry becomes one attachment/spoke/connection; removing an entry detaches that network and leaves it running.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        maxLength: 40
+                        description: Logical name of the spoke, and the suffix of every composed resource made for it. A DNS-1123 label, because Crossplane answers a renamed composed resource by deleting and recreating it — so this name is part of the contract, not a comment.
+                      network:
+                        type: string
+                        minLength: 1
+                        description: 'The network to attach, spelled the way its own cloud spells it: an AWS VPC id (vpc-0abc…), an Azure Virtual Network ARM id (/subscriptions/…/virtualNetworks/spoke-a), a GCP network self link or partial URI (projects/<p>/global/networks/<n>). This is what a Network XR publishes as status.id (AWS) or status.selfLink (GCP).'
+                      subnets:
+                        type: array
+                        items: {type: string}
+                        description: AWS-only — one subnet id per availability zone the attachment should place an ENI in; traffic only reaches the Transit Gateway from zones that have one. REQUIRED by the aws backend (at least one). Ignored by gcp and azure, which attach to the network itself.
+                      routeTableIds:
+                        type: array
+                        items: {type: string}
+                        description: AWS-only — route tables inside the spoke VPC that should get a summaryCidr route toward the Transit Gateway. Optional, because the route tables usually belong to the Network XR and may be managed there instead; leaving it empty attaches the VPC without sending any traffic into the hub.
+                      shared:
+                        type: boolean
+                        default: false
+                        description: 'Mark this spoke as shared services (DNS, inspection, CI, a management VPC). In mesh it changes nothing. In isolated it is the whole distinction: shared spokes are reachable by every spoke and reach every spoke, workload spokes reach only shared ones.'
+                    required: [name, network]
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the hub and its attachments when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them). The spoke networks are never touched either way — this XR does not own them.
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS tags on the gateway, the attachments and the route tables; Azure tags on the Virtual WAN and the Virtual Hub; GCP labels on the NCC hub and spokes.
+              required:
+                - region
+                - spokes
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the hub exists and every spoke is attached — a hub with half its spokes attached is not a topology.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp | azure).
+                topology:
+                  type: string
+                  description: Topology actually configured (mesh | isolated).
+                hubId:
+                  type: string
+                  description: Provider-assigned id of the hub (Transit Gateway id / NCC hub resource name / Virtual Hub ARM id).
+                hubName:
+                  type: string
+                  description: Hub name as the cloud knows it.
+                hubState:
+                  type: string
+                  description: Hub state as the provider reports it (NCC ACTIVE/CREATING; empty where the cloud reports none).
+                spokeCount:
+                  type: integer
+                  description: Number of spokes asked for in the spec.
+                attachedCount:
+                  type: integer
+                  description: Number of spokes the provider has confirmed attached. Equal to spokeCount when ready.
+                spokes:
+                  type: array
+                  description: One row per spokes[] entry, in spec order.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: The spec name of the spoke.
+                      network:
+                        type: string
+                        description: The network that was attached.
+                      id:
+                        type: string
+                        description: Provider id of the attachment (TGW attachment id / NCC spoke name / hub connection id). Empty until it exists.
+                      shared:
+                        type: boolean
+                        description: Whether this spoke is reachable by every other spoke.
+                      attached:
+                        type: boolean
+                        description: True once the provider reports the attachment.
+                routeTableIds:
+                  type: array
+                  items: {type: string}
+                  description: Hub-side route tables this XR composed (AWS Transit Gateway route tables, the Azure custom hub route table). Empty in mesh, where the cloud's own default table is used.
+                defaultRouteTableId:
+                  type: string
+                  description: The hub's own default route table — AWS associationDefaultRouteTableId, Azure defaultRouteTableId. Empty on gcp, where NCC has no such object.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the hub.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: TOPOLOGY
+          type: string
+          jsonPath: .status.topology
+        - name: SPOKES
+          type: integer
+          jsonPath: .status.attachedCount
+        - name: HUB
+          type: string
+          jsonPath: .status.hubId

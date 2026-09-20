@@ -1,0 +1,35 @@
+# The same wrapper with the mesh routing backend instead of Gateway API.
+# There is no `istio` Composition — `k8s` is the only backend; route.type is a
+# field, because everything except the route object is identical either way.
+# Needs istiod on the cluster (`devkit up --istio`); without it Crossplane
+# cannot rest-map networking.istio.io and the XR says so.
+apiVersion: platform.example.org/v1alpha1
+kind: Application
+metadata:
+  namespace: default
+  name: orders-api
+spec:
+  image: ghcr.io/example/orders-api:2.0.0
+  port: 8080
+  component: api
+  partOf: commerce
+  replicas: 2                      # no `scaling:` here, so this is the replica count
+  health:
+    readinessPath: /healthz
+  route:
+    type: istio                    # -> VirtualService (+ DestinationRule below)
+    hosts:
+      - orders.example.org
+    path: /api
+    pathType: PathPrefix           # -> uri.prefix: /api  (Exact -> uri.exact)
+    gateway:
+      name: platform               # -> gateways: ["istio-ingress/platform"]
+      namespace: istio-ingress
+    timeoutSeconds: 10             # -> http[].timeout: 10s
+    retries:
+      attempts: 3                  # Istio-only; the gateway-api backend ignores retries
+      perTryTimeoutSeconds: 2
+    trafficPolicy:
+      loadBalancer: LEAST_REQUEST  # -> DestinationRule trafficPolicy.loadBalancer.simple
+      maxConnections: 256          # upstream TCP connection-pool ceiling
+      outlierDetection: true       # eject endpoints after 5 consecutive 5xx, at most half the pool

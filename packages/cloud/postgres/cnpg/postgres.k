@@ -5,6 +5,12 @@
 # is no provider MR wrapper, no providerConfigRef and no managementPolicies
 # (deletionPolicy is documented as ignored in-cluster: the Cluster's lifetime
 # follows the XR, and workloadIdentity too: there is no cloud IAM in-cluster).
+#
+# Backups are the one thing an in-cluster database has to be TOLD about: a
+# managed service backs itself up to storage you never see, while CNPG needs
+# an object store named for it. spec.backup is that name, and without it the
+# Cluster renders exactly as it always did — no bucket, no WAL archive, and
+# nothing to restore from once the cluster is gone.
 import cnpg.models.v1.postgresql_cnpg_io_v1_cluster as backend
 
 # Pinned repository; the major tag tracks the latest published minor image,
@@ -17,6 +23,64 @@ rw_service = lambda name: str -> str {
 }
 ro_service = lambda name: str -> str {
     "${name}-ro"
+}
+
+# barman-cloud addresses an object store by URL, so the provider picks the
+# scheme rather than the cloud: s3:// reaches AWS and every S3-compatible
+# server alike. Azure has no scheme of its own — CNPG carries the storage
+# account name in the host of the blob service URL, so there the endpoint IS
+# the first half of the destination.
+_schemes = {s3 = "s3://", gcs = "gs://"}
+
+destination_path = lambda backup {
+    _provider = backup?.provider or "s3"
+    _base = "${backup.endpoint}/${backup.bucket}" if _provider == "azure" else "${_schemes[_provider]}${backup.bucket}"
+    "${_base}/${backup.path}" if backup?.path else _base
+}
+
+# Where backups go and how the PostgreSQL pods authenticate to get there.
+# Each object-store API takes its own credential block, and each has an
+# ambient-identity flag for when no Secret is named — the only shape that
+# keeps a long-lived key out of the cluster, and the only one a self-hosted
+# cluster cannot use.
+barman_object_store = lambda backup {
+    _provider = backup?.provider or "s3"
+    _sec = backup?.credentialsSecret
+    _name = _sec?.name
+    {
+        destinationPath = destination_path(backup)
+        # Only S3 has an endpoint override to set; Azure's endpoint is already
+        # inside destinationPath, and GCS has none at all.
+        if _provider == "s3" and backup?.endpoint:
+            endpointURL = backup.endpoint
+        if _provider == "gcs":
+            googleCredentials = {
+                if _sec:
+                    applicationCredentials = {name = _name, key = _sec?.applicationCredentialsKey or "gcsCredentials"}
+                else:
+                    gkeEnvironment = True
+            }
+        elif _provider == "azure":
+            azureCredentials = {
+                if _sec:
+                    storageAccount = {name = _name, key = _sec?.accessKeyIdKey or "ACCESS_KEY_ID"}
+                    storageKey = {name = _name, key = _sec?.secretAccessKeyKey or "ACCESS_SECRET_KEY"}
+                else:
+                    inheritFromAzureAD = True
+            }
+        else:
+            s3Credentials = {
+                if _sec:
+                    accessKeyId = {name = _name, key = _sec?.accessKeyIdKey or "ACCESS_KEY_ID"}
+                    secretAccessKey = {name = _name, key = _sec?.secretAccessKeyKey or "ACCESS_SECRET_KEY"}
+                    # CNPG takes the region only as a Secret key reference,
+                    # never as a literal, so it is opt-in by key name.
+                    if _sec?.regionKey:
+                        region = {name = _name, key = _sec.regionKey}
+                else:
+                    inheritFromIAMRole = True
+            }
+    }
 }
 
 render = lambda oxr {
@@ -35,6 +99,19 @@ render = lambda oxr {
     _replicas = _spec?.replicas or 0
     if (_spec?.highAvailability or False) and _replicas < 1:
         _replicas = 1
+
+    # Backups need somewhere to go, so the block's presence is the switch.
+    _backup = _spec?.backup
+
+    # snapshotRetentionDays is a tri-state: an explicit 0 means "no expiry
+    # rule", and `or` would silently turn it back into the XRD default.
+    _retention = _spec?.snapshotRetentionDays
+    if _retention == Undefined:
+        _retention = 7
+
+    # Azure's destination is assembled FROM the endpoint, so unlike S3 it
+    # cannot be left out.
+    assert (not _backup) or (_backup?.provider or "s3") != "azure" or _backup?.endpoint, "spec.backup.provider 'azure' needs spec.backup.endpoint: CNPG builds the Azure destination from the blob service URL (https://<account>.blob.core.windows.net), the only place the storage account name appears. Set it, or use provider 's3' against an S3-compatible endpoint."
 
     [backend.Cluster {
         # The operator derives the -rw/-ro Service names from the Cluster
@@ -65,6 +142,15 @@ render = lambda oxr {
             spec.postgresql.parameters = _spec.parameters
         if _spec?.tags:
             spec.inheritedMetadata.labels = _spec.tags
+        if _backup:
+            spec.backup = {
+                barmanObjectStore = barman_object_store(_backup)
+                # barman expresses retention as an expiry rule in its own
+                # <n>[dwm] spelling, and has no way to say "never expire":
+                # 0 is that, so it emits no rule at all.
+                if _retention > 0:
+                    retentionPolicy = "${_retention}d"
+            }
     }]
 }
 

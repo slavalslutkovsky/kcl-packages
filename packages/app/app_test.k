@@ -534,6 +534,108 @@ config:
     assert kinds == ["Deployment", "Service", "ScaledObject", "PodChaos", "ConfigMap"], "release with chaos: ${kinds}"
 }
 
+# ── Backstage catalog ────────────────────────────────────────────────────────
+# The contract that makes the portal useful: the entity's kubernetes-id
+# annotation and the label on every rendered object are the same string, so the
+# Kubernetes tab resolves this release — chaos experiments included.
+test_catalog_component = lambda {
+    r = Release {**yaml.decode(file.read("examples/values-chaos.yaml"))}
+    out = catalogEntities(r)
+    assert [e.kind for e in out] == ["Component"], "one Component, no APIs declared: ${[e.kind for e in out]}"
+    c = out[0]
+    assert c.apiVersion == "backstage.io/v1alpha1", "entities are catalog objects, not Kubernetes ones"
+    assert c.metadata.name == "zerg-api", "the entity name defaults to the workload's"
+    assert c.spec.$type == "service", "a workload is a service unless it says otherwise"
+    assert c.spec.system == "zerg", "system defaults to the workload's partOf"
+    assert c.spec.lifecycle == "production" and c.spec.owner == "team-zerg"
+
+    _id = c.metadata.annotations["backstage.io/kubernetes-id"]
+    assert _id == "zerg-api" and c.metadata.annotations["backstage.io/kubernetes-namespace"] == "zerg"
+    assert c.metadata.annotations["platform.example.org/chaos-faults"] == "kill-one=pod-kill,slow-net=delay,lossy=loss,cut-db=partition,hot-cpu=cpu,memory-pressure=memory", "every declared fault must be readable without the cluster"
+
+    # The other half of the link: nothing the release renders may be invisible
+    # to the entity, chaos objects least of all.
+    assert all_true([o.metadata.labels["backstage.io/kubernetes-id"] == _id for o in renderRelease(r) if o.metadata?.labels]), "every labelled object must carry the entity's id"
+    _chaos = [o for o in renderRelease(r) if o.kind in ["PodChaos", "NetworkChaos", "StressChaos", "Schedule"]]
+    assert len(_chaos) == 6 and all_true([o.metadata.labels["backstage.io/kubernetes-id"] == _id for o in _chaos]), "the experiments are what the component page shows"
+
+    # The Deployment's selector is immutable — the id must never leak into it.
+    _dep = renderRelease(r)[0]
+    assert _dep.spec.selector.matchLabels == {app = "zerg-api"}, "selector must stay `app` alone: ${_dep.spec.selector.matchLabels}"
+    assert _dep.spec.template.metadata.labels["backstage.io/kubernetes-id"] == _id, "pods carry it, so the plugin finds them too"
+}
+
+# A task is a different archetype, and Backstage should say so.
+test_catalog_task_type = lambda {
+    _cron = Release {**yaml.decode("""\
+task:
+  name: nightly-reindex
+  namespace: zerg
+  image: yurikrupnik/zerg-cli:latest
+  schedule: "0 3 * * *"
+catalog:
+  owner: team-zerg
+""")}
+    assert catalogEntities(_cron)[0].spec.$type == "cronjob", "a scheduled task is a cronjob"
+    _job = Release {**yaml.decode("""\
+task:
+  name: migrate
+  image: yurikrupnik/zerg-cli:latest
+catalog:
+  owner: team-zerg
+  type: library
+""")}
+    _e = catalogEntities(_job)[0]
+    assert _e.spec.$type == "library", "an explicit type wins over the archetype default"
+    assert _e.metadata.annotations?["backstage.io/kubernetes-namespace"] == Undefined, "no namespace, no namespace annotation"
+}
+
+# APIs: emitted as their own entities and wired to the Component without the
+# ref being written twice.
+test_catalog_apis = lambda {
+    r = Release {**yaml.decode("""\
+workload:
+  name: zerg-api
+  image: yurikrupnik/zerg-api:latest
+catalog:
+  owner: team-zerg
+  system: zerg
+  consumesApis: [api:billing]
+  providesApis: [zerg-api-grpc]
+  apis:
+    - name: zerg-api-openapi
+      definitionUrl: https://api.example.com/openapi.yaml
+    - name: zerg-api-asyncapi
+      type: asyncapi
+      lifecycle: experimental
+      owner: team-events
+      definition: "asyncapi: 3.0.0"
+""")}
+    out = catalogEntities(r)
+    assert [e.kind for e in out] == ["Component", "API", "API"], "one entity per api, component first: ${[e.kind for e in out]}"
+    assert out[0].spec.providesApis == ["zerg-api-grpc", "zerg-api-openapi", "zerg-api-asyncapi"], "declared apis join the explicit refs: ${out[0].spec.providesApis}"
+    assert out[0].spec.consumesApis == ["api:billing"]
+
+    _open = out[1]
+    assert _open.spec.$type == "openapi" and _open.spec.owner == "team-zerg" and _open.spec.lifecycle == "production", "api owner/lifecycle default to the component's"
+    assert _open.spec.definition == {"$text" = "https://api.example.com/openapi.yaml"}, "a URL becomes the catalog's \\$text placeholder: ${_open.spec.definition}"
+    assert _open.spec.system == "zerg", "apis belong to the component's system"
+    _async = out[2]
+    assert _async.spec.definition == "asyncapi: 3.0.0", "an inline definition is passed through as written"
+    assert _async.spec.owner == "team-events" and _async.spec.lifecycle == "experimental", "an api may own itself"
+}
+
+test_catalog_absent = lambda {
+    r = Release {**yaml.decode("""\
+workload:
+  name: zerg-api
+  image: yurikrupnik/zerg-api:latest
+""")}
+    assert catalogEntities(r) == [], "no catalog block → no entities"
+    assert all_true([o.apiVersion != "backstage.io/v1alpha1" for o in renderRelease(r)]), "entities must never reach the manifest stream"
+    assert renderRelease(r)[0].metadata.labels["backstage.io/kubernetes-id"] == "zerg-api", "the plugin label does not wait for a catalog block"
+}
+
 # invalid faults (no namespace, fixed mode without value, delay with direction
 # from, duplicate names) are rejected by the schema `check` blocks.
 test_backend()
@@ -552,3 +654,7 @@ test_replicas_ownership()
 test_chaos_one_shot()
 test_chaos_schedule()
 test_chaos_release_order()
+test_catalog_component()
+test_catalog_task_type()
+test_catalog_apis()
+test_catalog_absent()

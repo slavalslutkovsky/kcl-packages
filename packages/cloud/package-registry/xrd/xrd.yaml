@@ -1,0 +1,175 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: packageregistries.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: PackageRegistry
+    plural: packageregistries
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable POLYGLOT package registry: one private namespace that
+                serves OCI container images AND language package managers
+                (npm, pip, Maven, Go, Cargo, NuGet, generic files). Every field
+                below is a COMMON parameter mapped onto each backend's native
+                resources; a field a backend cannot express is documented as
+                ignored rather than silently dropped.
+
+                Which backend serves which format is fixed, and asking a
+                backend for a format it cannot serve FAILS the render with a
+                named error — it is never a silently missing repository:
+
+                  backend | oci npm pypi maven go cargo nuget generic
+                  gcp     |  x   x   x    x    x    -     -     x
+                  aws     |  x   x   x    x    -    x     x     x
+                  azure   |  x   -   -    -    -    -     -     -
+                  zot     |  x   -   -    -    -    -     -     -
+                  forgejo |  x   x   x    x    x    x     x     x
+
+                gcp is one Artifact Registry repository per format; aws is ECR
+                for oci plus ONE CodeArtifact domain and repository for every
+                language format (CodeArtifact repositories are polyglot);
+                azure is one Container Registry; zot and forgejo are one
+                in-cluster Helm release each.
+
+                The registry is named after the XR (metadata.name), so the name
+                must satisfy the strictest backend you target: ACR accepts only
+                5-50 alphanumeric characters (no dashes). On the gcp backend
+                each repository id is `<xr name>-<format>`, because a repository
+                id is unique per project and location.
+              properties:
+                region:
+                  type: string
+                  description: Cloud region for the registry (ECR/CodeArtifact region / Artifact Registry location / ACR location). Ignored by the zot and forgejo backends, which run where the XR lives.
+                formats:
+                  type: array
+                  minItems: 1
+                  default: [oci]
+                  items:
+                    type: string
+                    enum: [oci, npm, pypi, maven, go, cargo, nuget, generic]
+                  description: Package formats this registry serves. `oci` is container images; the rest are language package managers. gcp cannot serve cargo or nuget, aws cannot serve go, and azure and zot serve oci only — a format outside the chosen backend's set fails the render. Each format gets its own repository on gcp; on aws every language format shares one CodeArtifact repository; on forgejo they all share one instance.
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the existing resource group the Container Registry is created in. Required by the azure backend, ignored elsewhere.
+                owner:
+                  type: string
+                  description: Forgejo-only — the Forgejo user that owns the packages (every endpoint is /api/packages/<owner>/…); must be the username stored in adminSecret. Required by the forgejo backend, ignored elsewhere.
+                adminSecret:
+                  type: string
+                  description: Forgejo-only — name of an existing Secret in the XR's namespace with `username` and `password` keys; the chart creates that admin user from it. Required by the forgejo backend, ignored elsewhere.
+                tier:
+                  type: string
+                  enum: [standard, premium]
+                  default: standard
+                  description: Service tier. ACR sku (standard -> Standard, premium -> Premium, plus zone redundancy). AWS, GCP and the self-hosted backends have no registry tiers and ignore it; the azure backend also upgrades itself to Premium when a field requires it (untaggedRetentionDays, replicationRegions).
+                immutableTags:
+                  type: boolean
+                  default: false
+                  description: Reject overwriting an existing tag. ECR imageTagMutability=IMMUTABLE (oci only) / Artifact Registry dockerConfig.immutableTags (the DOCKER repository only). Ignored by the azure and zot backends, which have no registry-wide tag immutability, by the forgejo backend, and by every language format (CodeArtifact, npm, PyPI and Maven releases are already immutable by protocol).
+                scanOnPush:
+                  type: boolean
+                  default: true
+                  description: Scan pushed artifacts for vulnerabilities. ECR imageScanningConfiguration.scanOnPush (oci only) / Artifact Registry vulnerabilityScanningConfig on every repository (INHERITED, i.e. follow the project setting, vs DISABLED) / zot CVE search extension. Ignored by the azure backend, where scanning is a Microsoft Defender subscription setting, by CodeArtifact and by the forgejo backend, which have no scanner.
+                publicAccess:
+                  type: boolean
+                  default: false
+                  description: Allow unauthenticated reads. ECR repository policy granting * pull actions / Artifact Registry IAM member allUsers:roles/artifactregistry.reader per repository / ACR anonymousPullEnabled / zot anonymous read policy / Forgejo REQUIRE_SIGNIN_VIEW=false. Publishing always requires credentials. CodeArtifact always requires IAM authentication and ignores it.
+                untaggedRetentionDays:
+                  type: integer
+                  minimum: 1
+                  description: Delete untagged container images this many days after they were pushed. ECR lifecycle policy rule / Artifact Registry cleanup policy (DELETE, tagState UNTAGGED) on the DOCKER repository only / ACR retentionPolicyInDays (forces Premium) / zot retention (deleteUntagged + delay). Ignored by CodeArtifact (no retention rules) and by the forgejo backend (retention is a per-owner setting, not a chart value). Omit to keep everything forever.
+                keepLastImages:
+                  type: integer
+                  minimum: 1
+                  description: Keep only this many most-recently-pushed versions. ECR lifecycle policy rule (imageCountMoreThan, oci only) / Artifact Registry cleanup policy (KEEP, mostRecentVersions) on every format / zot retention keepTags.mostRecentlyPushedCount. Ignored by the azure backend (no version-count retention), by CodeArtifact and by the forgejo backend.
+                encryptionKeyId:
+                  type: string
+                  description: Customer-managed encryption key for artifacts at rest. ECR SSE-KMS key ARN and CodeArtifact domain encryptionKey / Artifact Registry kmsKeyName / ACR Key Vault key id (azure additionally needs encryptionIdentityClientId). Ignored by the self-hosted backends, where disk encryption is the storage class's job. Omit for the provider-managed key.
+                encryptionIdentityClientId:
+                  type: string
+                  description: Azure-only — client id of the user-assigned managed identity ACR uses to reach the Key Vault key. Required alongside encryptionKeyId on the azure backend (ACR customer-managed keys cannot use the registry's system identity), ignored elsewhere.
+                replicationRegions:
+                  type: array
+                  items: {type: string}
+                  description: Additional regions the registry content is replicated to. ACR georeplications (forces Premium). Ignored by the aws backend (ECR cross-region replication is an account-wide registry setting, not a per-repository one) and by the gcp and self-hosted backends, which have no per-repository replication.
+                storageGb:
+                  type: integer
+                  default: 8
+                  minimum: 1
+                  description: Self-hosted only — size of the volume zot or Forgejo stores artifacts on. Ignored by the cloud backends, whose storage is elastic and billed by usage.
+                htpasswdSecret:
+                  type: string
+                  description: zot-only — name of a Secret in the XR's namespace holding an `htpasswd` key; zot then requires those credentials for push (and for pull unless publicAccess is true). Omit to run zot with anonymous read/write, reachable only from inside the cluster. Ignored by every other backend; the forgejo backend uses adminSecret instead.
+                forceDestroy:
+                  type: boolean
+                  default: false
+                  description: Delete the registry even when it still contains artifacts. ECR forceDelete. The other backends always delete their content with the registry and ignore it.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the backing registry when this resource is deleted; maps to Crossplane managementPolicies (Orphan keeps the external registry).
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value labels applied to the registry. ECR and CodeArtifact tags / Artifact Registry labels / ACR tags / zot pod labels. Ignored by the forgejo backend.
+              required:
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once every backing repository exists.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp | azure | zot | forgejo).
+                registryName:
+                  type: string
+                  description: Name of the provisioned registry.
+                region:
+                  type: string
+                  description: Region/location the registry resides in.
+                endpoints:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Per-format registry endpoint (docker login host / npm registry / pip index / …), keyed by spec.formats value. A key appears only once its endpoint is known.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the registry.
+                arn:
+                  type: string
+                  description: AWS ARN (AWS only).
+                id:
+                  type: string
+                  description: Provider-assigned resource id.
+                authSecret:
+                  type: string
+                  description: Secret holding the registry credentials (zot htpasswdSecret / forgejo adminSecret).
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: FORMATS
+          type: string
+          jsonPath: .spec.formats
+        - name: CLOUD-URL
+          type: string
+          jsonPath: .status.cloud-url

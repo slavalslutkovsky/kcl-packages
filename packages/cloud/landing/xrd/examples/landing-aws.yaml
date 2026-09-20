@@ -1,0 +1,41 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: LandingPage
+metadata:
+  namespace: default
+  name: acme-landing
+spec:
+  region: eu-west-1              # the S3 bucket's region; the ACM certificate is always us-east-1
+  domain: www.acme.example       # create the status.dnsTarget CNAME in a DnsZone for acme.example
+  content:
+    index: index.html
+    errorDocument: 404.html
+    html: |
+      <!doctype html>
+      <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <title>ACME — coming soon</title>
+          <link rel="stylesheet" href="/styles.css">
+        </head>
+        <body><main><h1>ACME</h1><p>Launching shortly.</p></main></body>
+      </html>
+    files:
+      - path: styles.css         # contentType derived from the extension: text/css
+        content: |
+          main { font-family: system-ui; margin: 20vh auto; max-width: 32rem; }
+      - path: 404.html
+        content: |
+          <!doctype html><html><body><h1>Not found</h1></body></html>
+  cdn:
+    enabled: true
+    ttlSeconds: 3600
+    priceClass: cheapest         # cheapest | most | all -> PriceClass_100 | _200 | _All
+  tls:
+    enabled: true                # ACM certificate, DNS-validated via status.validationRecords
+  deletionPolicy: Delete
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws            # the flag: picks the backend (aws | gcp | azure | onprem)

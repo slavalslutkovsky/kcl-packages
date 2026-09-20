@@ -24,8 +24,15 @@ as a Chaos Mesh experiment (PodChaos / NetworkChaos / StressChaos, or a
 Schedule around one) pinned to that workload's own pods. Chaos Mesh over
 Litmus because its experiments are self-contained CRs: no per-experiment
 ChaosExperiment install from a hub, no chaos ServiceAccount per namespace.
+
+Backstage: a `catalog:` block turns the same values file into catalog entities
+(`-D catalog=true` renders a Component, plus an API per `catalog.apis`), and
+every object rendered here carries the `backstage.io/kubernetes-id` label, so
+the portal's Kubernetes plugin shows this release's Deployment, Service,
+autoscaler AND its chaos experiments on one component page.
 """
 
+import regex
 import k8s.api.apps.v1 as appsv1
 import k8s.api.core.v1 as corev1
 import k8s.api.autoscaling.v2 as autoscalingv2
@@ -240,22 +247,105 @@ schema ExternalSecretSpec:
     refreshInterval: str = "1h"
     items: [{str:str}]
 
+schema Link:
+    """One `metadata.links` entry of a Backstage entity: where it points, and how it is labelled."""
+    url: str
+    title?: str
+    # Backstage icon key, e.g. dashboard | docs | alert | chat
+    icon?: str
+    $type?: str
+
+schema Api:
+    """
+    An API entity this component provides. Emitted next to the Component and
+    added to its `providesApis`, so the link between the two is never written
+    twice.
+
+    Backstage refuses an API entity with no definition, so give it one: inline
+    in `definition`, or as `definitionUrl` for something the catalog fetches at
+    import time (`$text`).
+    """
+    name: str
+    $type: "openapi" | "asyncapi" | "graphql" | "grpc" = "openapi"
+    description?: str
+    # both default to the Component's
+    lifecycle?: "experimental" | "production" | "deprecated"
+    owner?: str
+    definition?: str
+    definitionUrl?: str
+
+    check:
+        definition or definitionUrl, "api ${name}: needs `definition` (the spec inline) or `definitionUrl` (fetched by the catalog); Backstage rejects an API entity without one"
+        not (definition and definitionUrl), "api ${name}: `definition` and `definitionUrl` are two ways to say the same thing — pick one"
+
+schema Catalog:
+    """
+    Backstage catalog metadata for this release: what the portal shows, and how
+    it finds the objects that are actually running.
+
+    The entities are NOT Kubernetes objects and never join the manifest stream
+    (see `catalogEntities`). What ties them to the cluster is one id: the
+    Component is annotated `backstage.io/kubernetes-id`, every rendered object
+    is labelled with it, and so the Kubernetes plugin resolves the Deployment,
+    the Service, the autoscaler and the Chaos Mesh experiments of this release
+    from the entity alone. The declared faults are also summarised in the
+    `platform.example.org/chaos-faults` annotation, so the portal can say what
+    chaos is aimed at a component without reaching the cluster at all.
+
+    Only `owner` is required — everything else is either derived from the
+    workload (name, namespace, system, archetype) or genuinely optional.
+    """
+    # spec.owner. Required: Backstage will not accept an ownerless entity.
+    owner: str
+    # entity name; default: the workload's / task's own name
+    name?: str
+    title?: str
+    description?: str
+    # spec.type; default: "service" for a workload, "cronjob" / "job" for a task
+    $type?: str
+    lifecycle: "experimental" | "production" | "deprecated" = "production"
+    # spec.system; default: the workload's `partOf`
+    system?: str
+    tags: [str] = []
+    labels: {str:str} = {}
+
+    # merged OVER the generated annotations, so a values file can override the
+    # kubernetes-id when the objects are labelled by something else
+    annotations: {str:str} = {}
+    links: [Link] = []
+    # entity refs, e.g. "component:other-api", "resource:orders-db"
+    dependsOn: [str] = []
+    consumesApis: [str] = []
+    # refs to APIs declared elsewhere; the `apis:` below are added automatically
+    providesApis: [str] = []
+    apis: [Api] = []
+    subcomponentOf?: str
+    # → backstage.io/techdocs-ref, e.g. "dir:." for docs/ next to the entity
+    techdocs?: str
+    # → backstage.io/source-location, e.g. "url:https://github.com/org/repo/tree/main/"
+    source?: str
+
+    check:
+        name == Undefined or regex.match(name, r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$"), "catalog name '${name}' is not a valid Backstage entity name: [A-Za-z0-9._-], starting and ending alphanumeric, at most 63 characters"
+        all t in tags {regex.match(t, r"^[a-z0-9][a-z0-9+#-]*$")}, "catalog tags must be lowercase [a-z0-9+#-] and start alphanumeric — Backstage rejects the rest: ${tags}"
+
 schema Release:
     """
     A whole app release in one values.yaml (Helm-style).
 
     Exactly one of `workload` (long-running: backend/frontend) or `task`
     (batch/CLI: Job/CronJob). Optional `config` → a ConfigMap named
-    "<name>-config"; optional `externalSecret` → an ExternalSecret. This is what
+    "<name>-config"; optional `externalSecret` → an ExternalSecret; optional
+    `catalog` → the Backstage entities, rendered on their own (see
+    `catalogEntities`) because they are not Kubernetes objects. This is what
     `app`'s own main.k renders when a values.yaml is present, so a consumer needs
     only a values.yaml — no local main.k / kcl.mod.
     """
     workload?: Workload
     task?: Task
-    #opts: Taks
-    #opts: {str:ste}
     config?: {str:str}
     externalSecret?: ExternalSecretSpec
+    catalog?: Catalog
 
     check:
         workload or task, "Release needs a `workload:` or a `task:`"
@@ -301,6 +391,12 @@ _labels = lambda w: Workload -> {str:str} {
         "app.kubernetes.io/name" = w.name
         "app.kubernetes.io/component" = w.component
         "app.kubernetes.io/part-of" = w.partOf
+        # What the Backstage Kubernetes plugin matches on: an entity annotated
+        # backstage.io/kubernetes-id=<id> is shown every object labelled with
+        # the same id. Deliberately not part of the Deployment's
+        # selector.matchLabels (which stays `app` alone) — a selector is
+        # immutable, and this label has to stay free to change.
+        "backstage.io/kubernetes-id" = w.name
     } | ({"app.kubernetes.io/version" = w.version} if w.version else {})
 }
 
@@ -366,7 +462,7 @@ _deployment = lambda w: Workload -> appsv1.Deployment {
 
 _service = lambda w: Workload -> corev1.Service {
     corev1.Service {
-        metadata = {name = w.name} | ({namespace = w.namespace} if w.namespace else {})
+        metadata = {name = w.name, labels = _labels(w)} | ({namespace = w.namespace} if w.namespace else {})
         spec = {
             selector = {app = w.name}
             ports = [{$protocol = "TCP", name = w.portName, port = w.port, targetPort = w.port}]
@@ -377,7 +473,7 @@ _service = lambda w: Workload -> corev1.Service {
 
 _hpa = lambda w: Workload -> autoscalingv2.HorizontalPodAutoscaler {
     autoscalingv2.HorizontalPodAutoscaler {
-        metadata = {name = w.name, labels = {app = w.name}} | ({namespace = w.namespace} if w.namespace else {})
+        metadata = {name = w.name, labels = _labels(w)} | ({namespace = w.namespace} if w.namespace else {})
         spec = {
             scaleTargetRef = {apiVersion = "apps/v1", kind = "Deployment", name = w.name}
             minReplicas = w.hpa.minReplicas
@@ -408,7 +504,7 @@ _scaler = lambda w: Workload -> keda.ScaledObject {
     _mem: [{str:}] = [{$type = "memory", metricType = "Utilization", metadata = {value = "${_s.memory}"}}] if _s.memory else []
     _triggers = _cpu + _mem + _s.triggers
     keda.ScaledObject {
-        metadata = {name = w.name, labels = {app = w.name}} | ({namespace = w.namespace} if w.namespace else {})
+        metadata = {name = w.name, labels = _labels(w)} | ({namespace = w.namespace} if w.namespace else {})
         spec = {
             scaleTargetRef = {name = w.name}
             minReplicaCount = _s.minReplicas
@@ -516,6 +612,74 @@ _fault = lambda w: Workload, f: Fault -> any {
     experiment(f, _faultSelector(w), _faultMeta(w, f))
 }
 
+# ── Backstage catalog ────────────────────────────────────────────────────────
+# Entities are built from the same values file as the manifests, so the portal
+# cannot describe a different app than the cluster runs. They are plain dicts,
+# not typed k8s objects: `backstage.io/v1alpha1` is not a Kubernetes API, and
+# nothing here may ever reach `kubectl apply`.
+
+# The three atoms `manager` reuses for the cluster-scope entities, public for
+# the same reason the fault renderers are: a game day in the portal must be
+# built the same way a component is.
+faultSummary = lambda faults: [Fault] -> str {
+    """What the portal can show without reaching the cluster: declared faults as "<name>=<type>" pairs."""
+    ",".join(["${f.name}=${f.$type}" for f in faults])
+}
+
+entity = lambda kind: str, metadata: {str:}, spec: {str:} -> {str:} {
+    """One Backstage catalog entity: Component, API, Resource, System, …"""
+    {apiVersion = "backstage.io/v1alpha1", kind = kind, metadata = metadata, spec = spec}
+}
+
+link = lambda l: Link -> {str:} {
+    """A `metadata.links` entry with its unset optionals dropped — a null there fails the catalog import."""
+    {k: v for k, v in l if v != Undefined}
+}
+
+_apiEntity = lambda c: Catalog, a: Api -> {str:} {
+    entity("API", {
+        name = a.name
+    } | ({description = a.description} if a.description else {}) | ({tags = c.tags} if c.tags else {}), {
+        $type = a.$type
+        lifecycle = a.lifecycle or c.lifecycle
+        owner = a.owner or c.owner
+        # `$text` is the catalog's own placeholder: it fetches the URL at import
+        # time. An inline definition is passed through as written.
+        definition = a.definition if a.definition else {"$text" = a.definitionUrl}
+    } | ({system = c.system} if c.system else {}))
+}
+
+# Ownership, lifecycle and relations come from `catalog:`; the id, namespace,
+# archetype and fault summary are derived, so they cannot drift from the
+# manifests rendered next to them.
+# The parameter list is flat rather than the braced form KCL also accepts:
+# function-kcl's embedded compiler (v0.12.2, the version every Composition in
+# this repo pins) cannot parse braced parameters, and platform/application
+# imports this module inside that function.
+_componentEntity = lambda {
+    c: Catalog,
+    name: str,
+    namespace: str,
+    defaultType: str,
+    system: str,
+    faults: [Fault],
+} -> {str:} {
+    _ann = {
+        "backstage.io/kubernetes-id" = name
+    } | ({"backstage.io/kubernetes-namespace" = namespace} if namespace else {}) | ({"backstage.io/techdocs-ref" = c.techdocs} if c.techdocs else {}) | ({"backstage.io/source-location" = c.source} if c.source else {}) | ({
+        "platform.example.org/chaos-faults" = faultSummary(faults)
+    } if faults else {}) | c.annotations
+    _apis = c.providesApis + [a.name for a in c.apis if a.name not in c.providesApis]
+    entity("Component", {
+        name = c.name or name
+        annotations = _ann
+    } | ({title = c.title} if c.title else {}) | ({description = c.description} if c.description else {}) | ({tags = c.tags} if c.tags else {}) | ({labels = c.labels} if c.labels else {}) | ({links = [link(l) for l in c.links]} if c.links else {}), {
+        $type = c.$type or defaultType
+        lifecycle = c.lifecycle
+        owner = c.owner
+    } | ({system = system} if system else {}) | ({subcomponentOf = c.subcomponentOf} if c.subcomponentOf else {}) | ({dependsOn = c.dependsOn} if c.dependsOn else {}) | ({providesApis = _apis} if _apis else {}) | ({consumesApis = c.consumesApis} if c.consumesApis else {}))
+}
+
 # ── Task (Job / CronJob) renderers ───────────────────────────────────────────
 _taskLabels = lambda t: Task -> {str:str} {
     {
@@ -523,6 +687,9 @@ _taskLabels = lambda t: Task -> {str:str} {
         "app.kubernetes.io/name" = t.name
         "app.kubernetes.io/component" = t.component
         "app.kubernetes.io/part-of" = t.partOf
+        # Same Backstage id label as a Workload's, so the plugin resolves a
+        # Job / CronJob from its Component entity too.
+        "backstage.io/kubernetes-id" = t.name
     } | ({"app.kubernetes.io/version" = t.version} if t.version else {})
 }
 
@@ -627,6 +794,31 @@ renderRelease = lambda r: Release -> [any] {
     _core + _cm + _es
 }
 
+catalogEntities = lambda r: Release -> [any] {
+    """
+    The Backstage entities for a Release: one Component for the workload (or
+    task), plus one API per `catalog.apis` entry. Empty when the values file has
+    no `catalog:`.
+
+    These are NOT Kubernetes objects, which is why they are a second render
+    rather than extra items in `renderRelease`:
+
+      kcl run packages/app -D values=<file> -D catalog=true -q > catalog-info.yaml
+
+    Commit that where Backstage reads it (a catalog-info.yaml registered as a
+    Location). `spec.type` defaults to the archetype — service for a workload,
+    cronjob or job for a task — and `spec.system` to the workload's `partOf`.
+    """
+    _c = r.catalog
+    _w = r.workload
+    _name = (_w.name if _w else r.task.name) if _c else ""
+    _ns = ((_w.namespace if _w else r.task.namespace) or "") if _c else ""
+    _defaultType = ("service" if _w else ("cronjob" if r.task.schedule else "job")) if _c else ""
+    _system = (_c.system or (_w.partOf if _w else r.task.partOf)) if _c else ""
+    _faults: [Fault] = ((_w.chaos if _w else []) if _c else [])
+    ([_componentEntity(_c, _name, _ns, _defaultType, _system, _faults)] + [_apiEntity(_c, a) for a in _c.apis]) if _c else []
+}
+
 configMap = lambda name: str, data: {str:str}, namespace: str = "" -> corev1.ConfigMap {
     """A typed ConfigMap (replaces kustomize configMapGenerator literals)."""
     corev1.ConfigMap {
@@ -644,6 +836,7 @@ secret = lambda name: str, data: {str:str}, namespace: str = "" -> corev1.Secret
     }
 }
 
+# Flat parameter list, for the same reason as _componentEntity above.
 externalSecret = lambda {
     name: str,
     store: str,

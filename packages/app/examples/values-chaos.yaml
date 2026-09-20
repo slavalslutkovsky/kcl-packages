@@ -55,3 +55,19 @@ workload:
     - name: memory-pressure
       type: memory
       size: 256MB
+
+# The portal side of chaos. `-D catalog=true` renders a Component annotated
+#   platform.example.org/chaos-faults: kill-one=pod-kill,slow-net=delay,...
+# so Backstage can show what faults are aimed at this app without touching the
+# cluster, and `backstage.io/kubernetes-id: zerg-api` — the label every object
+# above carries, experiments included — so the component's Kubernetes tab lists
+# the live PodChaos / NetworkChaos / Schedule objects next to the Deployment.
+# See docs/backstage.md for the app-config that enables the custom resources.
+catalog:
+  owner: team-zerg
+  description: "Zerg's public HTTP API — a chaos target."
+  tags: [rust, http, chaos]
+  links:
+    - url: http://localhost:2333
+      title: Chaos dashboard
+      icon: dashboard

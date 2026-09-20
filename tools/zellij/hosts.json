@@ -1,0 +1,4 @@
+{
+  "_doc": "Machines a viewpoint may be moved to. `name` is what `zj.sh move <session> <name>` takes, `ssh` is anything ssh(1) accepts (a Host from ~/.ssh/config, user@host, user@host:port via a Host entry). Each host is probed with BatchMode=yes, so key-based auth is required and a host that needs a passphrase prompt counts as unreachable. Keep personal machines out of the repo copy: ZJ_HOSTS=<file>, or ~/.config/zj-viewpoint/hosts.json, shadows this one.",
+  "hosts": []
+}

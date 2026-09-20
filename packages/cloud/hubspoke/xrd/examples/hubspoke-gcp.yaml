@@ -1,0 +1,25 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: NetworkHub
+metadata:
+  namespace: default
+  name: prod-hub-gcp
+spec:
+  # An NCC hub is global; region only satisfies the XRD's required field and
+  # is ignored by this backend.
+  region: europe-west1
+  topology: mesh                 # mesh -> presetTopology MESH; isolated -> STAR + center/edge groups
+  spokes:
+    - name: shared-services
+      network: projects/acme-prod/global/networks/shared-vpc   # Network XR status.selfLink
+      shared: true
+    - name: team-a
+      network: projects/acme-prod/global/networks/team-a-vpc
+    - name: team-b
+      network: projects/acme-prod/global/networks/team-b-vpc
+  deletionPolicy: Delete
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp

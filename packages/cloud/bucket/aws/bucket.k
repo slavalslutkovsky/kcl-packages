@@ -3,6 +3,13 @@
 # minimal; versioning, encryption, public-access, ownership, lifecycle, object
 # lock, cors, logging, website and request-payment are each a companion MR that
 # binds back to the Bucket via bucketSelector.matchControllerRef.
+#
+# spec.import adopts a bucket that already exists (Terraform/Pulumi-made):
+# every MR — the Bucket and each companion — gets crossplane.io/external-name
+# pinned to the existing bucket name, because for all of them that name IS the
+# provider's identifier (the S3 companion APIs are keyed by bucket). Companions
+# then name the bucket directly instead of resolving it through the selector,
+# so nothing waits on a reference in observe-only mode.
 import aws_s3.models.v1beta1.s3_awsm_upbound_io_v1beta1_bucket as backend
 import aws_s3.models.v1beta1.s3_awsm_upbound_io_v1beta1_bucket_versioning as versioning
 import aws_s3.models.v1beta1.s3_awsm_upbound_io_v1beta1_bucket_server_side_encryption_configuration as encryption
@@ -39,21 +46,46 @@ render = lambda oxr {
         _uniform = True
 
     _del = _spec?.deletionPolicy or "Delete"
-    _mp = _orphan_policies if _del == "Orphan" else Undefined
 
-    # Common scaffolding for a companion MR: name annotation, region, controller binding.
+    # Import: adopt an existing bucket. observe = Crossplane reads only (the
+    # old tool still owns writes); manage = full policies, deletionPolicy as usual.
+    _imp = _spec?.$import
+    _existing = _imp?.existingName
+    _observe = _existing and (_imp?.mode or "observe") == "observe"
+    _mp = ["Observe"] if _observe else (_orphan_policies if _del == "Orphan" else Undefined)
+
+    # Annotations every MR carries: the composition-resource-name, plus — when
+    # adopting — the external-name pin and where the bucket came from.
+    _annos = lambda name: str -> {str:str} {
+        _a = {"krm.kcl.dev/composition-resource-name" = name}
+        if _existing:
+            _a |= {"crossplane.io/external-name" = _existing}
+
+        if _imp?.source:
+            _a |= {"cloud.example.org/imported-from" = _imp.source}
+
+        if _imp?.address:
+            _a |= {"cloud.example.org/import-address" = _imp.address}
+
+        _a
+    }
+
+    # Common scaffolding for a companion MR: annotations, region, bucket binding.
     _attach = lambda name: str -> any {
         _c = {
-            metadata.annotations = {"krm.kcl.dev/composition-resource-name" = name}
+            metadata.annotations = _annos(name)
             spec.forProvider.region = _region
-            spec.forProvider.bucketSelector.matchControllerRef = True
+            if _existing:
+                spec.forProvider.bucket = _existing
+            else:
+                spec.forProvider.bucketSelector.matchControllerRef = True
         }
         _c | {spec.managementPolicies = _mp} if _mp else _c
     }
 
     # 1) Bucket (minimal).
     _items: [any] = [backend.Bucket {
-        metadata.annotations = {"krm.kcl.dev/composition-resource-name" = "managed"}
+        metadata.annotations = _annos("managed")
         if _mp:
             spec.managementPolicies = _mp
         spec.forProvider.region = _region
@@ -166,10 +198,18 @@ render = lambda oxr {
     _items
 }
 
+# How Crossplane relates to the cloud bucket, for status.mode:
+# created (Crossplane made it) | observe (adopted, read-only) | managed (adopted, Crossplane writes).
+mode_of = lambda oxr -> str {
+    _imp = oxr.spec?.$import
+    "created" if not _imp?.existingName else ("observe" if (_imp?.mode or "observe") == "observe" else "managed")
+}
+
 # Build the desired composite carrying observed status back to the XR.
 status = lambda oxr, ocds {
     _at = (ocds["managed"]?.Resource?.status?.atProvider) if ("managed" in ocds) else Undefined
-    _name = (_at?.id) or oxr.metadata.name
+    _imp = oxr.spec?.$import
+    _name = (_at?.id) or _imp?.existingName or oxr.metadata.name
     _region = (_at?.region) or oxr.spec.region
     _dxr = {
         apiVersion = oxr?.apiVersion or "cloud.example.org/v1alpha1"
@@ -177,6 +217,7 @@ status = lambda oxr, ocds {
         metadata.name = oxr.metadata.name
         status = {
             provider = "aws"
+            mode = mode_of(oxr)
             ready = _at != Undefined and (_at?.arn or "") != ""
             bucketName = _name
             region = _region

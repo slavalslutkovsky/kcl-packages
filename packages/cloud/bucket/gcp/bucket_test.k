@@ -163,6 +163,34 @@ test_status_ready = lambda {
     assert dxr.status.region == "US-CENTRAL1", "region from atProvider.location"
 }
 
+# ---- render: import ---------------------------------------------------------
+# Adopting pins external-name to the existing bucket; observe (the default)
+# makes Crossplane read-only, manage hands writes over and lets deletionPolicy
+# decide the policies as for a created bucket.
+test_import = lambda {
+    obs = bucket.render(_build({region = "us-central1", import = {existingName = "legacy-9c1", source = "pulumi", address = "urn:pulumi:prod::infra::gcp:storage/bucket:Bucket::legacy"}}))[0]
+    assert obs.metadata.annotations["crossplane.io/external-name"] == "legacy-9c1", "existingName -> external-name"
+    assert obs.metadata.annotations["cloud.example.org/imported-from"] == "pulumi", "source recorded"
+    assert obs.metadata.annotations["cloud.example.org/import-address"].startswith("urn:pulumi:"), "address recorded"
+    assert obs.spec.managementPolicies == ["Observe"], "import defaults to observe-only"
+    man = bucket.render(_build({region = "us-central1", deletionPolicy = "Orphan", import = {existingName = "legacy-9c1", mode = "manage"}}))[0]
+    assert man.metadata.annotations["crossplane.io/external-name"] == "legacy-9c1", "still pinned in manage mode"
+    assert man.spec.managementPolicies == ["Observe", "Create", "Update", "LateInitialize"], "manage + Orphan -> orphan policies"
+    man2 = bucket.render(_build({region = "us-central1", import = {existingName = "legacy-9c1", mode = "manage"}}))[0]
+    assert man2.spec.managementPolicies == ["*"], "manage + Delete -> provider default policies"
+    plain = bucket.render(_build({region = "us-central1"}))[0]
+    assert plain.metadata.annotations?["crossplane.io/external-name"] == Undefined, "no import -> nothing pinned"
+}
+
+test_status_mode = lambda {
+    assert bucket.status(_build({region = "us-central1"}), {}).status.mode == "created", "no import -> created"
+    obs = bucket.status(_build({region = "us-central1", import = {existingName = "legacy-9c1"}}), {})
+    assert obs.status.mode == "observe", "import defaults to observe"
+    assert obs.status.bucketName == "legacy-9c1", "adopted bucket reports its existing name before it is observed"
+    assert obs.status.endpoint == "legacy-9c1.storage.googleapis.com", "endpoint follows the existing name"
+    assert bucket.status(_build({region = "us-central1", import = {existingName = "x", mode = "manage"}}), {}).status.mode == "managed", "manage -> managed"
+}
+
 test_render()
 test_storage_class()
 test_versioning()
@@ -176,3 +204,5 @@ test_lifecycle_rules()
 test_cors()
 test_status_pending()
 test_status_ready()
+test_import()
+test_status_mode()

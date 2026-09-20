@@ -1,0 +1,53 @@
+# A realistic small production estate, priced on all three clouds.
+#
+#   just price                                    this file
+#   just price packages/platform/pricing/examples/values.yaml prod
+#
+# The shape mirrors what `packages/app` + the cloud capabilities actually
+# provision for one product: a cluster to run it on, the database behind it,
+# the bucket its artefacts live in, and the bastion nobody admits to keeping.
+# Field names are the XRDs' own, so each item can be checked against a real
+# `spec:` without a translation table.
+#
+# What this does NOT say is which cloud to run on — that is the whole point.
+# Every item is priced on all three and the summary totals them, because the
+# decision is made on the estate, not on one machine: per-item cheapest is
+# not additive, since nobody runs the cluster on Azure and the database on AWS.
+
+regionSet: us # us-east-1 / us-central1 / eastus — see rates.k region_sets
+clouds: [aws, gcp, azure] # omit to price every cloud the card covers
+
+items:
+  # The product cluster. nodeSize is the portable rung, not a machine type:
+  # medium is m5.large / e2-standard-2 / Standard_D2s_v5, and the comparison
+  # reads those out of the backends rather than from a copy of the ladder.
+  # Worker root disks are not priced — the KubernetesCluster XRD has no disk
+  # field, so every estimate carries a note saying so.
+  - name: platform
+    capability: cluster
+    nodeSize: medium # 2 vCPU / 8 GiB per node
+    nodeCount: 3 # x3 nodes, plus one control-plane fee
+
+  # The database. memoryGb drives each cloud's own ladder: 8 GiB is
+  # db.t4g.large on RDS, db-custom-2-7680 on Cloud SQL and GP_Standard_D2s_v3
+  # on Flexible Server. Azure bills storage in fixed steps, so 100 GiB is
+  # charged as 128 — the estimate says that out loud.
+  - name: platform-db
+    capability: postgres
+    memoryGb: 8
+    storageGb: 100
+    # highAvailability: true      # would be reported as UNPRICED, not doubled
+
+  # Artefacts. Capacity only: requests, retrieval and egress are usage, and
+  # a rate card cannot know them.
+  - name: platform-artifacts
+    capability: bucket
+    storageGb: 500
+
+  # The bastion. diskGb 30 is the backends' own default; on Azure it is
+  # billed as a whole S4 (32 GiB) managed disk, because Azure sells disks by
+  # tier rather than by the gigabyte.
+  - name: bastion
+    capability: vm
+    size: small # t3.medium / e2-medium / Standard_B2s
+    diskGb: 30

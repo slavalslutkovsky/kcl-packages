@@ -56,10 +56,17 @@ pre-commit:
       glob: '{devkit.toml,packages/manager/examples/values.yaml,tools/graph/**}'
       run: just graph-check
 
+    # catalog/crossplane.yaml and docs/crossplane-graph.md are generated from
+    # the XRDs, Compositions and kcl.mods; touching one without `just
+    # crossplane-catalog` ships Backstage a stale picture of the estate.
+    - name: crossplane-catalog
+      glob: '{packages/**/xrd.yaml,packages/**/composition.yaml,packages/**/kcl.mod,tools/catalog/**}'
+      run: just crossplane-catalog-check
+
     # The plugin behind every nx target and generator in the justfile.
-    - name: typecheck
-      glob: 'tools/**/*.ts'
-      run: just typecheck
+#    - name: typecheck
+#      glob: 'tools/**/*.ts'
+#      run: just typecheck
 
 # `nx release` writes the changelogs from these; a "wip" subject line lands in
 # a published CHANGELOG.md.
@@ -76,6 +83,20 @@ pre-push:
   jobs:
     - name: check
       run: just check
+
+    # Rust has no nx project and no cache, so this is the expensive one —
+    # globbed to rust/** so only a push that actually touches the workspace
+    # pays for it. Mirrors .github/workflows/rust.yml.
+    - name: rust
+      glob: 'rust/**'
+      run: just kclx-test
+
+    # Same shape as the rust job: the Python composition function has no nx
+    # project and no cache, so only a push that touches python/** pays for it.
+    # Mirrors .github/workflows/python.yml.
+    - name: python
+      glob: 'python/**'
+      run: just pkgreg-test
 
     - name: typecheck
       run: just typecheck

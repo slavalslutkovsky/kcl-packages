@@ -1,0 +1,83 @@
+# Identity and permissions for the KclModule controller and the REST API.
+#
+# The controller applies whatever a KCL package renders, so its write
+# permissions cannot be enumerated ahead of time — a module that renders a
+# Deployment needs `apps/deployments`, one that renders a Crossplane XR needs
+# a CRD that may not exist yet. This role is therefore as broad as the objects
+# it is asked to manage.
+#
+# Scoping it down is a deployment decision, not a code one: replace the `*`
+# rule with the kinds your modules actually render, and the controller fails
+# with a clear "forbidden" on the apply of anything else.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kclx-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kclx-operator
+  namespace: kclx-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kclx-api
+  namespace: kclx-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kclx-operator
+rules:
+  # Its own resource, plus the status subresource it writes and the
+  # finalizer it sets (the finalizer needs `update` on the main resource).
+  - apiGroups: [kclx.example.org]
+    resources: [kclmodules, kclmodules/status, kclmodules/finalizers]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Everything a module may render.
+  - apiGroups: ['*']
+    resources: ['*']
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+# The API server front end never applies rendered objects: it reads and writes
+# KclModules, and its render endpoint is a dry run. Discovery is the one thing
+# it shares with the controller, and every authenticated identity has that.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kclx-api
+rules:
+  - apiGroups: [kclx.example.org]
+    resources: [kclmodules]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [kclx.example.org]
+    resources: [kclmodules/status]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kclx-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kclx-operator
+subjects:
+  - kind: ServiceAccount
+    name: kclx-operator
+    namespace: kclx-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kclx-api
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kclx-api
+subjects:
+  - kind: ServiceAccount
+    name: kclx-api
+    namespace: kclx-system

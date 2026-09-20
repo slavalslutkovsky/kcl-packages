@@ -23,28 +23,61 @@ flowchart TB
   chaos_mesh(["chaos-mesh 2.8.4"])
   flux2(["flux2 2.19.0"])
   kubeblocks(["kubeblocks 1.2.0-alpha.3"])
+  gateway_api_crds["gateway-api-crds"]
   entitlement_crd["entitlement-crd"]
   entitlement_rbac["entitlement-rbac"]
   crossplane_functions["crossplane-functions"]
   bucket_xrd["bucket-xrd"]
+  package_registry_xrd["package-registry-xrd"]
+  landing_xrd["landing-xrd"]
+  hubspoke_xrd["hubspoke-xrd"]
+  organization_xrd["organization-xrd"]
   component_xrd["component-xrd"]
+  application_xrd["application-xrd"]
   entitlement_records[["entitlement-records (dir)"]]
   forge_xrd["forge-xrd"]
   repository_xrd["repository-xrd"]
   bucket_providers["bucket-providers"]
+  package_registry_providers["package-registry-providers"]
+  landing_providers["landing-providers"]
+  hubspoke_providers["hubspoke-providers"]
+  organization_providers["organization-providers"]
   component_providers["component-providers"]
+  application_providers["application-providers"]
   forge_providers["forge-providers"]
   repository_providers["repository-providers"]
   bucket_composition_aws["bucket-composition-aws"]
   bucket_composition_azure["bucket-composition-azure"]
   bucket_composition_gcp["bucket-composition-gcp"]
   bucket_composition_rustfs["bucket-composition-rustfs"]
+  package_registry_providerconfigs["package-registry-providerconfigs"]
+  package_registry_composition_aws["package-registry-composition-aws"]
+  package_registry_composition_azure["package-registry-composition-azure"]
+  package_registry_composition_gcp["package-registry-composition-gcp"]
+  package_registry_composition_zot["package-registry-composition-zot"]
+  package_registry_composition_forgejo["package-registry-composition-forgejo"]
+  landing_composition_aws["landing-composition-aws"]
+  landing_composition_azure["landing-composition-azure"]
+  landing_composition_gcp["landing-composition-gcp"]
+  landing_composition_onprem["landing-composition-onprem"]
+  hubspoke_composition_aws["hubspoke-composition-aws"]
+  hubspoke_composition_azure["hubspoke-composition-azure"]
+  hubspoke_composition_gcp["hubspoke-composition-gcp"]
+  organization_composition_gcp["organization-composition-gcp"]
+  organization_composition_aws["organization-composition-aws"]
+  organization_composition_azure["organization-composition-azure"]
   component_composition_flux["component-composition-flux"]
+  application_composition_k8s["application-composition-k8s"]
   forge_providerconfigs["forge-providerconfigs"]
   forge_composition_forgejo["forge-composition-forgejo"]
   repository_composition_forgejo["repository-composition-forgejo"]
   bucket_examples[["bucket-examples (dir)"]]
+  package_registry_examples[["package-registry-examples (dir)"]]
+  landing_examples[["landing-examples (dir)"]]
+  hubspoke_examples[["hubspoke-examples (dir)"]]
+  organization_examples[["organization-examples (dir)"]]
   component_examples[["component-examples (dir)"]]
+  application_examples[["application-examples (dir)"]]
   forge_examples[["forge-examples (dir)"]]
   repository_examples[["repository-examples (dir)"]]
   wave1(("wave 1"))
@@ -60,39 +93,78 @@ flowchart TB
   chaos_mesh --> wave1
   flux2 --> wave1
   wave1 --> kubeblocks
+  wave1 --> gateway_api_crds
   wave1 --> entitlement_crd
   wave1 --> entitlement_rbac
   wave2(("wave 2"))
   kubeblocks --> wave2
+  gateway_api_crds --> wave2
   entitlement_crd --> wave2
   entitlement_rbac --> wave2
   wave2 --> crossplane_functions
   wave2 --> bucket_xrd
+  wave2 --> package_registry_xrd
+  wave2 --> landing_xrd
+  wave2 --> hubspoke_xrd
+  wave2 --> organization_xrd
   wave2 --> component_xrd
+  wave2 --> application_xrd
   wave2 --> entitlement_records
   wave2 --> forge_xrd
   wave2 --> repository_xrd
   wave3(("wave 3"))
   crossplane_functions --> wave3
   bucket_xrd --> wave3
+  package_registry_xrd --> wave3
+  landing_xrd --> wave3
+  hubspoke_xrd --> wave3
+  organization_xrd --> wave3
   component_xrd --> wave3
+  application_xrd --> wave3
   entitlement_records --> wave3
   forge_xrd --> wave3
   repository_xrd --> wave3
   wave3 --> bucket_providers
+  wave3 --> package_registry_providers
+  wave3 --> landing_providers
+  wave3 --> hubspoke_providers
+  wave3 --> organization_providers
   wave3 --> component_providers
+  wave3 --> application_providers
   wave3 --> forge_providers
   wave3 --> repository_providers
   wave4(("wave 4"))
   bucket_providers --> wave4
+  package_registry_providers --> wave4
+  landing_providers --> wave4
+  hubspoke_providers --> wave4
+  organization_providers --> wave4
   component_providers --> wave4
+  application_providers --> wave4
   forge_providers --> wave4
   repository_providers --> wave4
   wave4 --> bucket_composition_aws
   wave4 --> bucket_composition_azure
   wave4 --> bucket_composition_gcp
   wave4 --> bucket_composition_rustfs
+  wave4 --> package_registry_providerconfigs
+  wave4 --> package_registry_composition_aws
+  wave4 --> package_registry_composition_azure
+  wave4 --> package_registry_composition_gcp
+  wave4 --> package_registry_composition_zot
+  wave4 --> package_registry_composition_forgejo
+  wave4 --> landing_composition_aws
+  wave4 --> landing_composition_azure
+  wave4 --> landing_composition_gcp
+  wave4 --> landing_composition_onprem
+  wave4 --> hubspoke_composition_aws
+  wave4 --> hubspoke_composition_azure
+  wave4 --> hubspoke_composition_gcp
+  wave4 --> organization_composition_gcp
+  wave4 --> organization_composition_aws
+  wave4 --> organization_composition_azure
   wave4 --> component_composition_flux
+  wave4 --> application_composition_k8s
   wave4 --> forge_providerconfigs
   wave4 --> forge_composition_forgejo
   wave4 --> repository_composition_forgejo
@@ -101,22 +173,49 @@ flowchart TB
   bucket_composition_azure --> wave5
   bucket_composition_gcp --> wave5
   bucket_composition_rustfs --> wave5
+  package_registry_providerconfigs --> wave5
+  package_registry_composition_aws --> wave5
+  package_registry_composition_azure --> wave5
+  package_registry_composition_gcp --> wave5
+  package_registry_composition_zot --> wave5
+  package_registry_composition_forgejo --> wave5
+  landing_composition_aws --> wave5
+  landing_composition_azure --> wave5
+  landing_composition_gcp --> wave5
+  landing_composition_onprem --> wave5
+  hubspoke_composition_aws --> wave5
+  hubspoke_composition_azure --> wave5
+  hubspoke_composition_gcp --> wave5
+  organization_composition_gcp --> wave5
+  organization_composition_aws --> wave5
+  organization_composition_azure --> wave5
   component_composition_flux --> wave5
+  application_composition_k8s --> wave5
   forge_providerconfigs --> wave5
   forge_composition_forgejo --> wave5
   repository_composition_forgejo --> wave5
   wave5 --> bucket_examples
+  wave5 --> package_registry_examples
+  wave5 --> landing_examples
+  wave5 --> hubspoke_examples
+  wave5 --> organization_examples
   wave5 --> component_examples
+  wave5 --> application_examples
   wave5 --> forge_examples
   wave5 --> repository_examples
   classDef mod_chart fill:#dbeafe,stroke:#64748b
   classDef mod_external fill:#dcfce7,stroke:#64748b
   classDef mod_crossplane fill:#fef9c3,stroke:#64748b
   classDef mod_bucket fill:#fce7f3,stroke:#64748b
-  classDef mod_component fill:#ede9fe,stroke:#64748b
-  classDef mod_entitlement fill:#ffedd5,stroke:#64748b
-  classDef mod_forge fill:#e0f2fe,stroke:#64748b
-  classDef mod_repository fill:#f1f5f9,stroke:#64748b
+  classDef mod_package_registry fill:#ede9fe,stroke:#64748b
+  classDef mod_landing fill:#ffedd5,stroke:#64748b
+  classDef mod_hubspoke fill:#e0f2fe,stroke:#64748b
+  classDef mod_organization fill:#f1f5f9,stroke:#64748b
+  classDef mod_component fill:#fee2e2,stroke:#64748b
+  classDef mod_application fill:#ecfccb,stroke:#64748b
+  classDef mod_entitlement fill:#dbeafe,stroke:#64748b
+  classDef mod_forge fill:#dcfce7,stroke:#64748b
+  classDef mod_repository fill:#fef9c3,stroke:#64748b
   classDef overlap stroke:#b3261e,stroke-width:3px
   class n8n mod_chart
   class openbao mod_chart
@@ -138,10 +237,43 @@ flowchart TB
   class bucket_composition_gcp mod_bucket
   class bucket_composition_rustfs mod_bucket
   class bucket_examples mod_bucket
+  class package_registry_xrd mod_package_registry
+  class package_registry_providers mod_package_registry
+  class package_registry_providerconfigs mod_package_registry
+  class package_registry_composition_aws mod_package_registry
+  class package_registry_composition_azure mod_package_registry
+  class package_registry_composition_gcp mod_package_registry
+  class package_registry_composition_zot mod_package_registry
+  class package_registry_composition_forgejo mod_package_registry
+  class package_registry_examples mod_package_registry
+  class landing_xrd mod_landing
+  class landing_providers mod_landing
+  class landing_composition_aws mod_landing
+  class landing_composition_azure mod_landing
+  class landing_composition_gcp mod_landing
+  class landing_composition_onprem mod_landing
+  class landing_examples mod_landing
+  class hubspoke_xrd mod_hubspoke
+  class hubspoke_providers mod_hubspoke
+  class hubspoke_composition_aws mod_hubspoke
+  class hubspoke_composition_azure mod_hubspoke
+  class hubspoke_composition_gcp mod_hubspoke
+  class hubspoke_examples mod_hubspoke
+  class organization_xrd mod_organization
+  class organization_providers mod_organization
+  class organization_composition_gcp mod_organization
+  class organization_composition_aws mod_organization
+  class organization_composition_azure mod_organization
+  class organization_examples mod_organization
   class component_xrd mod_component
   class component_providers mod_component
   class component_composition_flux mod_component
   class component_examples mod_component
+  class gateway_api_crds mod_external
+  class application_xrd mod_application
+  class application_providers mod_application
+  class application_composition_k8s mod_application
+  class application_examples mod_application
   class entitlement_crd mod_entitlement
   class entitlement_rbac mod_entitlement
   class entitlement_records mod_entitlement
@@ -172,11 +304,13 @@ flowchart LR
   chaos_mesh(["chaos-mesh 2.8.4"])
   keda(["keda 2.17.2"])
   kube_prometheus_stack(["kube-prometheus-stack 77.5.0"])
+  backstage(["backstage 2.10.1"])
   flux2 -.-> crossplane
   flux2 -.-> cert_manager
   flux2 -.-> chaos_mesh
   flux2 -.-> keda
   keda --> kube_prometheus_stack
+  flux2 -.-> backstage
   classDef type_manager fill:#dbeafe,stroke:#64748b
   classDef type_application fill:#dcfce7,stroke:#64748b
   classDef overlap stroke:#b3261e,stroke-width:3px
@@ -185,6 +319,7 @@ flowchart LR
   class chaos_mesh type_application,overlap
   class keda type_application
   class kube_prometheus_stack type_application
+  class backstage type_application
 ```
 
 ## Conflicts

@@ -1,0 +1,25 @@
+# Adopt a bucket Terraform (or Pulumi) already created, instead of making a new
+# one. `just bucket-import terraform state.json` writes this file from the
+# state; the hand-written form is the same. See docs/bucket-import.md.
+apiVersion: cloud.example.org/v1alpha1
+kind: Bucket
+metadata:
+  namespace: default
+  name: legacy-assets
+spec:
+  region: us-east-1
+  versioning: true
+  blockPublicAccess: true
+  uniformAccess: true
+  tags:
+    team: platform
+  deletionPolicy: Orphan         # while migrating, deleting the XR must never delete the bucket
+  import:
+    existingName: legacy-assets-8f3a1c   # the real cloud name — Terraform/Pulumi suffix these
+    mode: observe                # observe (Crossplane reads only) | manage (Crossplane owns writes)
+    source: terraform            # terraform | pulumi | other — recorded on the managed resources
+    address: aws_s3_bucket.assets  # where it lives in the old state, for `terraform state rm`
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws

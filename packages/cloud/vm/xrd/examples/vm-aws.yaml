@@ -25,4 +25,4 @@ spec:
   crossplane:
     compositionSelector:
       matchLabels:
-        provider: aws                # the flag: picks the backend (aws | gcp | azure)
+        provider: aws                # the flag: picks the backend (aws | gcp | azure | kubevirt)

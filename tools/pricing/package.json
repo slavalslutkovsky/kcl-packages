@@ -1,0 +1,7 @@
+{
+  "name": "pricing-tool",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Regenerates packages/platform/pricing/rates.k from the AWS, GCP and Azure public pricing APIs. Named -tool because the KCL rate-card package is already the nx project `pricing`, and nx rejects two projects with the same name."
+}

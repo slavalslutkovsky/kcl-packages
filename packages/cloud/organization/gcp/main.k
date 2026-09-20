@@ -1,0 +1,20 @@
+import .organization
+
+# function-kcl injects option("params"); fall back to an example for local runs.
+_example = {
+    apiVersion = "cloud.example.org/v1alpha1"
+    kind = "Organization"
+    metadata.name = "example"
+    spec = {
+        orgId = "477132171939"
+        billingAccount = "012345-6789AB-CDEF01"
+        folders = [{name = "platform"}]
+        projects = [{name = "yk-shared-vpc-host", folder = "platform"}]
+    }
+}
+_params = option("params") or {oxr = _example, ocds = {}}
+_oxr = _params.oxr
+_ocds = _params?.ocds or {}
+
+# Managed resources + the desired composite carrying observed status back to the XR.
+items = organization.render(_oxr) + [organization.status(_oxr, _ocds)]

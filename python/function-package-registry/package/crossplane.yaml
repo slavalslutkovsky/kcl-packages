@@ -1,0 +1,22 @@
+# Crossplane Function package metadata. Built with:
+#   crossplane xpkg build --package-root=python/function-package-registry/package \
+#     --embed-runtime-image=ghcr.io/yurikrupnik/function-package-registry-runtime
+#   crossplane xpkg push ghcr.io/yurikrupnik/function-package-registry:v0.1.0
+#
+# The input contract is `packageregistry.fn.example.org/v1beta1, Input` with a
+# single required field, `backend`: every PackageRegistry Composition is the
+# same two-step pipeline and differs only in that string.
+---
+apiVersion: meta.pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-package-registry
+  annotations:
+    meta.crossplane.io/maintainer: Yuri Krupnik
+    meta.crossplane.io/source: github.com/yurikrupnik/kcl-packages
+    meta.crossplane.io/license: Apache-2.0
+    meta.crossplane.io/description: |
+      Composes a PackageRegistry XR into OCI and language-package repositories
+      on AWS (ECR + CodeArtifact), GCP Artifact Registry, Azure ACR, zot or
+      Forgejo. Python, function-sdk-python.
+spec: {}

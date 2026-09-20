@@ -30,6 +30,7 @@ export interface ImportCrdGeneratorSchema {
   service?: string;
   crdPath?: string;
   apiScope?: 'cluster' | 'namespaced';
+  sourceLabel?: string;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -228,6 +229,13 @@ export default async function importCrdGenerator(
     provenance = `# Source: ${options.image} (scope=${options.apiScope ?? 'cluster'}; service=${options.service ?? '*'})`;
   } else if (options.repo) {
     provenance = `# Source: ${options.repo}@${options.ref ?? 'main'} (${options.crdPath ?? 'package/crds'}); service=${options.service ?? '*'}; scope=${options.apiScope ?? 'cluster'}`;
+  }
+  // A --from directory is usually a temp dir built by something upstream (see
+  // tools/datree-crd.sh), so its path says nothing about where the CRDs came
+  // from. --sourceLabel lets the caller stamp the real, pinned origin, which is
+  // what `tools/providers.sh check` greps for.
+  if (options.sourceLabel) {
+    provenance = `# Source: ${options.sourceLabel}`;
   }
 
   tree.write(

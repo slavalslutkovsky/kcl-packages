@@ -1,0 +1,49 @@
+# Cluster prerequisites for the Application Composition.
+#
+# NOT a Provider manifest — there is no Crossplane provider here to install.
+# The Composition composes core Kubernetes workload objects and four CRD kinds
+# (KEDA, external-secrets, Gateway API, Istio) directly, exactly as the
+# component module composes Flux kinds; the controllers that reconcile them are
+# cluster add-ons, installed alongside Crossplane rather than by it.
+#
+# What IS needed is permission. Crossplane's own ServiceAccount is granted
+# rights over composed kinds by the rbac-manager, which aggregates every
+# ClusterRole labelled rbac.crossplane.io/aggregate-to-crossplane=true. CRDs
+# installed by a Crossplane package get that automatically; CRDs installed by a
+# helm chart — and the built-in kinds Crossplane has no reason to touch by
+# default — do not, so composing a Deployment or an HTTPRoute fails with a
+# forbidden error until this ClusterRole exists.
+#
+# Only the kinds this module actually renders are granted. A route type whose
+# CRDs are absent is not an error here: Crossplane simply cannot rest-map the
+# kind, and the XR reports it — the grant is cheap, the CRD is the real
+# prerequisite (`devkit up --istio`, the gateway-api-crds row in devkit.toml,
+# and a KEDA install for spec.scaling).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: application:aggregate-to-crossplane
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups: [""]
+    resources: [services, configmaps]
+    verbs: ["*"]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: ["*"]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: ["*"]
+  - apiGroups: [keda.sh]
+    resources: [scaledobjects]
+    verbs: ["*"]
+  - apiGroups: [external-secrets.io]
+    resources: [externalsecrets]
+    verbs: ["*"]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes]
+    verbs: ["*"]
+  - apiGroups: [networking.istio.io]
+    resources: [virtualservices, destinationrules]
+    verbs: ["*"]

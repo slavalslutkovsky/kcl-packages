@@ -38,27 +38,30 @@ operators:
     used:
       - kind: CompositeResourceDefinition
         group: apiextensions.crossplane.io
-        by: [cloud/<module>/xrd/xrd.yaml (16 modules), platform/appstack/xrd, platform/component/xrd]
+        by: [cloud/<module>/xrd/xrd.yaml (23 modules), platform/application/xrd, platform/appstack/xrd,
+             platform/component/xrd]
       - kind: Composition
         group: apiextensions.crossplane.io
-        by: [cloud/<module>/<backend>/composition.yaml (48), platform/appstack/stack, platform/component/flux]
+        by: [cloud/<module>/<backend>/composition.yaml (67), platform/application/k8s,
+             platform/appstack/stack, platform/component/flux]
       - kind: Function
         group: pkg.crossplane.io
         by: [cloud/apigateway/xrd, cloud/bucket/xrd, cloud/cluster/xrd, cloud/dns/xrd,
              cloud/email/xrd, cloud/iam/xrd, cloud/kms/xrd, cloud/name/xrd, cloud/network/xrd,
-             cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd, cloud/registry/xrd,
-             cloud/serverless/xrd, cloud/vm/xrd, cloud/workload-identity/xrd, manifests/crossplane,
-             platform/appstack/xrd, platform/component/xrd]
+             cloud/package-registry/xrd, cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd,
+             cloud/registry/xrd, cloud/serverless/xrd, cloud/vm/xrd, cloud/workload-identity/xrd,
+             manifests/crossplane, platform/application/xrd, platform/appstack/xrd,
+             platform/component/xrd]
       - kind: Provider
         group: pkg.crossplane.io
         by: [cloud/apigateway/xrd, cloud/bucket/xrd, cloud/cluster/xrd, cloud/dns/xrd,
-             cloud/email/xrd, cloud/iam/xrd, cloud/kms/xrd, cloud/network/xrd, cloud/postgres/xrd,
-             cloud/queue/xrd, cloud/redis/xrd, cloud/registry/xrd, cloud/serverless/xrd,
-             cloud/vm/xrd, cloud/workload-identity/xrd]
+             cloud/email/xrd, cloud/iam/xrd, cloud/kms/xrd, cloud/network/xrd,
+             cloud/package-registry/xrd, cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd,
+             cloud/registry/xrd, cloud/serverless/xrd, cloud/vm/xrd, cloud/workload-identity/xrd]
       - kind: DeploymentRuntimeConfig
         group: pkg.crossplane.io
-        by: [cloud/email/xrd, cloud/kms/xrd, cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd,
-             cloud/registry/xrd, manifests/crossplane]
+        by: [cloud/email/xrd, cloud/kms/xrd, cloud/package-registry/xrd, cloud/postgres/xrd,
+             cloud/queue/xrd, cloud/redis/xrd, cloud/registry/xrd, manifests/crossplane]
     unused: [CompositionRevision, EnvironmentConfig, ManagedResourceActivationPolicy,
              ManagedResourceDefinition, Usage (apiextensions), CronOperation, Operation, WatchOperation,
              Configuration, ConfigurationRevision, FunctionRevision, ImageConfig, Lock, ProviderRevision,
@@ -186,6 +189,44 @@ operators:
         by: [cloud/serverless/knative]
     unused: [Configuration, Revision, Route, DomainMapping]
 
+  - name: kubevirt
+    source: datreeio/CRDs-catalog@ad3b08c5045129d7bb1eeffd8e61719b2c8dd1e2 (KubeVirt and CDI build their CRDs in Go, so no upstream YAML exists to pin — see registry.yaml)
+    installedBy: not installed by this repo — the vm/kubevirt backend assumes KubeVirt and CDI are present (cloud/vm/xrd/providers.yaml has the commands)
+    schemas: packages/providers/kubevirt/models
+    groups: [kubevirt.io, cdi.kubevirt.io]
+    used:
+      - kind: VirtualMachine
+        group: kubevirt.io
+        by: [cloud/vm/kubevirt]
+    unused: [DataVolume]
+    notes: >-
+      DataVolume is generated but never composed as its own object: the boot
+      disk is a spec.dataVolumeTemplates entry inside the VirtualMachine, so
+      the schema is here to document what CDI must be installed to honour,
+      not to be rendered.
+
+  - name: velero
+    source: vmware-tanzu/velero@v1.18.2
+    installedBy: provider-helm Release in cloud/backup/xrd/providerconfigs.yaml (velero chart)
+    schemas: packages/providers/velero/models
+    groups: [velero.io]
+    used:
+      - kind: Schedule
+        group: velero.io
+        by: [cloud/backup/velero]
+      - kind: BackupStorageLocation
+        group: velero.io
+        by: [cloud/backup/velero]
+      - kind: VolumeSnapshotLocation
+        group: velero.io
+        by: [cloud/backup/velero]
+    unused: [Backup, BackupRepository, DeleteBackupRequest, DownloadRequest, PodVolumeBackup,
+             PodVolumeRestore, Restore, ServerStatusRequest]
+    notes: >-
+      Backup and Restore are the objects Velero's own controller creates from
+      a Schedule and from `velero restore create`; authoring them here would
+      fight the controller. There is no Restore XR by design — see docs/backup.md.
+
   - name: keda
     source: ghcr.io/kcl-lang/keda:0.1.3 (kcl-lang module; keda.sh/v1alpha1)
     installedBy: not installed by this repo — the app package's `scaler:` assumes KEDA is present
@@ -211,6 +252,44 @@ operators:
              ClusterGenerator, ECRAuthorizationToken, Fake, GCRAccessToken, GeneratorState,
              GithubAccessToken, Grafana, MFA, Password, QuayAccessToken, STSSessionToken, UUID,
              VaultDynamicSecret, Webhook]
+
+  - name: gateway-api
+    source: kubernetes-sigs/gateway-api@v1.4.0 (config/crd/standard)
+    installedBy: devkit.toml deps.gateway-api-crds (wave 1, the upstream standard-install.yaml)
+    schemas: packages/providers/gateway-api/models
+    groups: [gateway.networking.k8s.io]
+    used:
+      - kind: HTTPRoute
+        group: gateway.networking.k8s.io
+        by: [platform/application/k8s]
+    unused: [BackendTLSPolicy, Gateway, GatewayClass, GRPCRoute, ReferenceGrant]
+    notes: >-
+      The CRDs alone route nothing: an HTTPRoute needs a Gateway API
+      implementation (Istio, Envoy Gateway) watching them, and that is a
+      cluster add-on this repo does not install. Both the CRDs and the schema
+      package come from the standard channel only, so the experimental kinds
+      have no schemas here.
+
+  - name: istio
+    source: istio/istio@1.28.1 (manifests/charts/base/files/crd-all.gen.yaml)
+    installedBy: not installed by this repo — istiod is a cluster add-on (`devkit up --istio`)
+    schemas: packages/providers/istio/models
+    groups: [networking.istio.io, security.istio.io, telemetry.istio.io, extensions.istio.io]
+    used:
+      - kind: VirtualService
+        group: networking.istio.io
+        by: [platform/application/k8s]
+      - kind: DestinationRule
+        group: networking.istio.io
+        by: [platform/application/k8s]
+    unused: [EnvoyFilter, Gateway (networking), ProxyConfig, ServiceEntry, Sidecar, WorkloadEntry,
+             WorkloadGroup, AuthorizationPolicy, PeerAuthentication, RequestAuthentication (security),
+             Telemetry, WasmPlugin]
+    notes: >-
+      Istio serves the networking kinds under three versions
+      (v1alpha3/v1beta1/v1) and the security/telemetry kinds under two, and
+      models/ holds one file per version — so the kinds are listed once here.
+      The Composition renders the v1 pair only.
 
   - name: cert-manager
     source: cert-manager/cert-manager@v1.21.1 (deploy/crds)
@@ -289,6 +368,20 @@ providers:
         by: [cloud/apigateway/aws]
     unused: [APIMapping, Authorizer, Deployment, DomainName, Integration, IntegrationResponse,
              Model, Route, RouteResponse, Stage, VPCLink]
+
+  - name: aws-codeartifact
+    source: ghcr.io/crossplane-contrib/provider-aws-codeartifact:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-codeartifact:v2.6.0 in cloud/package-registry/xrd/providers.yaml
+    schemas: none — composed by the untyped Python function in python/function-package-registry
+    groups: [codeartifact.aws.m.upbound.io]
+    used:
+      - kind: Domain
+        group: codeartifact.aws.m.upbound.io
+        by: [cloud/package-registry/aws]
+      - kind: Repository
+        group: codeartifact.aws.m.upbound.io
+        by: [cloud/package-registry/aws]
+    unused: [DomainPermissionsPolicy, RepositoryPermissionsPolicy]
 
   - name: aws-codebuild
     source: ghcr.io/crossplane-contrib/provider-aws-codebuild:v2.6.0
@@ -374,19 +467,19 @@ providers:
 
   - name: aws-ecr
     source: ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0 in cloud/registry/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0 in cloud/registry/xrd/providers.yaml, cloud/package-registry/xrd/providers.yaml
     schemas: packages/providers/aws-ecr/models
     groups: [ecr.aws.m.upbound.io]
     used:
       - kind: LifecyclePolicy
         group: ecr.aws.m.upbound.io
-        by: [cloud/registry/aws]
+        by: [cloud/registry/aws, cloud/package-registry/aws]
       - kind: Repository
         group: ecr.aws.m.upbound.io
-        by: [cloud/registry/aws]
+        by: [cloud/registry/aws, cloud/package-registry/aws]
       - kind: RepositoryPolicy
         group: ecr.aws.m.upbound.io
-        by: [cloud/registry/aws]
+        by: [cloud/registry/aws, cloud/package-registry/aws]
     unused: [PullThroughCacheRule, RegistryPolicy, RegistryScanningConfiguration,
              ReplicationConfiguration, RepositoryCreationTemplate]
 
@@ -663,13 +756,13 @@ providers:
 
   - name: azure-containerregistry
     source: ghcr.io/crossplane-contrib/provider-azure-containerregistry:v2.6.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-containerregistry:v2.6.0 in cloud/registry/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-containerregistry:v2.6.0 in cloud/registry/xrd/providers.yaml, cloud/package-registry/xrd/providers.yaml
     schemas: packages/providers/azure-containerregistry/models
     groups: [containerregistry.azure.m.upbound.io]
     used:
       - kind: Registry
         group: containerregistry.azure.m.upbound.io
-        by: [cloud/registry/azure]
+        by: [cloud/registry/azure, cloud/package-registry/azure]
     unused: [AgentPool, CacheRule, ContainerConnectedRegistry, CredentialSet, ScopeMap, Token,
              TokenPassword, Webhook]
 
@@ -828,16 +921,16 @@ providers:
 
   - name: gcp-artifact
     source: ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0 in cloud/registry/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0 in cloud/registry/xrd/providers.yaml, cloud/package-registry/xrd/providers.yaml
     schemas: packages/providers/gcp-artifact/models
     groups: [artifact.gcp.m.upbound.io]
     used:
       - kind: RegistryRepository
         group: artifact.gcp.m.upbound.io
-        by: [cloud/registry/gcp]
+        by: [cloud/registry/gcp, cloud/package-registry/gcp]
       - kind: RegistryRepositoryIAMMember
         group: artifact.gcp.m.upbound.io
-        by: [cloud/registry/gcp]
+        by: [cloud/registry/gcp, cloud/package-registry/gcp]
     unused: []
 
   - name: gcp-cloudbuild
@@ -1040,7 +1133,7 @@ providers:
 
   - name: helm
     source: ghcr.io/crossplane-contrib/provider-helm:v1.3.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-helm:v1.3.0 in cloud/cluster/xrd/providers.yaml, cloud/email/xrd/providers.yaml, cloud/kms/xrd/providers.yaml, cloud/postgres/xrd/providers.yaml, cloud/redis/xrd/providers.yaml, cloud/registry/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-helm:v1.3.0 in cloud/cluster/xrd/providers.yaml, cloud/email/xrd/providers.yaml, cloud/kms/xrd/providers.yaml, cloud/package-registry/xrd/providers.yaml, cloud/postgres/xrd/providers.yaml, cloud/redis/xrd/providers.yaml, cloud/registry/xrd/providers.yaml
     schemas: packages/providers/helm/models
     groups: [helm.m.crossplane.io]
     used:
@@ -1049,12 +1142,13 @@ providers:
         by: [cloud/cluster/onprem]
       - kind: Release
         group: helm.m.crossplane.io
-        by: [cloud/cluster/onprem, cloud/email/stalwart, cloud/kms/xrd, cloud/postgres/xrd,
+        by: [cloud/cluster/onprem, cloud/email/stalwart, cloud/kms/xrd,
+             cloud/package-registry/forgejo, cloud/package-registry/zot, cloud/postgres/xrd,
              cloud/queue/xrd, cloud/redis/valkey, cloud/registry/zot]
       - kind: ClusterProviderConfig
         group: helm.m.crossplane.io
-        by: [cloud/email/xrd, cloud/kms/xrd, cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd,
-             cloud/registry/xrd]
+        by: [cloud/email/xrd, cloud/kms/xrd, cloud/package-registry/xrd, cloud/postgres/xrd,
+             cloud/queue/xrd, cloud/redis/xrd, cloud/registry/xrd]
     unused: [ProviderConfigUsage]
 
   - name: vault

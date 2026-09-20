@@ -1,0 +1,57 @@
+# One tenant's Azure management hierarchy, declared as one XR: the management
+# -group tree, the policy assignments that guard it, and the two grants that let
+# a team and an automation principal work inside it.
+#
+# No projects and no auditLogging: the azure backend composes no subscriptions
+# (the installed provider family ships no azurerm_subscription) and a
+# management-group diagnostic setting needs a destination this API does not
+# carry. Declaring either fails the render rather than being dropped.
+apiVersion: cloud.example.org/v1alpha1
+kind: Organization
+metadata:
+  namespace: default
+  name: contoso
+spec:
+  # The root management group, which for a whole tenant is the tenant id.
+  orgId: "3c1f9d2e-7b4a-4a1d-9f83-6ad2e0b5c714"
+
+  # Each name is the management group's own name (its external-name), so it is
+  # tenant-wide unique and every ARM id below is known before Azure answers.
+  folders:
+    - name: platform                 # shared platform services
+    - name: workloads
+    - name: prod                     # nested: workloads/prod
+      parent: workloads
+      displayName: Production
+    - name: sandbox                  # nested: workloads/sandbox
+      parent: workloads
+
+  policies:
+    # Enforced over the whole tenant. A full definition path is passed through
+    # verbatim; this is the built-in "Audit VMs that do not use managed disks".
+    - constraint: /providers/Microsoft.Authorization/policyDefinitions/06a78e20-9358-41c9-923c-fb736d382a4d
+      enforce: true
+    # A bare value is a built-in definition NAME and is expanded to the
+    # tenant-level definition scope. Introduced in the sandbox in audit-only
+    # mode first: dryRun assigns it with enforcement mode DoNotEnforce.
+    - constraint: 404c3081-a854-4457-ae30-26a93ef643f9
+      folder: sandbox
+      dryRun: true
+
+  iamBindings:
+    # Azure grants to an OBJECT ID, never to an address: these are the object
+    # ids of a group and of a service principal.
+    - member: 7c9e4b21-5d38-42a6-9f01-b8d3e6c47a52
+      role: Reader                   # a built-in role NAME
+    # Folder-scoped, not tenant-scoped: the widest grant an automation identity
+    # needs is the subtree it actually manages.
+    - member: e2a5c740-13bf-4d8e-a6c9-0f7b52d9e318
+      role: /providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c
+      folder: workloads
+
+  deletionPolicy: Orphan             # a live tenant is not deleted by deleting its XR
+
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure

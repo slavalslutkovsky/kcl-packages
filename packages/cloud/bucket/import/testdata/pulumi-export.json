@@ -1,0 +1,258 @@
+{
+ "version": 3,
+ "deployment": {
+  "manifest": {
+   "time": "2026-09-01T10:00:00Z",
+   "magic": "",
+   "version": "v3.130.0"
+  },
+  "secrets_providers": {
+   "type": "service"
+  },
+  "resources": [
+   {
+    "urn": "urn:pulumi:prod::infra::pulumi:pulumi:Stack::infra-prod",
+    "custom": false,
+    "type": "pulumi:pulumi:Stack",
+    "outputs": {}
+   },
+   {
+    "urn": "urn:pulumi:prod::infra::pulumi:providers:aws::default_6_50_0",
+    "custom": true,
+    "id": "a1",
+    "type": "pulumi:providers:aws",
+    "inputs": {
+     "region": "eu-west-1"
+    },
+    "outputs": {
+     "region": "eu-west-1"
+    }
+   },
+   {
+    "urn": "urn:pulumi:prod::infra::aws:s3/bucketV2:BucketV2::assets",
+    "custom": true,
+    "id": "assets-c9d0e1f",
+    "type": "aws:s3/bucketV2:BucketV2",
+    "inputs": {
+     "bucketPrefix": "assets-"
+    },
+    "outputs": {
+     "arn": "arn:aws:s3:::assets-c9d0e1f",
+     "bucket": "assets-c9d0e1f",
+     "id": "assets-c9d0e1f",
+     "region": "eu-west-1",
+     "forceDestroy": false,
+     "objectLockEnabled": false,
+     "tags": {
+      "env": "prod"
+     },
+     "tagsAll": {
+      "env": "prod"
+     },
+     "versionings": [
+      {
+       "enabled": false,
+       "mfaDelete": false
+      }
+     ],
+     "serverSideEncryptionConfigurations": [],
+     "lifecycleRules": [],
+     "corsRules": [],
+     "loggings": [],
+     "websites": []
+    }
+   },
+   {
+    "urn": "urn:pulumi:prod::infra::aws:s3/bucketVersioningV2:BucketVersioningV2::assets",
+    "custom": true,
+    "id": "assets-c9d0e1f",
+    "type": "aws:s3/bucketVersioningV2:BucketVersioningV2",
+    "outputs": {
+     "bucket": "assets-c9d0e1f",
+     "id": "assets-c9d0e1f",
+     "versioningConfiguration": {
+      "status": "Enabled",
+      "mfaDelete": ""
+     }
+    }
+   },
+   {
+    "urn": "urn:pulumi:prod::infra::aws:s3/bucketPublicAccessBlock:BucketPublicAccessBlock::assets",
+    "custom": true,
+    "type": "aws:s3/bucketPublicAccessBlock:BucketPublicAccessBlock",
+    "outputs": {
+     "bucket": "assets-c9d0e1f",
+     "blockPublicAcls": true,
+     "blockPublicPolicy": false,
+     "ignorePublicAcls": true,
+     "restrictPublicBuckets": true
+    }
+   },
+   {
+    "urn": "urn:pulumi:prod::infra::aws:s3/bucketOwnershipControls:BucketOwnershipControls::assets",
+    "custom": true,
+    "type": "aws:s3/bucketOwnershipControls:BucketOwnershipControls",
+    "outputs": {
+     "bucket": "assets-c9d0e1f",
+     "rule": {
+      "objectOwnership": "BucketOwnerPreferred"
+     }
+    }
+   },
+   {
+    "urn": "urn:pulumi:prod::infra::aws:s3/bucketServerSideEncryptionConfigurationV2:BucketServerSideEncryptionConfigurationV2::assets",
+    "custom": true,
+    "type": "aws:s3/bucketServerSideEncryptionConfigurationV2:BucketServerSideEncryptionConfigurationV2",
+    "outputs": {
+     "bucket": "assets-c9d0e1f",
+     "rules": [
+      {
+       "applyServerSideEncryptionByDefault": {
+        "sseAlgorithm": "AES256"
+       },
+       "bucketKeyEnabled": false
+      }
+     ]
+    }
+   },
+   {
+    "urn": "urn:pulumi:prod::infra::aws:s3/bucketLifecycleConfigurationV2:BucketLifecycleConfigurationV2::assets",
+    "custom": true,
+    "type": "aws:s3/bucketLifecycleConfigurationV2:BucketLifecycleConfigurationV2",
+    "outputs": {
+     "bucket": "assets-c9d0e1f",
+     "rules": [
+      {
+       "id": "tier",
+       "status": "Enabled",
+       "filter": {
+        "prefix": ""
+       },
+       "transitions": [
+        {
+         "days": 60,
+         "storageClass": "STANDARD_IA"
+        }
+       ]
+      },
+      {
+       "id": "expire-tmp",
+       "status": "Enabled",
+       "filter": {
+        "prefix": "tmp/"
+       },
+       "expiration": {
+        "days": 14
+       }
+      }
+     ]
+    }
+   },
+   {
+    "urn": "urn:pulumi:prod::infra::aws:s3/bucketCorsConfiguration:BucketCorsConfiguration::assets",
+    "custom": true,
+    "type": "aws:s3/bucketCorsConfiguration:BucketCorsConfiguration",
+    "outputs": {
+     "bucket": "assets-c9d0e1f",
+     "corsRules": [
+      {
+       "allowedOrigins": [
+        "*"
+       ],
+       "allowedMethods": [
+        "GET"
+       ],
+       "maxAgeSeconds": 300
+      }
+     ]
+    }
+   },
+   {
+    "urn": "urn:pulumi:prod::infra::aws:s3/bucketObject:BucketObject::readme",
+    "custom": true,
+    "type": "aws:s3/bucketObject:BucketObject",
+    "outputs": {
+     "bucket": "assets-c9d0e1f",
+     "key": "README"
+    }
+   },
+   {
+    "urn": "urn:pulumi:prod::infra::gcp:storage/bucket:Bucket::media",
+    "custom": true,
+    "id": "media-1b2c",
+    "type": "gcp:storage/bucket:Bucket",
+    "outputs": {
+     "name": "media-1b2c",
+     "location": "EU",
+     "storageClass": "STANDARD",
+     "versioning": {
+      "enabled": true
+     },
+     "forceDestroy": true,
+     "uniformBucketLevelAccess": false,
+     "publicAccessPrevention": "inherited",
+     "requesterPays": true,
+     "labels": {
+      "team": "media"
+     },
+     "lifecycleRules": [
+      {
+       "action": {
+        "type": "Delete"
+       },
+       "condition": {
+        "age": 90,
+        "matchesPrefixes": [
+         "tmp/"
+        ]
+       }
+      }
+     ],
+     "cors": [
+      {
+       "origins": [
+        "https://a.example.com"
+       ],
+       "methods": [
+        "GET",
+        "PUT"
+       ],
+       "responseHeaders": [
+        "X-Foo"
+       ],
+       "maxAgeSeconds": 120
+      }
+     ],
+     "retentionPolicy": {
+      "retentionPeriod": 90000,
+      "isLocked": true
+     }
+    }
+   },
+   {
+    "urn": "urn:pulumi:prod::infra::azure:storage/account:Account::legacy",
+    "custom": true,
+    "id": "/subscriptions/0000/resourceGroups/rg-legacy/providers/Microsoft.Storage/storageAccounts/legacyst02",
+    "type": "azure:storage/account:Account",
+    "outputs": {
+     "name": "legacyst02",
+     "resourceGroupName": "rg-legacy",
+     "location": "westeurope",
+     "accountTier": "Standard",
+     "accountReplicationType": "LRS",
+     "accessTier": "Hot",
+     "tags": {}
+    }
+   },
+   {
+    "urn": "urn:pulumi:prod::infra::azure-native:storage:StorageAccount::native",
+    "custom": true,
+    "type": "azure-native:storage:StorageAccount",
+    "outputs": {
+     "name": "nativest",
+     "location": "westeurope"
+    }
+   }
+  ]
+ }
+}

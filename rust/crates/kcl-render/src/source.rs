@@ -8,8 +8,12 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow, bail};
+
+/// Makes each in-flight inline write a distinct file within one directory.
+static STAGING: AtomicU64 = AtomicU64::new(0);
 
 /// The KCL program to execute.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,7 +101,18 @@ impl Source {
             Source::Inline(code) => {
                 fs::create_dir_all(scratch)?;
                 let file = scratch.join("main.k");
-                fs::write(&file, code)?;
+                // Written through a unique temporary and renamed: the
+                // directory is content-addressed, so two concurrent renders
+                // of the same source land here together, and a reader must
+                // never see a half-written program. `rename` within one
+                // directory is atomic.
+                let staging = scratch.join(format!(
+                    "main.k.{}.{}.tmp",
+                    std::process::id(),
+                    STAGING.fetch_add(1, Ordering::Relaxed)
+                ));
+                fs::write(&staging, code)?;
+                fs::rename(&staging, &file)?;
                 Ok(Entry {
                     work_dir: scratch.to_path_buf(),
                     files: vec![file.display().to_string()],

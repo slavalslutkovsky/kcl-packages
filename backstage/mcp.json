@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "kcl-packages-catalog": {
+      "command": "node",
+      "args": ["tools/catalog/src/mcp.ts"],
+      "cwd": "/Users/yurikrupnik/gitorgs/kcl-packages",
+      "env": {
+        "JIRA_BASE_URL": "${JIRA_BASE_URL}",
+        "JIRA_EMAIL": "${JIRA_EMAIL}",
+        "JIRA_API_TOKEN": "${JIRA_API_TOKEN}",
+        "JIRA_PROJECT_KEY": "${JIRA_PROJECT_KEY}"
+      }
+    }
+  }
+}
