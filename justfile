@@ -1032,10 +1032,11 @@ pkgreg-install version="v0.1.0": pkgreg-image registry
 
 # ─── KclModule operator (kube-rs) ─────────────────────────────────────────────
 #
-# The same `kclx` binary and the same `kcl_render::Engine`, wearing three more
+# The same `kclx` binary and the same `kcl_render::Engine`, wearing four more
 # hats: a controller that renders a KclModule and applies what it produced, a
-# REST API over those modules, and a CLI for them. rust/README.md ("Operator")
-# has the reconcile contract.
+# REST API over those modules, a CLI for them, and an LLM agent that drives
+# the same service layer. rust/README.md ("Operator") has the reconcile
+# contract.
 
 #   just kclx-operator --namespace default
 # Run the controller against the current kubecontext.
@@ -1046,6 +1047,37 @@ kclx-operator *args:
 # Serve the KclModule REST API against the current kubecontext.
 kclx-api *args:
     cargo run --manifest-path rust/Cargo.toml --release -q -p kclx -- api {{ args }}
+
+#   just kclx-agent ask "which buckets are not ready, and why"
+#   just kclx-agent ask --yes "create a KclModule hello2 in default rendering a ConfigMap"
+#   just kclx-agent serve --addr 127.0.0.1:8090
+# Needs KCLX_LLM_MODEL, and KCLX_LLM_API_KEY for hosted endpoints (`.env`
+# carries OPENAI after `devkit secrets fetch`). A local Ollama needs neither a
+# key nor a default: KCLX_LLM_BASE_URL=http://localhost:11434/v1.
+#
+# Without --yes the agent has no write tools at all: it reads, dry-runs and
+# proposes.
+# Ask the LLM agent about (or change) this cluster's KclModules and composites.
+kclx-agent *args:
+    cargo run --manifest-path rust/Cargo.toml --release -q -p kclx -- agent {{ args }}
+
+#   just kclx-agent-secret gpt-4o-mini
+#   just kclx-agent-secret qwen2.5:7b http://host.docker.internal:11434/v1
+# The Deployment reads its model endpoint from this Secret, which is
+# deliberately not committed. apiKey comes from $KCLX_LLM_API_KEY, else
+# $OPENAI from .env; empty is fine for a local endpoint. The justfile has no
+# dotenv-load, hence the explicit source.
+# Create or refresh the Secret the in-cluster kclx-agent reads.
+kclx-agent-secret model base_url="https://api.openai.com/v1":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -f .env ]]; then set -a; source .env; set +a; fi
+    kubectl create namespace kclx-system --dry-run=client -o yaml | kubectl apply -f -
+    kubectl -n kclx-system create secret generic kclx-agent-llm \
+        --from-literal=model="{{ model }}" \
+        --from-literal=baseUrl="{{ base_url }}" \
+        --from-literal=apiKey="${KCLX_LLM_API_KEY:-${OPENAI:-}}" \
+        --dry-run=client -o yaml | kubectl apply -f -
 
 # The CRD is derived, never hand-edited: `kube-derive` builds it from
 # KclModuleSpec, so a field added in Rust and not regenerated here is a schema
@@ -1059,7 +1091,7 @@ kclx-crd:
 # The image is the one the composition function uses; the rollout restart is
 # explicit for the same reason as kclx-install (a pod keeps the image it
 # started with).
-# Install the operator and the REST API into the Kind cluster.
+# Install the operator, the REST API and the agent into the Kind cluster.
 kclx-operator-install: kclx-image
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1067,9 +1099,12 @@ kclx-operator-install: kclx-image
     kubectl apply -f manifests/kclx-operator/crd.yaml
     kubectl apply -f manifests/kclx-operator/rbac.yaml
     kubectl apply -f manifests/kclx-operator/deployment.yaml
-    kubectl -n kclx-system rollout restart deploy/kclx-operator deploy/kclx-api
+    kubectl -n kclx-system rollout restart deploy/kclx-operator deploy/kclx-api deploy/kclx-agent
     kubectl -n kclx-system rollout status deploy/kclx-operator --timeout=120s
     kubectl -n kclx-system rollout status deploy/kclx-api --timeout=120s
+    # The agent needs `just kclx-agent-secret` first; without it this is where
+    # the missing Secret shows up, as CreateContainerConfigError.
+    kubectl -n kclx-system rollout status deploy/kclx-agent --timeout=120s
 
 # ─── Benchmark: function-kcl vs kclx vs function-python ───────────────────────
 #

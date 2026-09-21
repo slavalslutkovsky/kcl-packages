@@ -2,12 +2,13 @@
 # only the ones whose backends you intend to use; each Composition references
 # exactly one backend.
 #
-# The versions here are the ones the schema packages under packages/providers/
-# were generated from (`just seed-registry-providers`) — keep them in step, or
-# the rendered manifests can reference fields the installed provider does not
-# have. provider-aws-codeartifact is the exception: the language-package half of
-# the aws backend is composed by an untyped Python function, so no schema
-# package is generated for it (see packages/providers/registry.yaml).
+# The versions here are the ones the function's models were generated from:
+# `just pkgreg-models` reads these exact images and writes the pydantic models
+# under python/function-package-registry/function/models/ that the renderers
+# are typed against. Move a tag without regenerating and the rendered
+# manifests can reference fields the installed provider does not have.
+# provider-aws-codeartifact has no KCL schema package under packages/providers/
+# because no KCL renderer imports one (see packages/providers/registry.yaml).
 #
 # GCP's Artifact Registry lives in the `artifact` provider family (CRD group
 # artifact.gcp.m.upbound.io), not a `gcp-artifactregistry` provider — that

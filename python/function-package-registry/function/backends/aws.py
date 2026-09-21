@@ -8,10 +8,17 @@ whole account registry, so one XR would silently overwrite another's settings.
 CodeArtifact repositories are polyglot: ONE repository serves every format
 under `/<format>/<repository>/`, so a domain and a repository are composed once
 no matter how many language formats the XR asks for.
+
+Typed against the generated models in function/models/aws_{ecr,codeartifact}.
 """
 
 import json
 
+from function.models.aws_codeartifact import domain as ca_domain
+from function.models.aws_codeartifact import repository as ca_repository
+from function.models.aws_ecr import lifecycle_policy as ecr_lifecycle
+from function.models.aws_ecr import repository as ecr_repository
+from function.models.aws_ecr import repository_policy as ecr_policy
 from function.spec import Spec, at_provider, management
 
 NAME = "aws"
@@ -100,77 +107,102 @@ def public_pull_policy() -> str:
     )
 
 
-def _ecr_repository(spec: Spec) -> dict:
+def _ecr(spec: Spec) -> ecr_repository.Repository:
     # external-name pins the ECR repository name to the XR name: it is part of
     # every image reference, so it cannot be the random name Crossplane
     # generates for the composed resource.
-    for_provider: dict = {
-        "region": spec.region,
-        "imageTagMutability": "IMMUTABLE" if spec.immutable_tags else "MUTABLE",
-        "imageScanningConfiguration": {"scanOnPush": spec.scan_on_push},
-        "forceDelete": spec.force_destroy,
-    }
+    for_provider = ecr_repository.ForProvider(
+        region=spec.region,
+        imageTagMutability="IMMUTABLE" if spec.immutable_tags else "MUTABLE",
+        imageScanningConfiguration=ecr_repository.ImageScanningConfiguration(
+            scanOnPush=spec.scan_on_push
+        ),
+        forceDelete=spec.force_destroy,
+    )
     # Omitted entirely for the default AES256 key: an empty
     # encryptionConfiguration block is a diff ECR cannot reconcile.
     if spec.encryption_key_id:
-        for_provider["encryptionConfiguration"] = [
-            {"encryptionType": "KMS", "kmsKey": spec.encryption_key_id}
+        for_provider.encryptionConfiguration = [
+            ecr_repository.EncryptionConfigurationItem(
+                encryptionType="KMS", kmsKey=spec.encryption_key_id
+            )
         ]
     if spec.tags:
-        for_provider["tags"] = dict(spec.tags)
-    return {
-        "apiVersion": ECR_API,
-        "kind": "Repository",
-        "metadata": {"annotations": {"crossplane.io/external-name": spec.name}},
-        "spec": {**management(spec), "forProvider": for_provider},
-    }
+        for_provider.tags = dict(spec.tags)
+    return ecr_repository.Repository(
+        apiVersion=ECR_API,
+        kind="Repository",
+        metadata={"annotations": {"crossplane.io/external-name": spec.name}},
+        spec=ecr_repository.Spec(forProvider=for_provider, **management(spec)),
+    )
 
 
-def _ecr_companion(spec: Spec, kind: str, policy: str) -> dict:
+def _ecr_lifecycle(spec: Spec) -> ecr_lifecycle.LifecyclePolicy:
     # Bound to the Repository above by controller reference rather than by
     # name, so the two cannot drift apart.
-    return {
-        "apiVersion": ECR_API,
-        "kind": kind,
-        "spec": {
+    return ecr_lifecycle.LifecyclePolicy(
+        apiVersion=ECR_API,
+        kind="LifecyclePolicy",
+        spec=ecr_lifecycle.Spec(
+            forProvider=ecr_lifecycle.ForProvider(
+                region=spec.region,
+                repositorySelector=ecr_lifecycle.RepositorySelector(
+                    matchControllerRef=True
+                ),
+                policy=lifecycle_policy(
+                    spec.untagged_retention_days, spec.keep_last_images
+                ),
+            ),
             **management(spec),
-            "forProvider": {
-                "region": spec.region,
-                "repositorySelector": {"matchControllerRef": True},
-                "policy": policy,
-            },
-        },
-    }
+        ),
+    )
 
 
-def _ca_domain(spec: Spec) -> dict:
-    for_provider: dict = {"region": spec.region, "domain": spec.name}
+def _ecr_public_policy(spec: Spec) -> ecr_policy.RepositoryPolicy:
+    return ecr_policy.RepositoryPolicy(
+        apiVersion=ECR_API,
+        kind="RepositoryPolicy",
+        spec=ecr_policy.Spec(
+            forProvider=ecr_policy.ForProvider(
+                region=spec.region,
+                repositorySelector=ecr_policy.RepositorySelector(
+                    matchControllerRef=True
+                ),
+                policy=public_pull_policy(),
+            ),
+            **management(spec),
+        ),
+    )
+
+
+def _ca_domain(spec: Spec) -> ca_domain.Domain:
+    for_provider = ca_domain.ForProvider(region=spec.region, domain=spec.name)
     if spec.encryption_key_id:
-        for_provider["encryptionKey"] = spec.encryption_key_id
+        for_provider.encryptionKey = spec.encryption_key_id
     if spec.tags:
-        for_provider["tags"] = dict(spec.tags)
-    return {
-        "apiVersion": CA_API,
-        "kind": "Domain",
-        "metadata": {"annotations": {"crossplane.io/external-name": spec.name}},
-        "spec": {**management(spec), "forProvider": for_provider},
-    }
+        for_provider.tags = dict(spec.tags)
+    return ca_domain.Domain(
+        apiVersion=CA_API,
+        kind="Domain",
+        metadata={"annotations": {"crossplane.io/external-name": spec.name}},
+        spec=ca_domain.Spec(forProvider=for_provider, **management(spec)),
+    )
 
 
-def _ca_repository(spec: Spec) -> dict:
-    for_provider: dict = {
-        "region": spec.region,
-        "repository": spec.name,
-        "domainSelector": {"matchControllerRef": True},
-    }
+def _ca_repository(spec: Spec) -> ca_repository.Repository:
+    for_provider = ca_repository.ForProvider(
+        region=spec.region,
+        repository=spec.name,
+        domainSelector=ca_repository.DomainSelector(matchControllerRef=True),
+    )
     if spec.tags:
-        for_provider["tags"] = dict(spec.tags)
-    return {
-        "apiVersion": CA_API,
-        "kind": "Repository",
-        "metadata": {"annotations": {"crossplane.io/external-name": spec.name}},
-        "spec": {**management(spec), "forProvider": for_provider},
-    }
+        for_provider.tags = dict(spec.tags)
+    return ca_repository.Repository(
+        apiVersion=CA_API,
+        kind="Repository",
+        metadata={"annotations": {"crossplane.io/external-name": spec.name}},
+        spec=ca_repository.Spec(forProvider=for_provider, **management(spec)),
+    )
 
 
 def language_formats(spec: Spec) -> list[str]:
@@ -178,21 +210,15 @@ def language_formats(spec: Spec) -> list[str]:
     return [fmt for fmt in spec.formats if fmt != "oci"]
 
 
-def render(spec: Spec) -> dict[str, dict]:
+def render(spec: Spec) -> dict[str, object]:
     """Compose the ECR repository and/or the CodeArtifact domain + repository."""
-    out: dict[str, dict] = {}
+    out: dict[str, object] = {}
     if "oci" in spec.formats:
-        out["ecr"] = _ecr_repository(spec)
+        out["ecr"] = _ecr(spec)
         if spec.untagged_retention_days or spec.keep_last_images:
-            out["ecr-lifecycle"] = _ecr_companion(
-                spec,
-                "LifecyclePolicy",
-                lifecycle_policy(spec.untagged_retention_days, spec.keep_last_images),
-            )
+            out["ecr-lifecycle"] = _ecr_lifecycle(spec)
         if spec.public_access:
-            out["ecr-public-policy"] = _ecr_companion(
-                spec, "RepositoryPolicy", public_pull_policy()
-            )
+            out["ecr-public-policy"] = _ecr_public_policy(spec)
     if language_formats(spec):
         out["ca-domain"] = _ca_domain(spec)
         out["ca-repository"] = _ca_repository(spec)

@@ -1,4 +1,4 @@
-# kclx — one KCL renderer, four front ends
+# kclx — one KCL renderer, five front ends
 
 ```
                   ┌──────────────────────────────┐
@@ -14,6 +14,12 @@
  kclx api ───────▶│    apply.rs       discovery  │
  (HTTP :8080)     │    service.rs     CLI ∩ API  │
  kclx module ────▶└──────────────────────────────┘
+                                 ▲
+ kclx agent ─────▶┌──────────────┴───────────────┐──▶ read, dry run, and —
+ (CLI, HTTP :8090)│  kcl-agent                   │    only with --yes —
+                  │    llm.rs     chat + tools   │    apply / delete
+                  │    agent.rs   the loop       │
+                  └──────────────────────────────┘
 ```
 
 `kcl-render` is the only place KCL is executed and the only place rendered
@@ -245,7 +251,7 @@ kclx module rm hello                     # deletes the module and its inventory
 ### Install
 
 `just kclx-operator-install` builds the image `just kclx-image` already
-builds — one binary, one image, four front ends — side-loads it onto the Kind
+builds — one binary, one image, five front ends — side-loads it onto the Kind
 nodes and applies `manifests/kclx-operator/`. The controller runs with a
 single replica by design: there is no leader election, and two controllers
 force-applying the same objects under the same field manager would overwrite
@@ -254,6 +260,66 @@ each other forever.
 Its ClusterRole is deliberately broad (`apiGroups: ['*']`), because what a
 module renders is not knowable in advance; `manifests/kclx-operator/rbac.yaml`
 says how to scope it down for a fixed set of kinds.
+
+## Agent
+
+`kclx agent` puts a model in front of that same service layer. It is the one
+component in this repo that calls an LLM.
+
+```shell
+export KCLX_LLM_MODEL=gpt-4o-mini KCLX_LLM_API_KEY=$OPENAI   # or, local:
+export KCLX_LLM_BASE_URL=http://localhost:11434/v1 KCLX_LLM_MODEL=qwen2.5:7b
+
+kclx agent ask "which Buckets in default are not Ready, and what is failing?"
+kclx agent ask --yes "create a KclModule hello2 in default rendering a ConfigMap greeting=hi"
+kclx agent ask -o json "how many KclModules exist?" | jq '.steps[].tool'
+kclx agent serve --addr 0.0.0.0:8090     # POST /v1/agent
+```
+
+The endpoint is the OpenAI-compatible `POST {base}/chat/completions` with
+tool calling, so OpenAI, Ollama, vLLM, llama.cpp and gateways all work; the
+model must support tool calls. No streaming and no memory between runs — one
+task per invocation, the whole transcript returned at the end.
+
+**Propose by default.** Without `--yes` (`"approve": true` over HTTP) the
+model is not *offered* write tools and `Toolbox::call` refuses them anyway;
+the run ends with the YAML it would have applied. The ten tools:
+
+| | tool | |
+| --- | --- | --- |
+| read | `list_kinds` | the kinds under `kclx.example.org`, `cloud.example.org`, `platform.example.org` |
+| | `describe_kind` | the CRD schema, so a proposed spec cannot be invented |
+| | `list_resources` | objects plus their conditions |
+| | `get_resource` | one object in full |
+| | `composed_resources` | a composite's composed objects and their Synced/Ready conditions — the triage call |
+| | `events` | recent events for one object |
+| dry run | `preview_module` | render a `KclModule` source without applying it (`Service::preview`) |
+| | `validate_resource` | server-side apply with `dryRun=All`: the API server validates, nothing is written |
+| write | `apply_resource` | server-side apply; a `KclModule` goes through `Service::apply` |
+| | `delete_resource` | delete one object |
+
+The system prompt requires a dry run before any proposal or write, and the
+tools enforce what a prompt cannot: `v1/Secret` is refused in code, results
+over 48 KiB are truncated with a hint to narrow the query, and a cluster
+refusal comes back to the model as `{"reason", "error"}` — the same
+vocabulary a `Ready` condition uses — so it can correct itself. A model,
+transport or configuration failure is not recoverable that way and ends the
+run (`ModelFailed` → HTTP 502, `StepLimitReached` → 422).
+
+```
+GET  /healthz   process is up
+GET  /readyz    the API server answers
+POST /v1/agent  {"task": "…", "namespace"?: "default", "approve"?: false, "maxSteps"?: 20}
+                → {"answer", "approved", "steps": [{tool, arguments, result, ok}], "writes": []}
+```
+
+In-cluster it is a third Deployment with its own ServiceAccount, because it
+holds model credentials the module API has no business carrying. Its model
+endpoint comes from the `kclx-agent-llm` Secret, which is not committed:
+`just kclx-agent-secret <model> [base-url]` creates it, and without it the
+pod stays in `CreateContainerConfigError` rather than falling back to some
+default model. Whoever can `POST /v1/agent` can set `"approve": true`, so
+that Service does not belong on the public side of anything.
 
 ## Local cluster
 

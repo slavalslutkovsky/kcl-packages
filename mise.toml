@@ -1,0 +1,9 @@
+# Pin the toolchain to the Node line CI uses (.github/workflows/{ci,release}.yml
+# both run actions/setup-node with node-version: 24).
+#
+# Node 26 is not usable here: yauzl@2.10.0 (via extract-zip, via
+# @puppeteer/browsers) stops after the first zip entry and never settles its
+# promise, so puppeteer's postinstall leaves a half-extracted
+# chrome-headless-shell in ~/.cache/puppeteer and fails the whole install.
+[tools]
+node = "24"

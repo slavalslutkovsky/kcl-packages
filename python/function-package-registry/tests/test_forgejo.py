@@ -16,8 +16,20 @@ def spec(**extra):
     )
 
 
+def wire(res, name):
+    # What Crossplane actually receives: exclude_unset is resource.update()'s
+    # own serialisation, so a field the renderer never set is absent here too.
+    return res[name].model_dump(exclude_unset=True, by_alias=True)
+
+
+def external_name(res):
+    annotations = wire(res, "managed")["metadata"]["annotations"]
+    return annotations["crossplane.io/external-name"]
+
+
 def values(**extra):
-    return forgejo.render(spec(**extra))["managed"]["spec"]["forProvider"]["values"]
+    managed = wire(forgejo.render(spec(**extra)), "managed")
+    return managed["spec"]["forProvider"]["values"]
 
 
 class TestForgejo(unittest.TestCase):
@@ -30,7 +42,7 @@ class TestForgejo(unittest.TestCase):
     def test_render(self):
         res = forgejo.render(spec())
         self.assertEqual(["managed"], sorted(res))
-        fp = res["managed"]["spec"]["forProvider"]
+        fp = wire(res, "managed")["spec"]["forProvider"]
         self.assertEqual("apps", fp["namespace"])
         self.assertEqual(
             {
@@ -40,10 +52,7 @@ class TestForgejo(unittest.TestCase):
             },
             fp["chart"],
         )
-        self.assertEqual(
-            "demo",
-            res["managed"]["metadata"]["annotations"]["crossplane.io/external-name"],
-        )
+        self.assertEqual("demo", external_name(res))
 
     def test_chart_values(self):
         got = values(storageGb=20)

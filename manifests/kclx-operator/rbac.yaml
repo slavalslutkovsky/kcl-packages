@@ -1,4 +1,5 @@
-# Identity and permissions for the KclModule controller and the REST API.
+# Identity and permissions for the KclModule controller, the REST API and the
+# agent.
 #
 # The controller applies whatever a KCL package renders, so its write
 # permissions cannot be enumerated ahead of time — a module that renders a
@@ -24,6 +25,12 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: kclx-api
+  namespace: kclx-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kclx-agent
   namespace: kclx-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -80,4 +87,37 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: kclx-api
+    namespace: kclx-system
+---
+# The agent reads broadly and writes narrowly. Reading is unavoidable: the
+# composed resources behind a Crossplane composite live in one provider group
+# per provider, and triage means fetching them by reference, plus CRDs for
+# `describe_kind` and events for the failure message. Writing is limited to
+# the kinds this platform defines.
+#
+# Scope the read rule to your provider groups if you want the API server to
+# enforce what the agent already refuses in code: it never requests a Secret.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kclx-agent
+rules:
+  - apiGroups: [kclx.example.org, cloud.example.org, platform.example.org]
+    resources: ['*']
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: ['*']
+    resources: ['*']
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kclx-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kclx-agent
+subjects:
+  - kind: ServiceAccount
+    name: kclx-agent
     namespace: kclx-system

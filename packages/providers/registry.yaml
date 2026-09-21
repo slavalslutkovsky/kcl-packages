@@ -59,10 +59,12 @@ providers:
       The language-package half of the package-registry aws backend: one
       Domain plus one polyglot Repository, which serves npm, pypi, maven,
       cargo, nuget and generic under /<format>/<repository>/. Composed by the
-      Python function in python/function-package-registry, which is untyped by
-      design — so NO schema package is generated for this row (do not run
-      `just provider aws-codeartifact …`) and `tools/providers.sh check`
-      reports the missing packages/providers/aws-codeartifact on purpose.
+      PYTHON function in python/function-package-registry, which is typed
+      against pydantic models generated from THIS image by
+      `just pkgreg-models` — so no KCL schema package exists here (nothing in
+      packages/** imports one; do not run `just provider aws-codeartifact …`)
+      and `tools/providers.sh check` reports the missing
+      packages/providers/aws-codeartifact on purpose.
 
   - name: aws-codebuild
     cloud: aws

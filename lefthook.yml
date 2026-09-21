@@ -64,9 +64,9 @@ pre-commit:
       run: just crossplane-catalog-check
 
     # The plugin behind every nx target and generator in the justfile.
-#    - name: typecheck
-#      glob: 'tools/**/*.ts'
-#      run: just typecheck
+    - name: typecheck
+      glob: 'tools/**/*.ts'
+      run: just typecheck
 
 # `nx release` writes the changelogs from these; a "wip" subject line lands in
 # a published CHANGELOG.md.

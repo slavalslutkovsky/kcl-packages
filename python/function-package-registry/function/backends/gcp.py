@@ -4,8 +4,14 @@ Ported from packages/cloud/registry/gcp/registry.k, which composes the DOCKER
 repository only. Artifact Registry is natively polyglot — the same regional
 service hosts npm, python, maven and go repositories — so the mapping is one
 `RegistryRepository` per format, each with its own `format` and its own id.
+
+Typed against the generated models in function/models/gcp_artifact, which come
+from the same provider image as the KCL schema package packages/providers/
+gcp-artifact.
 """
 
+from function.models.gcp_artifact import registry_repository as repo
+from function.models.gcp_artifact import registry_repository_iam_member as iam
 from function.spec import Spec, at_provider, management
 
 NAME = "gcp"
@@ -53,85 +59,85 @@ def repo_id(spec: Spec, fmt: str) -> str:
     return f"{spec.name}-{fmt}"
 
 
-def _cleanup_policies(spec: Spec, fmt: str) -> list[dict]:
+def _cleanup_policies(spec: Spec, fmt: str) -> list[repo.CleanupPolicy]:
     # KEEP wins over DELETE in Artifact Registry, so the two compose without
     # ordering. "untagged" is a container concept: only the DOCKER repository
     # has versions without a tag.
-    policies: list[dict] = []
+    policies: list[repo.CleanupPolicy] = []
     if fmt == "oci" and spec.untagged_retention_days:
         policies.append(
-            {
-                "id": "delete-untagged",
-                "action": "DELETE",
-                "condition": {
-                    "tagState": "UNTAGGED",
-                    "olderThan": f"{spec.untagged_retention_days * SECONDS_PER_DAY}s",
-                },
-            }
+            repo.CleanupPolicy(
+                id="delete-untagged",
+                action="DELETE",
+                condition=repo.Condition(
+                    tagState="UNTAGGED",
+                    olderThan=f"{spec.untagged_retention_days * SECONDS_PER_DAY}s",
+                ),
+            )
         )
     if spec.keep_last_images:
         policies.append(
-            {
-                "id": "keep-recent",
-                "action": "KEEP",
-                "mostRecentVersions": {"keepCount": spec.keep_last_images},
-            }
+            repo.CleanupPolicy(
+                id="keep-recent",
+                action="KEEP",
+                mostRecentVersions=repo.MostRecentVersions(
+                    keepCount=spec.keep_last_images
+                ),
+            )
         )
     return policies
 
 
-def _repository(spec: Spec, fmt: str) -> dict:
-    for_provider: dict = {
-        "location": spec.region,
-        "format": AR_FORMAT[fmt],
-        "mode": "STANDARD_REPOSITORY",
+def _repository(spec: Spec, fmt: str) -> repo.RegistryRepository:
+    for_provider = repo.ForProvider(
+        location=spec.region,
+        format=AR_FORMAT[fmt],
+        mode="STANDARD_REPOSITORY",
         # INHERITED follows the project's Artifact Analysis setting — the only
         # way to opt IN from the repository; DISABLED opts out unconditionally.
-        "vulnerabilityScanningConfig": {
-            "enablementConfig": "INHERITED" if spec.scan_on_push else "DISABLED"
-        },
-    }
+        vulnerabilityScanningConfig=repo.VulnerabilityScanningConfig(
+            enablementConfig="INHERITED" if spec.scan_on_push else "DISABLED"
+        ),
+    )
     if fmt == "oci":
-        for_provider["dockerConfig"] = {"immutableTags": spec.immutable_tags}
+        for_provider.dockerConfig = repo.DockerConfig(immutableTags=spec.immutable_tags)
     policies = _cleanup_policies(spec, fmt)
     if policies:
-        for_provider["cleanupPolicies"] = policies
-        for_provider["cleanupPolicyDryRun"] = False
+        for_provider.cleanupPolicies = policies
+        for_provider.cleanupPolicyDryRun = False
     if spec.encryption_key_id:
-        for_provider["kmsKeyName"] = spec.encryption_key_id
+        for_provider.kmsKeyName = spec.encryption_key_id
     if spec.tags:
-        for_provider["labels"] = dict(spec.tags)
-    return {
-        "apiVersion": API_VERSION,
-        "kind": "RegistryRepository",
-        "metadata": {
-            "annotations": {"crossplane.io/external-name": repo_id(spec, fmt)},
-        },
-        "spec": {**management(spec), "forProvider": for_provider},
-    }
+        for_provider.labels = dict(spec.tags)
+    return repo.RegistryRepository(
+        apiVersion=API_VERSION,
+        kind="RegistryRepository",
+        metadata={"annotations": {"crossplane.io/external-name": repo_id(spec, fmt)}},
+        spec=repo.Spec(forProvider=for_provider, **management(spec)),
+    )
 
 
-def _public_reader(spec: Spec, fmt: str) -> dict:
+def _public_reader(spec: Spec, fmt: str) -> iam.RegistryRepositoryIAMMember:
     # IAMMember carries no repositorySelector, but the repository's external
     # name is deterministic, so the binding is too.
-    return {
-        "apiVersion": API_VERSION,
-        "kind": "RegistryRepositoryIAMMember",
-        "spec": {
+    return iam.RegistryRepositoryIAMMember(
+        apiVersion=API_VERSION,
+        kind="RegistryRepositoryIAMMember",
+        spec=iam.Spec(
+            forProvider=iam.ForProvider(
+                location=spec.region,
+                repository=repo_id(spec, fmt),
+                role="roles/artifactregistry.reader",
+                member="allUsers",
+            ),
             **management(spec),
-            "forProvider": {
-                "location": spec.region,
-                "repository": repo_id(spec, fmt),
-                "role": "roles/artifactregistry.reader",
-                "member": "allUsers",
-            },
-        },
-    }
+        ),
+    )
 
 
-def render(spec: Spec) -> dict[str, dict]:
+def render(spec: Spec) -> dict[str, object]:
     """Compose one repository (and optional anonymous-read binding) per format."""
-    out: dict[str, dict] = {}
+    out: dict[str, object] = {}
     for fmt in spec.formats:
         out[f"repo-{fmt}"] = _repository(spec, fmt)
         if spec.public_access:

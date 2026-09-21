@@ -1,8 +1,8 @@
-# The controller and the REST API, both from the one `kclx` image that also
-# serves the Crossplane composition function (`rust/Dockerfile`). That image's
-# entrypoint is `/kclx function` — the subcommand is part of it — so `args`
-# alone would append to it (`/kclx function operator run`). Each Deployment
-# therefore replaces `command` as well.
+# The controller, the REST API and the agent, all from the one `kclx` image
+# that also serves the Crossplane composition function (`rust/Dockerfile`).
+# That image's entrypoint is `/kclx function` — the subcommand is part of it
+# — so `args` alone would append to it (`/kclx function operator run`). Each
+# Deployment therefore replaces `command` as well.
 #
 # `function-kclx-runtime:dev` is what `just kclx-image` builds and
 # `just kclx-operator-install` side-loads onto the Kind nodes; a real cluster
@@ -132,6 +132,104 @@ metadata:
 spec:
   selector:
     app.kubernetes.io/name: kclx-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# The agent. Its model endpoint comes from a Secret that is deliberately not
+# committed: `just kclx-agent-secret <model> [base-url]` creates it. Without
+# that Secret the pod stays in CreateContainerConfigError naming
+# `kclx-agent-llm`, which is the intended failure — an agent that silently
+# fell back to some default model would be worse.
+#
+# Note that this Deployment can write: the HTTP body decides, per request,
+# whether a run is approved. Do not expose the Service outside the cluster
+# without something in front of it that decides who may set `"approve": true`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kclx-agent
+  namespace: kclx-system
+  labels:
+    app.kubernetes.io/name: kclx-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kclx-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kclx-agent
+    spec:
+      serviceAccountName: kclx-agent
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: agent
+          image: function-kclx-runtime:dev
+          command: [/kclx]
+          args: [agent, serve, --addr, 0.0.0.0:8090]
+          ports:
+            - name: http
+              containerPort: 8090
+          env:
+            - name: KCLX_CACHE_DIR
+              value: /tmp/kclx
+            - name: RUST_LOG
+              value: kclx=info,kcl_operator=info,kcl_agent=info
+            - name: KCLX_LLM_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: kclx-agent-llm
+                  key: baseUrl
+            - name: KCLX_LLM_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: kclx-agent-llm
+                  key: model
+            # Optional: a local endpoint (Ollama, vLLM) needs no bearer token.
+            - name: KCLX_LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kclx-agent-llm
+                  key: apiKey
+                  optional: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: cache
+              mountPath: /tmp
+      volumes:
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kclx-agent
+  namespace: kclx-system
+spec:
+  selector:
+    app.kubernetes.io/name: kclx-agent
   ports:
     - name: http
       port: 80

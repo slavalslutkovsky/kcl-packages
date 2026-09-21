@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+kcl-agent = { path = "../kcl-agent" }
 kcl-operator = { path = "../kcl-operator" }
 kcl-render = { path = "../kcl-render" }
 kube.workspace = true

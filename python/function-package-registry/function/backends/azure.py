@@ -4,8 +4,11 @@ Ported verbatim from packages/cloud/registry/azure/registry.k. ACR is a single
 resource: the registry carries its own retention, replication, anonymous-pull
 and encryption settings, so this backend composes exactly one MR. A registry
 name must be 5-50 alphanumeric characters, which the XR name has to satisfy.
+
+Typed against the generated models in function/models/azure_containerregistry.
 """
 
+from function.models.azure_containerregistry import registry
 from function.spec import Spec, SpecError, at_provider, management
 
 NAME = "azure"
@@ -36,7 +39,7 @@ def sku_for(spec: Spec) -> str:
     return "Premium" if premium else "Standard"
 
 
-def render(spec: Spec) -> dict[str, dict]:
+def render(spec: Spec) -> dict[str, object]:
     """Compose the Container Registry.
 
     Raises:
@@ -56,50 +59,48 @@ def render(spec: Spec) -> dict[str, dict]:
     # ACR rejects the registry's own location in georeplications.
     replicas = [r for r in spec.replication_regions if r != spec.region]
 
-    for_provider: dict = {
-        "location": spec.region,
-        "resourceGroupName": spec.resource_group,
-        "sku": sku,
+    for_provider = registry.ForProvider(
+        location=spec.region,
+        resourceGroupName=spec.resource_group,
+        sku=sku,
         # Admin user is a shared static credential pair; Entra ID tokens
         # (az acr login) are the supported path, so it stays off.
-        "adminEnabled": False,
-        "anonymousPullEnabled": spec.public_access,
-        "publicNetworkAccessEnabled": True,
-        "zoneRedundancyEnabled": sku == "Premium",
-    }
+        adminEnabled=False,
+        anonymousPullEnabled=spec.public_access,
+        publicNetworkAccessEnabled=True,
+        zoneRedundancyEnabled=sku == "Premium",
+    )
     if spec.untagged_retention_days is not None:
-        for_provider["retentionPolicyInDays"] = spec.untagged_retention_days
+        for_provider.retentionPolicyInDays = spec.untagged_retention_days
     if replicas:
-        for_provider["georeplications"] = [
-            {
-                "location": r,
-                "regionalEndpointEnabled": True,
-                "zoneRedundancyEnabled": False,
-            }
+        for_provider.georeplications = [
+            registry.Georeplication(
+                location=r, regionalEndpointEnabled=True, zoneRedundancyEnabled=False
+            )
             for r in replicas
         ]
     # Customer-managed keys need a user-assigned identity: ACR reads the Key
     # Vault key as that identity, and its system identity cannot be granted
     # access before the registry exists. Both or neither.
     if spec.encryption_key_id and spec.encryption_identity_client_id:
-        for_provider["identity"] = {"type": "UserAssigned"}
-        for_provider["encryption"] = {
-            "keyVaultKeyId": spec.encryption_key_id,
-            "identityClientId": spec.encryption_identity_client_id,
-        }
+        for_provider.identity = registry.Identity(type="UserAssigned")
+        for_provider.encryption = registry.Encryption(
+            keyVaultKeyId=spec.encryption_key_id,
+            identityClientId=spec.encryption_identity_client_id,
+        )
     if spec.tags:
-        for_provider["tags"] = dict(spec.tags)
+        for_provider.tags = dict(spec.tags)
 
     # external-name pins the ACR name to the XR name: it is the login server
     # host (<name>.azurecr.io), so it cannot be the random name Crossplane
     # generates for the composed resource.
     return {
-        "managed": {
-            "apiVersion": API_VERSION,
-            "kind": "Registry",
-            "metadata": {"annotations": {"crossplane.io/external-name": spec.name}},
-            "spec": {**management(spec), "forProvider": for_provider},
-        }
+        "managed": registry.Registry(
+            apiVersion=API_VERSION,
+            kind="Registry",
+            metadata={"annotations": {"crossplane.io/external-name": spec.name}},
+            spec=registry.Spec(forProvider=for_provider, **management(spec)),
+        )
     }
 
 

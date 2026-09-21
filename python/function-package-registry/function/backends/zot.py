@@ -4,10 +4,15 @@ Ported verbatim from packages/cloud/registry/zot/registry.k. No cloud account,
 no IAM: one namespaced Release installs the zot chart into the XR's own
 namespace, and a client that pushes to ECR/Artifact Registry/ACR pushes here
 unchanged.
+
+The Release is typed against function/models/helm; the chart VALUES are not —
+`spec.forProvider.values` is x-kubernetes-preserve-unknown-fields, because a
+chart's value schema is the chart's, not the provider's.
 """
 
 import json
 
+from function.models.helm import release
 from function.spec import Spec, at_provider, management
 
 NAME = "zot"
@@ -97,7 +102,7 @@ def _http(spec: Spec) -> dict:
 
 
 def config_json(spec: Spec) -> str:
-    """Zot's config.json, as the chart's `configFiles` entry."""
+    """The zot config.json, as the chart's `configFiles` entry."""
     cfg: dict = {
         "storage": _storage(spec),
         "http": _http(spec),
@@ -112,8 +117,8 @@ def config_json(spec: Spec) -> str:
     return json.dumps(cfg)
 
 
-def render(spec: Spec) -> dict[str, dict]:
-    """Compose the Helm Release that installs zot."""
+def chart_values(spec: Spec) -> dict:
+    """The zot chart's values for this XR."""
     values: dict = {
         "fullnameOverride": spec.name,
         "service": {"type": "ClusterIP", "port": REGISTRY_PORT},
@@ -131,36 +136,39 @@ def render(spec: Spec) -> dict[str, dict]:
         ]
     if spec.tags:
         values["podLabels"] = dict(spec.tags)
+    return values
 
+
+def render(spec: Spec) -> dict[str, object]:
+    """Compose the Helm Release that installs zot."""
     # external-name pins the Helm release name to the XR name, matching the
     # chart resource names `fullnameOverride` produces (and the endpoints
     # status() reports).
     return {
-        "managed": {
-            "apiVersion": API_VERSION,
-            "kind": "Release",
-            "metadata": {"annotations": {"crossplane.io/external-name": spec.name}},
-            "spec": {
-                **management(spec),
+        "managed": release.Release(
+            apiVersion=API_VERSION,
+            kind="Release",
+            metadata={"annotations": {"crossplane.io/external-name": spec.name}},
+            spec=release.Spec(
                 # The helm provider runs with in-cluster identity, so one
                 # cluster-wide config serves XRs in every namespace.
-                "providerConfigRef": {
-                    "kind": "ClusterProviderConfig",
-                    "name": "default",
-                },
-                "forProvider": {
-                    "namespace": spec.namespace,
-                    "chart": {
-                        "name": CHART_NAME,
-                        "repository": CHART_REPOSITORY,
-                        "version": CHART_VERSION,
-                    },
-                    "values": values,
-                    "wait": True,
-                    "waitTimeout": "10m",
-                },
-            },
-        }
+                providerConfigRef=release.ProviderConfigRef(
+                    kind="ClusterProviderConfig", name="default"
+                ),
+                forProvider=release.ForProvider(
+                    namespace=spec.namespace,
+                    chart=release.Chart(
+                        name=CHART_NAME,
+                        repository=CHART_REPOSITORY,
+                        version=CHART_VERSION,
+                    ),
+                    values=chart_values(spec),
+                    wait=True,
+                    waitTimeout="10m",
+                ),
+                **management(spec),
+            ),
+        )
     }
 
 

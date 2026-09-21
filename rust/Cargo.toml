@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/kcl-operator", "crates/kcl-render", "crates/kclx"]
+members = ["crates/kcl-agent", "crates/kcl-operator", "crates/kcl-render", "crates/kclx"]
 resolver = "3"
 
 [workspace.package]
@@ -48,6 +48,11 @@ schemars = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# The agent (crate `kcl-agent`) talks to an OpenAI-compatible endpoint. These
+# are exactly the features `oci-client` already compiles reqwest with, so the
+# agent adds no second TLS stack: default features (native-tls) stay off.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [profile.release]
 lto = "thin"

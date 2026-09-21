@@ -16,8 +16,18 @@ def spec(**extra):
     )
 
 
+def wire(res, name):
+    # What Crossplane actually receives: exclude_unset is resource.update()'s
+    # own serialisation, so a field the renderer never set is absent here too.
+    return res[name].model_dump(exclude_unset=True, by_alias=True)
+
+
+def external_name(res, name):
+    return wire(res, name)["metadata"]["annotations"]["crossplane.io/external-name"]
+
+
 def for_provider(res, name):
-    return res[name]["spec"]["forProvider"]
+    return wire(res, name)["spec"]["forProvider"]
 
 
 def at(**fields):
@@ -28,10 +38,8 @@ class TestAws(unittest.TestCase):
     def test_oci_only_composes_no_codeartifact(self):
         res = aws.render(spec(formats=["oci"]))
         self.assertEqual(["ecr"], sorted(res))
-        self.assertEqual("ecr.aws.m.upbound.io/v1beta1", res["ecr"]["apiVersion"])
-        self.assertEqual(
-            "demo", res["ecr"]["metadata"]["annotations"]["crossplane.io/external-name"]
-        )
+        self.assertEqual("ecr.aws.m.upbound.io/v1beta1", wire(res, "ecr")["apiVersion"])
+        self.assertEqual("demo", external_name(res, "ecr"))
         self.assertEqual("MUTABLE", for_provider(res, "ecr")["imageTagMutability"])
         self.assertEqual(
             {"scanOnPush": True}, for_provider(res, "ecr")["imageScanningConfiguration"]
@@ -48,7 +56,8 @@ class TestAws(unittest.TestCase):
         # somebody else's domain.
         self.assertEqual({"matchControllerRef": True}, repo["domainSelector"])
         self.assertEqual(
-            "codeartifact.aws.m.upbound.io/v1beta1", res["ca-domain"]["apiVersion"]
+            "codeartifact.aws.m.upbound.io/v1beta1",
+            wire(res, "ca-domain")["apiVersion"],
         )
 
     def test_one_codeartifact_repository_serves_every_language(self):
@@ -102,8 +111,8 @@ class TestAws(unittest.TestCase):
     def test_orphan_sets_management_policies(self):
         res = aws.render(spec(formats=["oci", "npm"], deletionPolicy="Orphan"))
         want = ["Observe", "Create", "Update", "LateInitialize"]
-        self.assertEqual(want, res["ecr"]["spec"]["managementPolicies"])
-        self.assertEqual(want, res["ca-domain"]["spec"]["managementPolicies"])
+        self.assertEqual(want, wire(res, "ecr")["spec"]["managementPolicies"])
+        self.assertEqual(want, wire(res, "ca-domain")["spec"]["managementPolicies"])
 
     def test_status_endpoints(self):
         observed = {

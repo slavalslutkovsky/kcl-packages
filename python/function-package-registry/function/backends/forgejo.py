@@ -4,8 +4,13 @@ Forgejo's package registry speaks npm, PyPI, Maven, Go, Cargo, NuGet, generic
 and OCI from one deployment, under `/api/packages/<owner>/<format>`. The chart
 pin and the Service-name contract are the ones packages/cloud/forge/forgejo
 already uses, so both capabilities install the same forge.
+
+The Release is typed against function/models/helm; the chart VALUES are not —
+`spec.forProvider.values` is x-kubernetes-preserve-unknown-fields, because a
+chart's value schema is the chart's, not the provider's.
 """
 
+from function.models.helm import release
 from function.spec import FORMATS, Spec, SpecError, at_provider, management
 
 NAME = "forgejo"
@@ -65,10 +70,7 @@ def chart_values(spec: Spec) -> dict:
                 # ROOT_URL/DOMAIN are set explicitly rather than left to the
                 # chart's derivation: Forgejo writes ROOT_URL into every
                 # package registry URL it hands a client back.
-                "server": {
-                    "ROOT_URL": f"http://{host}/",
-                    "DOMAIN": domain,
-                },
+                "server": {"ROOT_URL": f"http://{host}/", "DOMAIN": domain},
                 "packages": {"ENABLED": True},
                 "service": {
                     "DISABLE_REGISTRATION": True,
@@ -79,7 +81,7 @@ def chart_values(spec: Spec) -> dict:
     }
 
 
-def render(spec: Spec) -> dict[str, dict]:
+def render(spec: Spec) -> dict[str, object]:
     """Compose the Helm Release that installs Forgejo.
 
     Raises:
@@ -90,29 +92,28 @@ def render(spec: Spec) -> dict[str, dict]:
     # makes the chart's Service name — and therefore every endpoint below —
     # predictable.
     return {
-        "managed": {
-            "apiVersion": API_VERSION,
-            "kind": "Release",
-            "metadata": {"annotations": {"crossplane.io/external-name": spec.name}},
-            "spec": {
+        "managed": release.Release(
+            apiVersion=API_VERSION,
+            kind="Release",
+            metadata={"annotations": {"crossplane.io/external-name": spec.name}},
+            spec=release.Spec(
+                providerConfigRef=release.ProviderConfigRef(
+                    kind="ClusterProviderConfig", name="default"
+                ),
+                forProvider=release.ForProvider(
+                    namespace=spec.namespace,
+                    chart=release.Chart(
+                        name=CHART_NAME,
+                        repository=CHART_REPOSITORY,
+                        version=CHART_VERSION,
+                    ),
+                    values=chart_values(spec),
+                    wait=True,
+                    waitTimeout="10m",
+                ),
                 **management(spec),
-                "providerConfigRef": {
-                    "kind": "ClusterProviderConfig",
-                    "name": "default",
-                },
-                "forProvider": {
-                    "namespace": spec.namespace,
-                    "chart": {
-                        "name": CHART_NAME,
-                        "repository": CHART_REPOSITORY,
-                        "version": CHART_VERSION,
-                    },
-                    "values": chart_values(spec),
-                    "wait": True,
-                    "waitTimeout": "10m",
-                },
-            },
-        }
+            ),
+        )
     }
 
 
@@ -144,8 +145,8 @@ def status(spec: Spec, observed: dict[str, dict]) -> dict:
     atProvider.state: `deployed` is Helm's verdict on the release, while Ready
     also carries provider-helm's own `wait` result.
     """
-    release = observed.get("managed") or {}
-    conditions = (release.get("status") or {}).get("conditions") or []
+    observed_release = observed.get("managed") or {}
+    conditions = (observed_release.get("status") or {}).get("conditions") or []
     ready = any(
         c.get("type") == "Ready" and c.get("status") == "True" for c in conditions
     )

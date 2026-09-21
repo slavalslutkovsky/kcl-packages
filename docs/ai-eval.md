@@ -21,7 +21,8 @@ trailer, so CI cannot tell an AI-authored change from a human one.
 
 ## What "AI output" means in this repo
 
-Three things could be meant. The first two are in scope; the third is not.
+Three things could be meant. The first two are in scope; the third has one
+implementation and its own containment.
 
 1. **AI-authored changes to the repo.** KCL packages, Compositions, XRDs and
    example values that Claude (or another agent) writes. This is the bulk of
@@ -30,9 +31,16 @@ Three things could be meant. The first two are in scope; the third is not.
    demo and for each `examples/values-*.yaml`. The `*_test.k` suites assert
    logical contracts (70 test files), but nothing asserts the output is a
    valid Kubernetes object against the real CRD schema, or passes a policy.
-3. **Runtime AI in the manager cluster.** `.vals.yaml` holds OpenAI and
-   Anthropic secret refs for `manager-secrets`, but no package in this repo
-   calls a model. Out of scope until something does.
+3. **Runtime AI in the manager cluster.** `rust/crates/kcl-agent` (`kclx
+   agent`) is the one component that calls a model: an OpenAI-compatible
+   tool-calling loop over the `KclModule` service layer and the Crossplane
+   composites. Its containment is structural rather than evaluative — no
+   write tools unless the caller approved the run, a mandatory dry run
+   (`preview_module` / `validate_resource` with `dryRun=All`) before anything
+   is proposed or applied, and CRD schemas fetched with `describe_kind` so a
+   hallucinated field is the API server's rejection rather than a write.
+   Evaluating the *quality* of its answers is out of scope here; `.vals.yaml`
+   holds the OpenAI and Anthropic refs it and `manager-secrets` draw from.
 
 ## Proposal: two stages, one always on, one opt-in
 

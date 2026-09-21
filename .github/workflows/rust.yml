@@ -1,7 +1,8 @@
 name: Rust
 
-# Gate for the `rust/` workspace: the `kcl-render` engine and its two front
-# ends (`kclx` CLI, Crossplane composition function).
+# Gate for the `rust/` workspace: the `kcl-render` engine and its front ends
+# (`kclx` CLI, Crossplane composition function, KclModule operator, REST API,
+# LLM agent).
 #
 # Deliberately not a job in ci.yml. That workflow is the nx/KCL gate — no Rust
 # toolchain, and every one of its runs is cheap because nx caches per project.

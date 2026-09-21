@@ -7,6 +7,8 @@
 //!   prune. `kclx operator crd` prints the schema it needs.
 //! * `kclx api` serves those same modules over HTTP.
 //! * `kclx module …` is the CLI over the one service layer the API uses.
+//! * `kclx agent ask "<task>"` / `kclx agent serve` put an LLM in front of
+//!   that same layer: it proposes by default and writes only with `--yes`.
 //!
 //! All of them go through `kcl_render::Engine`, so what you see locally is
 //! what the cluster gets.
@@ -70,6 +72,10 @@ enum Command {
     /// Manage KclModule objects.
     #[command(subcommand_required = true, arg_required_else_help = true)]
     Module(cluster::ModuleArgs),
+
+    /// Ask an LLM to inspect or change KclModules and Crossplane composites.
+    #[command(subcommand_required = true, arg_required_else_help = true)]
+    Agent(cluster::AgentArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -128,6 +134,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Operator(args) => cluster::operator(args, engine),
         Command::Api(args) => cluster::serve_api(args, engine),
         Command::Module(args) => cluster::module(args, engine),
+        Command::Agent(args) => cluster::agent(args, engine),
     }
 }
 

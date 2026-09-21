@@ -1,7 +1,7 @@
-//! The cluster-facing front ends: the controller, the REST API, and the
-//! `KclModule` CLI.
+//! The cluster-facing front ends: the controller, the REST API, the
+//! `KclModule` CLI, and the agent.
 //!
-//! All three are argument parsing and printing only. Every decision they
+//! All of them are argument parsing and printing only. Every decision they
 //! could disagree about — how a spec becomes a render, what an apply writes,
 //! what a failure is called — lives in `kcl_operator`.
 
@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
+use kcl_agent::{Agent, Llm, LlmConfig, RunRequest, Toolbox};
 use kcl_operator::controller::{self, Options};
 use kcl_operator::crd::{KclModule, KclModuleSpec};
 use kcl_operator::service::Service;
@@ -106,6 +107,75 @@ struct ApplyArgs {
     namespace: String,
 }
 
+#[derive(Debug, clap::Args)]
+pub struct AgentArgs {
+    #[command(subcommand)]
+    command: AgentCommand,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum AgentCommand {
+    /// Run one task and print the answer. Proposes only, unless --yes.
+    Ask(AskArgs),
+    /// Serve the agent over HTTP: POST /v1/agent.
+    Serve(AgentServeArgs),
+}
+
+/// Where the model lives. Shared by both subcommands, and by the Deployment,
+/// which passes all three through the environment.
+#[derive(Debug, clap::Args)]
+struct LlmArgs {
+    /// OpenAI-compatible endpoint root. Ollama: http://localhost:11434/v1
+    #[arg(
+        long = "llm-base-url",
+        env = "KCLX_LLM_BASE_URL",
+        default_value = "https://api.openai.com/v1"
+    )]
+    base_url: String,
+
+    /// Bearer token. Omit it for endpoints that need none.
+    #[arg(long = "llm-api-key", env = "KCLX_LLM_API_KEY", hide_env_values = true)]
+    api_key: Option<String>,
+
+    /// Model name, e.g. gpt-4o-mini or qwen2.5:7b. It must support tool calls.
+    #[arg(long, env = "KCLX_LLM_MODEL")]
+    model: String,
+}
+
+#[derive(Debug, clap::Args)]
+struct AskArgs {
+    /// What to do, in plain language.
+    task: String,
+
+    /// Namespace for objects the task does not qualify.
+    #[arg(long, short = 'n', default_value = "default")]
+    namespace: String,
+
+    /// Let the agent write. Without it there are no write tools at all.
+    #[arg(long, short = 'y')]
+    yes: bool,
+
+    /// Model turns before the run is abandoned.
+    #[arg(long, default_value_t = 20)]
+    max_steps: usize,
+
+    /// `text` prints the answer; `json` prints the whole run, steps included.
+    #[arg(long, short = 'o', default_value = "text", value_parser = ["text", "json"])]
+    output: String,
+
+    #[command(flatten)]
+    llm: LlmArgs,
+}
+
+#[derive(Debug, clap::Args)]
+struct AgentServeArgs {
+    #[arg(long, default_value = "127.0.0.1:8090")]
+    addr: SocketAddr,
+
+    #[command(flatten)]
+    llm: LlmArgs,
+}
+
 pub fn operator(args: OperatorArgs, engine: Arc<Engine>) -> Result<()> {
     match args.command {
         // No cluster, no runtime: printing the schema must work before the
@@ -182,6 +252,65 @@ pub fn module(args: ModuleArgs, engine: Arc<Engine>) -> Result<()> {
                     .await?;
                 print_object(&preview, &render.output)
             }
+        }
+    })
+}
+
+pub fn agent(args: AgentArgs, engine: Arc<Engine>) -> Result<()> {
+    let (llm, serve) = match &args.command {
+        AgentCommand::Ask(ask) => (&ask.llm, false),
+        AgentCommand::Serve(serve) => (&serve.llm, true),
+    };
+    // Configuration is checked before the cluster is touched: a missing model
+    // name should not look like a kubeconfig problem.
+    let llm = Llm::new(LlmConfig {
+        base_url: llm.base_url.clone(),
+        api_key: llm.api_key.clone(),
+        model: llm.model.clone(),
+    })?;
+    if serve {
+        logging();
+    }
+
+    runtime()?.block_on(async move {
+        let client = client().await?;
+        let service = Arc::new(Service::new(client.clone(), engine, "kclx-agent"));
+        let agent = Agent::new(llm, Toolbox::new(client, service));
+        match args.command {
+            AgentCommand::Ask(ask) => {
+                // Steps go to stderr as they happen, so a long run is legible
+                // while it runs and stdout stays the answer alone.
+                let mut observe = |step: &kcl_agent::Step| {
+                    eprintln!("→ {} {}", step.tool, one_line(&step.arguments.to_string()));
+                    let mark = if step.ok { "←" } else { "✗" };
+                    eprintln!("{mark} {}", one_line(&step.result.to_string()));
+                };
+                let run = agent
+                    .run(
+                        RunRequest {
+                            task: ask.task,
+                            namespace: ask.namespace,
+                            approve: ask.yes,
+                            max_steps: ask.max_steps,
+                        },
+                        &mut observe,
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                if ask.output == "json" {
+                    return print_object(&run, "json");
+                }
+                println!("{}", run.answer.trim_end());
+                if !run.writes.is_empty() {
+                    println!("\nwrote:");
+                    for reference in &run.writes {
+                        println!("  {reference}");
+                    }
+                }
+                Ok(())
+            }
+            AgentCommand::Serve(serve) => kcl_agent::api::serve(Arc::new(agent), serve.addr).await,
         }
     })
 }

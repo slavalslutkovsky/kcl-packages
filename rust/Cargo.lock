@@ -2287,6 +2287,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "kcl-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "k8s-openapi",
+ "kcl-operator",
+ "kube",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "kcl-api"
 version = "0.12.5"
 source = "git+https://github.com/kcl-lang/kcl#8867ec75a64beb038964b7db849d7e67dfdc002e"
@@ -2814,6 +2831,7 @@ dependencies = [
  "anyhow",
  "clap",
  "function-sdk-rust",
+ "kcl-agent",
  "kcl-operator",
  "kcl-render",
  "kube",

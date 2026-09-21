@@ -18,3 +18,20 @@ onlyBuiltDependencies:
   - nx
   - protobufjs
   - puppeteer
+
+# Cooldown exemption: we needed 1.14.5 before the 7-day minimumReleaseAge elapsed.
+minimumReleaseAgeExclude:
+  - '@grpc/grpc-js@1.14.5'
+
+# trustPolicy: no-downgrade (set in ~/.config/pnpm/config.yaml) rejects a version
+# whose trust evidence is weaker than the best evidence that package published
+# earlier. Both entries below are maintenance releases on an older line, from the
+# same maintainer, with lockfile integrity re-verified against registry.npmjs.org:
+#   semver@6.3.1        v6 backport (lukekarrys, 2023-07-10), published outside the
+#                       CI pipeline that signs the v7 line. Required by @babel/*.
+#   undici-types@6.21.0 undici 6.x stopped emitting provenance after 6.19.2 and
+#                       resumes at 7.1.0. Required by @types/node@20 (~6.21.0);
+#                       moving to @types/node@24 (undici-types@7) drops it.
+trustPolicyExclude:
+  - 'semver@6.3.1'
+  - 'undici-types@6.21.0'

@@ -16,8 +16,14 @@ def spec(**extra):
     )
 
 
+def wire(res, name):
+    # What Crossplane actually receives: exclude_unset is resource.update()'s
+    # own serialisation, so a field the renderer never set is absent here too.
+    return res[name].model_dump(exclude_unset=True, by_alias=True)
+
+
 def values(**extra):
-    return zot.render(spec(**extra))["managed"]["spec"]["forProvider"]["values"]
+    return wire(zot.render(spec(**extra)), "managed")["spec"]["forProvider"]["values"]
 
 
 def config(**extra):
@@ -28,7 +34,7 @@ class TestZot(unittest.TestCase):
     def test_render_minimal(self):
         res = zot.render(spec())
         self.assertEqual(["managed"], sorted(res))
-        managed = res["managed"]
+        managed = wire(res, "managed")
         self.assertEqual("helm.m.crossplane.io/v1beta1", managed["apiVersion"])
         self.assertEqual("Release", managed["kind"])
         self.assertEqual(
@@ -113,7 +119,7 @@ class TestZot(unittest.TestCase):
         res = zot.render(spec(deletionPolicy="Orphan"))
         self.assertEqual(
             ["Observe", "Create", "Update", "LateInitialize"],
-            res["managed"]["spec"]["managementPolicies"],
+            wire(res, "managed")["spec"]["managementPolicies"],
         )
 
     def test_status(self):

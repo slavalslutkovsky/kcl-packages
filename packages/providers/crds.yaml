@@ -372,7 +372,7 @@ providers:
   - name: aws-codeartifact
     source: ghcr.io/crossplane-contrib/provider-aws-codeartifact:v2.6.0
     installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-codeartifact:v2.6.0 in cloud/package-registry/xrd/providers.yaml
-    schemas: none — composed by the untyped Python function in python/function-package-registry
+    schemas: python/function-package-registry/function/models/aws_codeartifact (pydantic, `just pkgreg-models`); no KCL package — nothing in packages/** imports one
     groups: [codeartifact.aws.m.upbound.io]
     used:
       - kind: Domain

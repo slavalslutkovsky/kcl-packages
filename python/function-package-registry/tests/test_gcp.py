@@ -20,12 +20,18 @@ def observed_repo(fmt, location="us-central1", project="my-project"):
     return {"status": {"atProvider": {"id": resource_id, "location": location}}}
 
 
+def wire(res, name):
+    # What Crossplane actually receives: exclude_unset is resource.update()'s
+    # own serialisation, so a field the renderer never set is absent here too.
+    return res[name].model_dump(exclude_unset=True, by_alias=True)
+
+
 def for_provider(res, name):
-    return res[name]["spec"]["forProvider"]
+    return wire(res, name)["spec"]["forProvider"]
 
 
 def external_name(res, name):
-    return res[name]["metadata"]["annotations"]["crossplane.io/external-name"]
+    return wire(res, name)["metadata"]["annotations"]["crossplane.io/external-name"]
 
 
 class TestGcp(unittest.TestCase):
@@ -39,9 +45,9 @@ class TestGcp(unittest.TestCase):
         self.assertEqual("DOCKER", for_provider(res, "repo-oci")["format"])
         self.assertEqual("NPM", for_provider(res, "repo-npm")["format"])
         self.assertEqual(
-            "artifact.gcp.m.upbound.io/v1beta1", res["repo-npm"]["apiVersion"]
+            "artifact.gcp.m.upbound.io/v1beta1", wire(res, "repo-npm")["apiVersion"]
         )
-        self.assertEqual("RegistryRepository", res["repo-npm"]["kind"])
+        self.assertEqual("RegistryRepository", wire(res, "repo-npm")["kind"])
 
     def test_docker_config_is_oci_only(self):
         res = gcp.render(spec(formats=["oci", "npm"], immutableTags=True))
@@ -93,7 +99,7 @@ class TestGcp(unittest.TestCase):
         )
         member = for_provider(res, "public-reader-npm")
         self.assertEqual(
-            "RegistryRepositoryIAMMember", res["public-reader-npm"]["kind"]
+            "RegistryRepositoryIAMMember", wire(res, "public-reader-npm")["kind"]
         )
         self.assertEqual("demo-npm", member["repository"])
         self.assertEqual("allUsers", member["member"])
@@ -105,9 +111,13 @@ class TestGcp(unittest.TestCase):
     def test_orphan_sets_management_policies(self):
         res = gcp.render(spec(deletionPolicy="Orphan", publicAccess=True))
         want = ["Observe", "Create", "Update", "LateInitialize"]
-        self.assertEqual(want, res["repo-oci"]["spec"]["managementPolicies"])
-        self.assertEqual(want, res["public-reader-oci"]["spec"]["managementPolicies"])
-        self.assertNotIn("managementPolicies", gcp.render(spec())["repo-oci"]["spec"])
+        self.assertEqual(want, wire(res, "repo-oci")["spec"]["managementPolicies"])
+        self.assertEqual(
+            want, wire(res, "public-reader-oci")["spec"]["managementPolicies"]
+        )
+        self.assertNotIn(
+            "managementPolicies", wire(gcp.render(spec()), "repo-oci")["spec"]
+        )
 
     def test_status_before_the_repositories_exist(self):
         got = gcp.status(spec(formats=["oci", "npm"]), {})

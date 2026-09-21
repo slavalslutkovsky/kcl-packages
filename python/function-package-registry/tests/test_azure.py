@@ -15,8 +15,19 @@ def spec(**extra):
     )
 
 
+def wire(res, name):
+    # What Crossplane actually receives: exclude_unset is resource.update()'s
+    # own serialisation, so a field the renderer never set is absent here too.
+    return res[name].model_dump(exclude_unset=True, by_alias=True)
+
+
+def external_name(res):
+    annotations = wire(res, "managed")["metadata"]["annotations"]
+    return annotations["crossplane.io/external-name"]
+
+
 def for_provider(res):
-    return res["managed"]["spec"]["forProvider"]
+    return wire(res, "managed")["spec"]["forProvider"]
 
 
 class TestAzure(unittest.TestCase):
@@ -32,12 +43,10 @@ class TestAzure(unittest.TestCase):
         res = azure.render(spec())
         self.assertEqual(["managed"], sorted(res))
         self.assertEqual(
-            "containerregistry.azure.m.upbound.io/v1beta1", res["managed"]["apiVersion"]
+            "containerregistry.azure.m.upbound.io/v1beta1",
+            wire(res, "managed")["apiVersion"],
         )
-        self.assertEqual(
-            "demoregistry",
-            res["managed"]["metadata"]["annotations"]["crossplane.io/external-name"],
-        )
+        self.assertEqual("demoregistry", external_name(res))
         fp = for_provider(res)
         self.assertEqual("Standard", fp["sku"])
         self.assertEqual("platform-rg", fp["resourceGroupName"])
