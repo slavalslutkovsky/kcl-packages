@@ -4,7 +4,8 @@ Azure backend for the `VirtualMachine` XR (`cloud.example.org/v1alpha1`).
 Typed against the `azure-compute` and `azure-network` schema packages
 (`../../../providers/azure-compute`, `../../../providers/azure-network`), it
 maps the portable machine onto a `LinuxVirtualMachine` plus a composed
-`NetworkInterface`, and a `PublicIP` when `network.publicIp` is set. The
+`NetworkInterface`, a `PublicIP` when `network.publicIp` is set, and a
+`Secret` carrying `customData` when `userData` is set. The
 Composition `vm-azure` runs it through `function-kcl` from
 `oci://docker.io/yurikrupnik/vm-azure`, followed by `function-auto-ready`.
 
@@ -15,6 +16,7 @@ Composition `vm-azure` runs it through `function-kcl` from
 | `LinuxVirtualMachine` (`compute.azure.m.upbound.io`) | always | external-name = XR name; NIC bound via `networkInterfaceIdsSelector.matchControllerRef`; OS disk `ReadWrite` / `Standard_LRS` |
 | `NetworkInterface` (`network.azure.m.upbound.io`) | always | external-name `<name>-nic`; ip configuration `primary`, dynamic private IP on `network.subnetId` |
 | `PublicIP` (`network.azure.m.upbound.io`) | `network.publicIp: true` | external-name `<name>-pip`; `allocationMethod: Static`; bound to the NIC by controller reference |
+| `Secret` (`v1`) | `userData` set | `<name>-custom-data`, key `customData`; declared ready (no Ready condition) |
 
 ## Spec fields read
 
@@ -31,7 +33,7 @@ Full schema: [../xrd/xrd.yaml](../xrd/xrd.yaml).
 | `machineType` / `size` | `size`; `machineType` wins, else `small` `Standard_B2s`, `medium` `Standard_D2s_v5`, `large` `Standard_D4s_v5`, `xlarge` `Standard_D8s_v5` (default `small`) |
 | `imageId` / `image` | `sourceImageId` when `imageId` is set, else `sourceImageReference` for `ubuntu-24-04` (default), `ubuntu-22-04` or `debian-12` |
 | `diskGb` | `osDisk.diskSizeGb` (default `30`) |
-| `userData` | `userData`, base64-encoded (the provider exposes `customData` only as a secret ref) |
+| `userData` | `customDataSecretRef` → the composed `Secret`, whose value is the base64 `customData` field. customData is what cloud-init runs at boot; Azure's own `userData` field is only readable from IMDS and never executed. Changing it replaces the VM |
 | `spot` | `priority: Spot`, `evictionPolicy: Deallocate` |
 | `deletionPolicy` | `Orphan` sets `managementPolicies: [Observe, Create, Update, LateInitialize]` on every MR |
 | `tags` | `forProvider.tags` on the VM |
