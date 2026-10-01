@@ -1,3 +1,13 @@
+## 0.1.6 (2026-10-01)
+
+### 🚀 Features
+
+- **app:** add experimental Dam schema ([209afbc](https://github.com/slavalslutkovsky/kcl-packages/commit/209afbc))
+
+### ❤️ Thank You
+
+- yurikrupnik @yurikrupnik
+
 ## 0.1.5 (2026-10-01)
 
 ### 🚀 Features

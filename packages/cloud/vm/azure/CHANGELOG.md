@@ -1,3 +1,13 @@
+## 0.1.6 (2026-10-01)
+
+### 🩹 Fixes
+
+- **vm-azure:** deliver userData as customData through a composed Secret ([f6a44c2](https://github.com/slavalslutkovsky/kcl-packages/commit/f6a44c2))
+
+### ❤️ Thank You
+
+- yurikrupnik @yurikrupnik
+
 ## 0.1.5 (2026-10-01)
 
 ### 🚀 Features

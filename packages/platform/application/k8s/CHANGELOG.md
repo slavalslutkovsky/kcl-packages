@@ -1,3 +1,9 @@
+## 0.1.2 (2026-10-01)
+
+### 🧱 Updated Dependencies
+
+- Updated app to 0.1.6
+
 ## 0.1.1 (2026-10-01)
 
 ### 🚀 Features

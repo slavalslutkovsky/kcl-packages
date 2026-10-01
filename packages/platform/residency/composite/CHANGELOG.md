@@ -1,3 +1,7 @@
+## 0.1.2 (2026-10-01)
+
+This was a version bump only for residency to align it with other projects, there were no code changes.
+
 ## 0.1.1 (2026-10-01)
 
 ### 🚀 Features

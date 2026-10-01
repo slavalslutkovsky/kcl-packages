@@ -1,3 +1,7 @@
+## 0.1.4 (2026-10-01)
+
+This was a version bump only for forge-forgejo to align it with other projects, there were no code changes.
+
 ## 0.1.3 (2026-10-01)
 
 ### 🚀 Features
