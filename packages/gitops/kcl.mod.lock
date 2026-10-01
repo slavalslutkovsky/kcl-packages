@@ -1,8 +1,8 @@
 [dependencies]
   [dependencies.app]
     name = "app"
-    full_name = "app_0.1.4"
-    version = "0.1.4"
+    full_name = "app_0.1.5"
+    version = "0.1.5"
   [dependencies.argocd]
     name = "argocd"
     full_name = "argocd_0.0.1"
