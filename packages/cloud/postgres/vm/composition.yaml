@@ -1,0 +1,27 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: postgres-vm
+  labels:
+    provider: vm
+spec:
+  compositeTypeRef:
+    apiVersion: cloud.example.org/v1alpha1
+    kind: PostgresInstance
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-kcl
+      input:
+        apiVersion: krm.kcl.dev/v1alpha1
+        kind: KCLInput
+        spec:
+          # The module fetches spec.passwordSecret through a RequiredResources
+          # meta item, which function-kcl only dispatches under this target.
+          target: Default
+          # Pin a release with ?tag=<version> once published via `nx release`.
+          source: oci://docker.io/yurikrupnik/postgres-vm?tag=0.1.0
+    - step: ready
+      functionRef:
+        name: function-auto-ready

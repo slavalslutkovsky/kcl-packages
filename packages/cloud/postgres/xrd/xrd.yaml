@@ -23,9 +23,10 @@ spec:
                 parameter mapped onto each backend's native resources (AWS RDS
                 Instance + ParameterGroup, GCP Cloud SQL DatabaseInstance +
                 Database + User, Azure Flexible Server + Database +
-                Configuration, in-cluster CloudNativePG Cluster). Fields a
-                backend cannot express are documented as ignored rather than
-                silently dropped.
+                Configuration, in-cluster CloudNativePG Cluster, self-managed
+                PostgreSQL on a VirtualMachine XR in AWS, GCP or Azure).
+                Fields a backend cannot express are documented as ignored
+                rather than silently dropped.
               properties:
                 region:
                   type: string
@@ -234,6 +235,53 @@ spec:
                     privateDnsZoneId:
                       type: string
                       description: Azure private DNS zone for the server's records.
+                vm:
+                  type: object
+                  description: |
+                    vm backend only — the machine a self-managed PostgreSQL is
+                    installed on. The backend composes a VirtualMachine XR on
+                    the chosen cloud and boots it with a script that installs
+                    PostgreSQL <engineVersion> from the PGDG apt repository,
+                    creates `database` owned by `username`, and opens port
+                    5432 to `allowedCidr`. Sizing comes from the common fields:
+                    memoryGb picks the VM size (instanceClass overrides it as a
+                    native machine type), storageGb + 10 GiB sizes the root
+                    disk the data lives on. spec.passwordSecret is REQUIRED:
+                    there is no operator to generate a password, so the
+                    composition reads the Secret and bakes only its md5 hash
+                    (`md5` + md5(password + username), the form PostgreSQL
+                    stores) into the boot script — the plaintext never leaves
+                    the cluster. Every other backend ignores this block.
+                  properties:
+                    provider:
+                      type: string
+                      enum: [aws, gcp, azure]
+                      description: Cloud the VirtualMachine XR resolves to (its compositionSelector provider label).
+                    image:
+                      type: string
+                      enum: [ubuntu-24-04, ubuntu-22-04, debian-12]
+                      default: ubuntu-24-04
+                      description: Abstract OS image; every choice is apt-based, which the install script relies on.
+                    imageId:
+                      type: string
+                      description: Native image override (AMI ID / GCP image self-link / Azure image ID). REQUIRED on aws, which has no account-independent image families.
+                    subnetId:
+                      type: string
+                      description: Subnet for the machine's interface (AWS subnet ID / GCP subnetwork / Azure subnet resource ID, REQUIRED on azure). AWS security groups come from network.securityGroupIds.
+                    allowedCidr:
+                      type: string
+                      default: 10.0.0.0/8
+                      description: Client range admitted by pg_hba.conf (md5 password auth). Network-level reachability is still the cloud firewall's business.
+                    sshKey:
+                      type: object
+                      description: SSH access to the machine (REQUIRED on azure, whose Linux VMs disable passwords).
+                      properties:
+                        user:
+                          type: string
+                        publicKey:
+                          type: string
+                      required: [user, publicKey]
+                  required: [provider]
                 resourceGroup:
                   type: string
                   description: Azure-only — resource group the server is created in. REQUIRED by the azure backend, ignored everywhere else.
@@ -260,7 +308,7 @@ spec:
                   description: True once the backing instance reports an endpoint.
                 provider:
                   type: string
-                  description: Backend that fulfilled the claim (aws | gcp | azure | cnpg).
+                  description: Backend that fulfilled the claim (aws | gcp | azure | cnpg | vm).
                 host:
                   type: string
                   description: Primary (write) hostname.
