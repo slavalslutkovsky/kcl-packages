@@ -61,9 +61,90 @@ import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_dns_chaos as cmdns
 import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_time_chaos as cmtime
 import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_schedule as cmschedule
 
-schema Dam:
-    resources: [any]
-    name: str
+schema Omg1:
+    resource: Workload
+
+#dsa: str
+#manifests: [any] = render(dsa)
+schema Dam(Omg1):
+    #resources: [Workload | Task]
+    #resource: Workload
+    _name: str
+    _namespace: str
+    _release: Release
+    _version: str = ""
+    _baseLabels: {str:str} = ({
+        "app" = _name
+        "app.kubernetes.io/name" = _name
+        # backstage.io/kubernetes-id: matched by the Backstage k8s plugin;
+        # deliberately NOT in selector.matchLabels (selector is immutable).
+        "backstage.io/kubernetes-id" = _name
+    } | ({"app.kubernetes.io/version" = _version} if _version else {}))
+    #_deps: [] # can be flux resources or random kcl - test more
+    manifests: [any] = [
+        # es
+        # deployment
+        # service
+        # sa
+        # configmap
+        # secret
+        # keda
+        # chaos
+        # security
+        # kyverno
+        # krycloak
+        {
+            id = "dam-${_name}"
+            enabled = True
+            replicas = 3
+            ratio = 0.75
+            tags = ["alpha", "beta", _namespace or "default"]
+            owner = {name = "zerg", contact = {email = "team@example.com", slack = "#zerg"}}
+            limits = [{cpu = "250m", memory = "128Mi"}, {cpu = "1", memory = "512Mi"}]
+            labels = _baseLabels
+            notes = None
+        }
+        #_deployment(resource)
+        # renderRelease(_release)
+    ]
+    _labelss = lambda name: str, version: str -> {str:str} {
+        {
+            "app" = name
+            "app.kubernetes.io/name" = name
+            #"app.kubernetes.io/component" = w.component
+            #"app.kubernetes.io/part-of" = w.partOf
+            # What the Backstage Kubernetes plugin matches on: an entity annotated
+            # backstage.io/kubernetes-id=<id> is shown every object labelled with
+            # the same id. Deliberately not part of the Deployment's
+            # selector.matchLabels (which stays `app` alone) — a selector is
+            # immutable, and this label has to stay free to change.
+            "backstage.io/kubernetes-id" = name
+        } | ({"app.kubernetes.io/version" = version} if version else {})
+    }
+    _dsa = lambda name: str -> [any] {
+        [
+            _deployment(Dam.resource)
+        ]
+    }
+    _render = lambda name: str -> [any] {
+        [
+            _deployment(Dam.resource)
+            #renderRelease(Dam._release)
+        ]
+    }
+
+#_deployment()
+#_deployment: _deployment()
+#_probe: [Probe {
+#   path = ""
+#   port = "8080"
+#}]
+#_job: [
+#batchv1.Job {
+#   metadata = {name = t.name, labels = _taskLabels(t)} | ({namespace = t.namespace} if t.namespace else {})
+#   spec = _jobSpec(t)
+#}
+#]
 
 #_es: esv1.ExternalSecret
 #_keda: keda.ScaledObject
@@ -72,12 +153,12 @@ schema Dam:
 # ── Component schemas ────────────────────────────────────────────────────────
 schema Probe:
     """Health probe. `type='http'` → httpGet(path, port); `type='grpc'` → grpc(port)."""
-    $type: "http" | "grpc" = "http"
+    $type?: "http" | "grpc" = "http"
     path?: str
     port: int | str
-    periodSeconds: int = 10
-    failureThreshold: int = 3
-    timeoutSeconds: int = 3
+    periodSeconds?: int = 10
+    failureThreshold?: int = 3
+    timeoutSeconds?: int = 3
     initialDelaySeconds?: int
 
 schema EnvVar:
@@ -143,9 +224,10 @@ schema TriggerAuth:
     cloud identity (no secret at all) — `azure-workload`, `aws` or `gcp`.
     """
     name: str
+    #secrets: [SecretParam] = [{parameter: "das",name: "Aris", key: "my-key" }]
     secrets: [SecretParam] = []
     env: [EnvParam] = []
-    podIdentity?: "azure-workload" | "aws" | "gcp"
+    podIdentity?: "azure-workload" | "aws" | "gcp" = "gcp"
     # podIdentity: the client id / role ARN to assume instead of the operator's own
     identityId?: str
 
@@ -1460,7 +1542,7 @@ render = lambda w: Workload -> [any] {
     _auths: [any] = [_triggerAuth(w.name, _ns, _labels(w), a) for a in w.scaler.authentications] if w.scaler else []
     _sa + [_deployment(w)] + ([_service(w)] if w.service else []) + ([_pdb(w)] if w.disruptionBudget else []) + ([_hpa(w)] if w.hpa else []) + _auths + ([_scaler(w)] if w.scaler else []) + (_monitoring(w) if w.monitoring else []) + [_fault(w, f) for f in w.chaos] + w.extraManifests
 }
-
+#_sa + []
 renderTask = lambda t: Task -> [any] {
     """
     Manifests for a batch workload: ServiceAccount (+ Role/RoleBinding), then a
