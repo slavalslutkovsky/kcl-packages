@@ -49,7 +49,8 @@ operators:
         by: [cloud/apigateway/xrd, cloud/bucket/xrd, cloud/cluster/xrd, cloud/dns/xrd,
              cloud/email/xrd, cloud/iam/xrd, cloud/kms/xrd, cloud/name/xrd, cloud/network/xrd,
              cloud/package-registry/xrd, cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd,
-             cloud/registry/xrd, cloud/serverless/xrd, cloud/vm/xrd, cloud/workload-identity/xrd,
+             cloud/registry/xrd, cloud/serverless/xrd, cloud/vm/xrd, cloud/workflow/xrd,
+             cloud/workload-identity/xrd,
              manifests/crossplane, platform/application/xrd, platform/appstack/xrd,
              platform/component/xrd]
       - kind: Provider
@@ -57,7 +58,8 @@ operators:
         by: [cloud/apigateway/xrd, cloud/bucket/xrd, cloud/cluster/xrd, cloud/dns/xrd,
              cloud/email/xrd, cloud/iam/xrd, cloud/kms/xrd, cloud/network/xrd,
              cloud/package-registry/xrd, cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd,
-             cloud/registry/xrd, cloud/serverless/xrd, cloud/vm/xrd, cloud/workload-identity/xrd]
+             cloud/registry/xrd, cloud/serverless/xrd, cloud/vm/xrd, cloud/workflow/xrd,
+             cloud/workload-identity/xrd]
       - kind: DeploymentRuntimeConfig
         group: pkg.crossplane.io
         by: [cloud/email/xrd, cloud/kms/xrd, cloud/package-registry/xrd, cloud/postgres/xrd,
@@ -91,9 +93,19 @@ operators:
       free selector, plus Workflows for orchestrated runs. The Pod*Chaos kinds
       are the per-pod records Chaos Mesh derives from those; WorkflowNode is
       what a Workflow expands into; StatusCheck is the workflow engine's probe.
-      The *Chaos kinds not listed under `used` are fault types neither package
-      has a `type` for yet.
+      The *Chaos kinds not listed under `used` (JVMChaos, KernelChaos,
+      BlockChaos) are fault types neither package has a `type` for yet; the
+      cloud / physical-machine kinds target things that are not pods.
     used:
+      - kind: DNSChaos
+        group: chaos-mesh.org
+        by: [app, manager (through app.experiment)]
+      - kind: HTTPChaos
+        group: chaos-mesh.org
+        by: [app, manager (through app.experiment)]
+      - kind: IOChaos
+        group: chaos-mesh.org
+        by: [app, manager (through app.experiment)]
       - kind: NetworkChaos
         group: chaos-mesh.org
         by: [app, manager (through app.experiment)]
@@ -106,12 +118,15 @@ operators:
       - kind: StressChaos
         group: chaos-mesh.org
         by: [app, manager (through app.experiment)]
+      - kind: TimeChaos
+        group: chaos-mesh.org
+        by: [app, manager (through app.experiment)]
       - kind: Workflow
         group: chaos-mesh.org
         by: [manager]
-    unused: [AWSChaos, AzureChaos, BlockChaos, DNSChaos, GCPChaos, HTTPChaos, IOChaos, JVMChaos,
-             KernelChaos, PhysicalMachine, PhysicalMachineChaos, PodHttpChaos, PodIOChaos,
-             PodNetworkChaos, RemoteCluster, StatusCheck, TimeChaos, WorkflowNode]
+    unused: [AWSChaos, AzureChaos, BlockChaos, GCPChaos, JVMChaos, KernelChaos, PhysicalMachine,
+             PhysicalMachineChaos, PodHttpChaos, PodIOChaos, PodNetworkChaos, RemoteCluster,
+             StatusCheck, WorkflowNode]
 
   - name: litmus
     source: litmuschaos/chaos-operator@3.31.0 (deploy/crds)
@@ -135,7 +150,7 @@ operators:
     used:
       - kind: GitRepository
         group: source.toolkit.fluxcd.io
-        by: [platform/component/flux]
+        by: [gitops, platform/component/flux]
       - kind: HelmRepository
         group: source.toolkit.fluxcd.io
         by: [manager, platform/component/flux]
@@ -152,7 +167,7 @@ operators:
     used:
       - kind: Kustomization
         group: kustomize.toolkit.fluxcd.io
-        by: [platform/component/flux]
+        by: [gitops, platform/component/flux]
     unused: []
 
   - name: flux-helm
@@ -165,6 +180,20 @@ operators:
         group: helm.toolkit.fluxcd.io
         by: [manager, platform/component/flux]
     unused: []
+
+  - name: argocd
+    source: argoproj/argo-cd@v3.5.3 (manifests/crds)
+    installedBy: not installed — gitops with engine argocd needs an Argo CD already running
+    schemas: packages/providers/argocd/models
+    groups: [argoproj.io]
+    used:
+      - kind: AppProject
+        group: argoproj.io
+        by: [gitops]
+      - kind: Application
+        group: argoproj.io
+        by: [gitops]
+    unused: [ApplicationSet]
 
   - name: cnpg
     source: cloudnative-pg/cloudnative-pg@v1.27.1
@@ -229,14 +258,42 @@ operators:
 
   - name: keda
     source: ghcr.io/kcl-lang/keda:0.1.3 (kcl-lang module; keda.sh/v1alpha1)
-    installedBy: not installed by this repo — the app package's `scaler:` assumes KEDA is present
+    installedBy: the keda chart (2.17.2, keda) as a `manager` dependency (packages/manager/examples/values.yaml); not in devkit.toml — the app package's `scaler:` assumes KEDA is present
     schemas: kcl.mod dependency `keda` of packages/app
     groups: [keda.sh]
     used:
+      - kind: ScaledJob
+        group: keda.sh
+        by: [app]
       - kind: ScaledObject
         group: keda.sh
         by: [app]
-    unused: [ScaledJob, TriggerAuthentication, ClusterTriggerAuthentication]
+      - kind: TriggerAuthentication
+        group: keda.sh
+        by: [app]
+    unused: [ClusterTriggerAuthentication]
+
+  - name: prometheus-operator
+    source: prometheus-operator/prometheus-operator@v0.85.0 (example/prometheus-operator-crd, three CRD files only)
+    installedBy: the kube-prometheus-stack chart (77.5.0, monitoring) as a `manager` dependency (packages/manager/examples/values.yaml)
+    schemas: packages/providers/prometheus-operator/models/unknown
+    groups: [monitoring.coreos.com]
+    notes: >-
+      The app package renders a ServiceMonitor or PodMonitor and a
+      PrometheusRule per Workload `monitoring:`. The unused kinds are not
+      generated at all: the registry `service` names only the three CRD files
+      (ScrapeConfig also breaks kcl import).
+    used:
+      - kind: PodMonitor
+        group: monitoring.coreos.com
+        by: [app]
+      - kind: PrometheusRule
+        group: monitoring.coreos.com
+        by: [app]
+      - kind: ServiceMonitor
+        group: monitoring.coreos.com
+        by: [app]
+    unused: [Alertmanager, AlertmanagerConfig, Probe, Prometheus, PrometheusAgent, ScrapeConfig, ThanosRuler]
 
   - name: external-secrets
     source: ghcr.io/kcl-lang/external-secrets:0.18.2 (kcl-lang module; external-secrets.io/v1)
@@ -520,13 +577,13 @@ providers:
 
   - name: aws-iam
     source: ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0 in cloud/cluster/xrd/providers.yaml, cloud/iam/xrd/providers.yaml, cloud/serverless/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0 in cloud/cluster/xrd/providers.yaml, cloud/iam/xrd/providers.yaml, cloud/serverless/xrd/providers.yaml, cloud/workflow/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
     schemas: packages/providers/aws-iam/models
     groups: [iam.aws.m.upbound.io]
     used:
       - kind: Role
         group: iam.aws.m.upbound.io
-        by: [cloud/cluster/aws, cloud/iam/aws, cloud/serverless/aws, cloud/workload-identity/aws]
+        by: [cloud/cluster/aws, cloud/iam/aws, cloud/serverless/aws, cloud/workflow/aws, cloud/workload-identity/aws]
       - kind: RolePolicy
         group: iam.aws.m.upbound.io
         by: [cloud/iam/aws]
@@ -667,6 +724,17 @@ providers:
         group: sesv2.aws.m.upbound.io
         by: [cloud/email/aws]
     unused: [ConfigurationSetEventDestination, DedicatedIPPool, EmailIdentityFeedbackAttributes]
+
+  - name: aws-sfn
+    source: ghcr.io/crossplane-contrib/provider-aws-sfn:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-sfn:v2.6.0 in cloud/workflow/xrd/providers.yaml
+    schemas: packages/providers/aws-sfn/models
+    groups: [sfn.aws.m.upbound.io]
+    used:
+      - kind: StateMachine
+        group: sfn.aws.m.upbound.io
+        by: [cloud/workflow/aws]
+    unused: [Activity]
 
   - name: aws-sqs
     source: ghcr.io/crossplane-contrib/provider-aws-sqs:v2.6.0
@@ -815,6 +883,25 @@ providers:
              ManagedHardwareSecurityModule, ManagedStorageAccount,
              ManagedStorageAccountSASTokenDefinition, Secret]
 
+  - name: azure-logic
+    source: ghcr.io/crossplane-contrib/provider-azure-logic:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-logic:v2.6.0 in cloud/workflow/xrd/providers.yaml
+    schemas: packages/providers/azure-logic/models
+    groups: [logic.azure.m.upbound.io]
+    used:
+      - kind: AppActionCustom
+        group: logic.azure.m.upbound.io
+        by: [cloud/workflow/azure]
+      - kind: AppTriggerCustom
+        group: logic.azure.m.upbound.io
+        by: [cloud/workflow/azure]
+      - kind: AppWorkflow
+        group: logic.azure.m.upbound.io
+        by: [cloud/workflow/azure]
+    unused: [AppActionHTTP, AppIntegrationAccount, AppIntegrationAccountBatchConfiguration,
+             AppIntegrationAccountPartner, AppIntegrationAccountSchema,
+             AppIntegrationAccountSession, AppTriggerHTTPRequest, AppTriggerRecurrence]
+
   - name: azure-managedidentity
     source: ghcr.io/crossplane-contrib/provider-azure-managedidentity:v2.6.0
     installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-managedidentity:v2.6.0 in cloud/iam/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
@@ -894,6 +981,15 @@ providers:
     unused: [AccountLocalUser, AccountNetworkRules, Blob, BlobInventoryPolicy, Container,
              ContainerImmutabilityPolicy, DataLakeGen2FileSystem, DataLakeGen2Path,
              EncryptionScope, ObjectReplication, Queue, Share, ShareDirectory, Table, TableEntity]
+
+  - name: gcp-accesscontextmanager
+    source: ghcr.io/crossplane-contrib/provider-gcp-accesscontextmanager:v2.6.0
+    installedBy: nothing — no module's xrd/providers.yaml installs it (schemas generated, not wired in)
+    schemas: packages/providers/gcp-accesscontextmanager/models
+    groups: [accesscontextmanager.gcp.m.upbound.io]
+    used: []
+    unused: [AccessLevel, AccessLevelCondition, AccessPolicy, AccessPolicyIAMMember,
+             ServicePerimeter, ServicePerimeterResource]
 
   - name: gcp-apigee
     source: ghcr.io/crossplane-contrib/provider-gcp-apigee:v2.6.0
@@ -1130,6 +1226,17 @@ providers:
     unused: [BucketAccessControl, BucketACL, BucketIAMMember, BucketIAMPolicy, BucketObject,
              DefaultObjectAccessControl, DefaultObjectACL, HMACKey, ManagedFolder,
              ManagedFolderIAMMember, Notification, ObjectAccessControl, ObjectACL]
+
+  - name: gcp-workflows
+    source: ghcr.io/crossplane-contrib/provider-gcp-workflows:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-workflows:v2.6.0 in cloud/workflow/xrd/providers.yaml
+    schemas: packages/providers/gcp-workflows/models
+    groups: [workflows.gcp.m.upbound.io]
+    used:
+      - kind: Workflow
+        group: workflows.gcp.m.upbound.io
+        by: [cloud/workflow/gcp]
+    unused: []
 
   - name: helm
     source: ghcr.io/crossplane-contrib/provider-helm:v1.3.0

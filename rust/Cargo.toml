@@ -30,11 +30,11 @@ kcl-lang = { git = "https://github.com/kcl-lang/lib", tag = "v0.12.4" }
 # versions match what it pulls and nothing new is compiled: `toml` is
 # deliberately 0.5, the version the SDK's config crate uses.
 flate2 = "1"
-oci-client = { version = "0.11", default-features = false, features = ["rustls-tls"] }
-sha2 = "0.10"
+oci-client = { version = "0.18", default-features = false, features = ["rustls-tls"] }
+sha2 = "0.11.0"
 tar = "0.4"
 tokio = { version = "1", features = ["rt", "net", "time"] }
-toml = "0.5"
+toml = "0.9.8"
 
 # Operator (crate `kcl-operator`) and the two front ends built on it. kube 4.x
 # is pinned to k8s-openapi 0.28 by its own dependency; `latest` is that
@@ -52,7 +52,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # The agent (crate `kcl-agent`) talks to an OpenAI-compatible endpoint. These
 # are exactly the features `oci-client` already compiles reqwest with, so the
 # agent adds no second TLS stack: default features (native-tls) stay off.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-tls"] }
 
 [profile.release]
 lto = "thin"

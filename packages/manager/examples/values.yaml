@@ -60,7 +60,7 @@ dependencies:
         socketPath: /run/containerd/containerd.sock
       dashboard:
         create: false
-  # The operator behind `app`'s `scaler:` (ScaledObject).
+  # The operator behind `app`'s `scaler:` (ScaledObject / ScaledJob).
   - name: keda
     type: application
     repo: https://kedacore.github.io/charts
@@ -80,6 +80,14 @@ dependencies:
     dependsOn: [keda]
     install: {crds: CreateReplace}
     upgrade: {crds: CreateReplace}
+    values:                       # app's monitors carry release=kube-prometheus-stack = this HelmRelease's name, so selectors stay at chart defaults
+      grafana:
+        sidecar:
+          dashboards:             # pick up app's dashboard ConfigMaps (grafana_dashboard=1) from every namespace, foldered by annotation
+            searchNamespace: ALL
+            folderAnnotation: grafana_folder
+            provider:
+              foldersFromFilesStructure: true
   # The developer portal itself: an `application` chart, because it is an app
   # like any other. What it *shows* comes from the entities rendered by
   # `-D catalog=true` here and in `packages/app` — see docs/backstage.md for

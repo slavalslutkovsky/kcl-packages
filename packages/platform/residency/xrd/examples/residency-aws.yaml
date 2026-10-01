@@ -1,0 +1,22 @@
+apiVersion: platform.example.org/v1alpha1
+kind: Residency
+metadata:
+  namespace: default
+  name: shl
+spec:
+  provider: aws
+  locations:
+    - name: il                     # -> il-central-1 (Tel Aviv)
+    - name: de                     # -> eu-central-1 (Frankfurt). nl has no AWS region:
+                                   #    `- name: nl` alone fails the render; add
+                                   #    `region: eu-central-1` to cross the border on purpose.
+  keys:
+    - name: audit                  # org audit-log bucket CMEK: Israel only
+      locations: [il]
+    - name: app-data               # application CMEK in every location
+    - name: signing                # release signing, Israel only
+      locations: [il]
+      purpose: sign-verify
+      algorithm: ec-p256           # asymmetric: rotationDays is dropped by aws/gcp
+  tags:
+    team: platform

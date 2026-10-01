@@ -64,7 +64,7 @@ _demoValues = {
     workload.image = "demo/api:latest"
     workload.port = 8080
     workload.hpa = {minReplicas = 1, maxReplicas = 5}
-    config.PORT = "8080"
+    config.PORT = "${workload.port}"
 }
 _baseValues = yaml.decode(file.read(_valuesPath)) if _hasValues else _demoValues
 _values = lib.mergeValues(_baseValues, yaml.decode(file.read(_overlayPath))) if _hasOverlay else _baseValues

@@ -1,0 +1,38 @@
+# Queue-driven batch values (Helm-style) → app.Release with a `task:` scaled
+# by KEDA. `scaler:` under a task renders a keda.sh/v1alpha1 ScaledJob instead
+# of a Job: KEDA starts one Job from the template below per pending message
+# batch, up to `maxReplicas` at once, and none while the subscription is empty.
+# `schedule:` and `scaler:` are mutually exclusive.
+#   kcl run /abs/path/to/packages/app -D values=<this file> -q | kubectl apply -f -
+#
+# No secrets anywhere: the Jobs run as ServiceAccount "thumbnailer", federated
+# to a GSA by GKE Workload Identity, and KEDA reads the subscription backlog as
+# its own operator identity (`podIdentity: gcp` on the TriggerAuthentication
+# "thumbnailer-pubsub" that the trigger's `auth: pubsub` points at).
+
+task:
+  name: thumbnailer
+  namespace: media
+  component: worker
+  image: yurikrupnik/thumbnailer:latest
+  args: ["--once"]                  # one batch per Job, then exit
+  restartPolicy: Never
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  serviceAccount:
+    cloud: gcp
+    identity: thumbnailer@my-project.iam.gserviceaccount.com
+  scaler:
+    maxReplicas: 20
+    pollingInterval: 15
+    strategy: accurate              # Jobs = backlog − Jobs already running
+    authentications:
+      - name: pubsub
+        podIdentity: gcp
+    triggers:
+      - type: gcp-pubsub
+        auth: pubsub
+        metadata:
+          subscriptionName: projects/my-project/subscriptions/thumbnails
+          mode: SubscriptionSize
+          value: "5"

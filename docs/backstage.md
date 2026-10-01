@@ -71,9 +71,13 @@ One string links the portal to the cluster: the entity is annotated
 carries the matching label**. That is what makes the component page's Kubernetes
 tab show this release and nothing else.
 
-Objects labelled by `app`: Deployment (and its pod template), Service,
-HorizontalPodAutoscaler, KEDA ScaledObject, every Chaos Mesh experiment and
-Schedule, Job / CronJob. By `manager`: every experiment, Schedule and Workflow.
+Objects labelled by `app`: ServiceAccount, Role, RoleBinding, Deployment (and
+its pod template), Service, PodDisruptionBudget, HorizontalPodAutoscaler, KEDA
+TriggerAuthentication and ScaledObject, ServiceMonitor or PodMonitor,
+PrometheusRule, dashboard ConfigMaps, every Chaos Mesh experiment (PodChaos,
+NetworkChaos, StressChaos, HTTPChaos, IOChaos, DNSChaos, TimeChaos) and
+Schedule, Job / CronJob / KEDA ScaledJob. By `manager`: every experiment,
+Schedule and Workflow.
 
 The label is **not** in a Deployment's `selector.matchLabels`, which stays
 `app: <name>` alone — a selector is immutable, and this label has to stay free
@@ -110,14 +114,23 @@ kubernetes:
     - {group: chaos-mesh.org, apiVersion: v1alpha1, plural: podchaos}
     - {group: chaos-mesh.org, apiVersion: v1alpha1, plural: networkchaos}
     - {group: chaos-mesh.org, apiVersion: v1alpha1, plural: stresschaos}
+    - {group: chaos-mesh.org, apiVersion: v1alpha1, plural: httpchaos}
+    - {group: chaos-mesh.org, apiVersion: v1alpha1, plural: iochaos}
+    - {group: chaos-mesh.org, apiVersion: v1alpha1, plural: dnschaos}
+    - {group: chaos-mesh.org, apiVersion: v1alpha1, plural: timechaos}
     - {group: chaos-mesh.org, apiVersion: v1alpha1, plural: schedules}
     - {group: chaos-mesh.org, apiVersion: v1alpha1, plural: workflows}
     - {group: keda.sh, apiVersion: v1alpha1, plural: scaledobjects}
+    - {group: keda.sh, apiVersion: v1alpha1, plural: scaledjobs}
+    - {group: keda.sh, apiVersion: v1alpha1, plural: triggerauthentications}
+    - {group: monitoring.coreos.com, apiVersion: v1, plural: servicemonitors}
+    - {group: monitoring.coreos.com, apiVersion: v1, plural: podmonitors}
+    - {group: monitoring.coreos.com, apiVersion: v1, plural: prometheusrules}
 ```
 
-The four kinds `app` renders and the two more `manager` adds are exactly the
-ones listed there; the other 17 Chaos Mesh kinds are unreachable from a values
-file on purpose (docs/chaos.md § What renders to what).
+The eight Chaos Mesh kinds `app` renders and the Workflow `manager` adds are
+exactly the ones listed there; the other 14 Chaos Mesh kinds are unreachable
+from a values file on purpose (docs/chaos.md § What renders to what).
 
 `catalog.dashboardUrl` in a `manager` values file links the Chaos Mesh
 dashboard from the cluster and from every game day. It is off by default —

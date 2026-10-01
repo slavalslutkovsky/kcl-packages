@@ -147,7 +147,7 @@ namespace = "flagger"
 
 # Chaos Mesh — the operator behind the app package's `chaos:` faults
 # (packages/app renders chaos-mesh.org PodChaos / NetworkChaos / StressChaos /
-# Schedule). Chart 2.8.4 is Chaos Mesh v2.8.4, the ref the
+# HTTPChaos / IOChaos / DNSChaos / TimeChaos / Schedule). Chart 2.8.4 is Chaos Mesh v2.8.4, the ref the
 # packages/providers/chaos-mesh schema package was generated from; keep them in
 # step. Kind nodes run containerd, and chaos-daemon must talk to that socket
 # to kill containers / shape their network. The dashboard is off: nothing here

@@ -1,0 +1,44 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Workflow
+metadata:
+  namespace: default
+  name: order-fulfilment
+spec:
+  region: westeurope
+  resourceGroup: orders-rg        # azure-only, required
+  # Workflow Definition Language, JSON. Each trigger / action becomes its own
+  # AppTriggerCustom / AppActionCustom, named after its key.
+  definition: |
+    {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "triggers": {
+        "manual": {
+          "type": "Request",
+          "kind": "Http",
+          "inputs": {"schema": {"type": "object"}}
+        }
+      },
+      "actions": {
+        "Reserve": {
+          "type": "Http",
+          "inputs": {"method": "POST", "uri": "https://inventory.example.com/reserve", "body": "@triggerBody()"},
+          "runAfter": {}
+        },
+        "Respond": {
+          "type": "Response",
+          "kind": "Http",
+          "inputs": {"statusCode": 200, "body": "@body('Reserve')"},
+          "runAfter": {"Reserve": ["Succeeded"]}
+        }
+      }
+    }
+  # unset -> system-assigned identity; or an existing user-assigned identity:
+  # serviceAccount: /subscriptions/<sub>/resourceGroups/orders-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/orders-wf
+  deletionPolicy: Delete
+  tags:                           # -> tags on the Logic App
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure           # the flag: picks the backend (aws | gcp | azure)

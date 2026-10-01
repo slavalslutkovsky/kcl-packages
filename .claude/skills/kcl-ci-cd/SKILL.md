@@ -19,7 +19,7 @@ There is **no `project.json` anywhere**. `tools/nx-kcl/src/index.ts` (registered
 | target | runs | notes |
 | --- | --- | --- |
 | `build` | `kcl run {projectRoot}/main.k` | cached |
-| `test` | `kcl test` in the package dir | cached |
+| `test` | `kcl test` in the package dir | cached; dependsOn lint (`kcl test` writes a temp `_kcl_test_*.k` a concurrent `kcl lint` would compile) |
 | `lint` | `kcl lint` in the package dir | cached |
 | `fmt` | `kcl fmt` | uncached |
 | `add` / `remove` | `kcl mod add` / `nx-kcl:remove` | |

@@ -225,6 +225,71 @@ source:
     assert gr.spec?.secretRef == Undefined, "a public repository needs no credential"
 }
 
+# ── Argo CD engine ───────────────────────────────────────────────────────────
+_argocd = """\
+engine: argocd
+source:
+  url: https://github.com/yurikrupnik-org/gitops
+  path: ./clusters/dev
+  repository: gitops
+"""
+
+test_argocd_replaces_the_flux_pair = lambda {
+    out = render(_build(_argocd))
+    assert _kinds(out)[-2::] == ["AppProject", "Application"], "the Argo CD pair takes the Flux pair's place, last: ${_kinds(out)}"
+    assert "GitRepository" not in _kinds(out) and "Kustomization" not in _kinds(out), "one engine per render, never both"
+    assert all_true([o.apiVersion == "argoproj.io/v1alpha1" and o.metadata.namespace == "argocd" for o in out[-2::]]), "an unset namespace follows the engine: argocd is where Argo CD watches"
+    assert len(_of(out, "Repository")) == 2, "the forge half of the loop does not depend on the engine"
+}
+
+test_argocd_application = lambda {
+    a = _one(render(_build(_argocd)), "Application")
+    assert a.spec.project == "gitops", "the Application belongs to the project rendered beside it, not to `default`"
+    assert a.spec.source.repoURL == "https://github.com/yurikrupnik-org/gitops"
+    assert a.spec.source.targetRevision == "main", "source.branch is the revision Argo CD tracks"
+    assert a.spec.source.path == "./clusters/dev"
+    assert a.spec.destination.server == "https://kubernetes.default.svc"
+    assert a.spec.destination?.namespace == Undefined, "no destination namespace: like the Kustomization, the manifests carry their own"
+    assert a.spec.syncPolicy.automated.prune == True and a.spec.syncPolicy.automated.selfHeal == True, "reconciled without a human sync, drift reverted"
+    assert a.metadata.finalizers == ["resources-finalizer.argocd.argoproj.io"], "prune also means deleting the Application garbage-collects, as deleting the Kustomization does"
+}
+
+test_argocd_without_prune = lambda {
+    a = _one(render(_build(_argocd + """\
+source:
+  url: https://github.com/yurikrupnik-org/gitops
+  prune: false
+""")), "Application")
+    assert a.spec.syncPolicy.automated.prune == False
+    assert a.metadata?.finalizers == Undefined, "without prune, deleting the Application leaves what it deployed"
+}
+
+test_argocd_project_admits_only_the_source = lambda {
+    p = _one(render(_build(_argocd)), "AppProject")
+    assert p.spec.sourceRepos == ["https://github.com/yurikrupnik-org/gitops"]
+    assert len(p.spec.destinations) == 1
+    assert p.spec.destinations[0].server == "https://kubernetes.default.svc" and p.spec.destinations[0].namespace == "*"
+    assert len(p.spec.clusterResourceWhitelist) == 1
+    assert p.spec.clusterResourceWhitelist[0].group == "*" and p.spec.clusterResourceWhitelist[0].kind == "*", "the cluster state includes cluster-scoped kinds (Namespace, Entitlement)"
+}
+
+test_argocd_switch_to_forge = lambda {
+    out = render(_build(_argocd + """\
+source:
+  origin: forge
+  url: https://github.com/yurikrupnik-org/gitops
+  repository: gitops
+"""))
+    clone = "http://git-http.platform.svc:3000/yurikrupnik-org/gitops.git"
+    assert _one(out, "Application").spec.source.repoURL == clone, "the switch repoints Argo CD exactly as it repoints Flux"
+    assert _one(out, "AppProject").spec.sourceRepos == [clone], "and the project stops admitting GitHub"
+}
+
+test_argocd_explicit_namespace = lambda {
+    out = render(_build(_argocd + "namespace: gitops-system\n"))
+    assert all_true([o.metadata.namespace == "gitops-system" for o in out[-2::]]), "an explicit namespace wins over the engine default"
+}
+
 # ── Derived URLs ─────────────────────────────────────────────────────────────
 test_urls = lambda {
     g = _build("")

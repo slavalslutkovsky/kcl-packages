@@ -13,12 +13,12 @@
     oci_tag = "0.18.2"
   [dependencies.k8s]
     name = "k8s"
-    full_name = "k8s_1.31.2"
-    version = "1.31.2"
-    sum = "xBZgPsnpVVyWBpahuPQHReeRx28eUHGFoaPeqbct+vs="
+    full_name = "k8s_1.32.4"
+    version = "1.32.4"
+    sum = "WrltC/mTXtdzmhBZxlvM71wJL5C/UZ/vW+bF3nFvNbM="
     reg = "ghcr.io"
     repo = "kcl-lang/k8s"
-    oci_tag = "1.31.2"
+    oci_tag = "1.32.4"
   [dependencies.keda]
     name = "keda"
     full_name = "keda_0.1.3"
@@ -27,3 +27,7 @@
     reg = "ghcr.io"
     repo = "kcl-lang/keda"
     oci_tag = "0.1.3"
+  [dependencies.prometheus-operator]
+    name = "prometheus-operator"
+    full_name = "prometheus-operator_0.0.1"
+    version = "0.0.1"

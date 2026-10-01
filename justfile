@@ -57,10 +57,12 @@ gets:
 #                                       cluster reconciles from
 #                                       (packages/gitops): tenant Entitlement,
 #                                       Forge, its Repositories, and the Flux
-#                                       GitRepository + Kustomization. `env`
-#                                       forge picks the values.forge.yaml
-#                                       overlay, which repoints Flux at the
-#                                       forge's own copy of the repo
+#                                       GitRepository + Kustomization (or, with
+#                                       env argocd, an Argo CD AppProject +
+#                                       Application). `env` forge picks the
+#                                       values.forge.yaml overlay, which
+#                                       repoints the engine at the forge's own
+#                                       copy of the repo
 #   just fleet [values.yaml] [env]      the app of apps (packages/fleet): one
 #                                       Component XR per app, a platform layer
 #                                       every team app waits for, and one
@@ -283,17 +285,17 @@ status:
 #   e.g. just provider gcp-storage ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0 storage
 # Generate a provider schema package from a Crossplane provider OCI image (docker + yq).
 provider name image service="" scope="namespaced":
-    {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --image={{ image }} --apiScope={{ scope }} {{ if service != "" { "--service=" + service } else { "" } }} --no-interactive
+    {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --image={{ image }} --apiScope={{ scope }} {{ if service != "" { "--service=" + service } else { "" } }} --force --no-interactive
 
 #   just provider-repo <name> <owner/repo> [ref=main] [service] [crdPath=package/crds]
 # Generate a provider schema package from a Crossplane provider GitHub repo (pinned ref).
 provider-repo name repo ref="main" service="" crdPath="package/crds":
-    {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --repo={{ repo }} --ref={{ ref }} --crdPath={{ crdPath }} {{ if service != "" { "--service=" + service } else { "" } }} --no-interactive
+    {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --repo={{ repo }} --ref={{ ref }} --crdPath={{ crdPath }} {{ if service != "" { "--service=" + service } else { "" } }} --force --no-interactive
 
 #   just provider-local <name> <dir> [service]
 # Generate a provider schema package from a local directory of CRD YAMLs.
 provider-local name dir service="":
-    {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --from={{ dir }} {{ if service != "" { "--service=" + service } else { "" } }} --no-interactive
+    {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --from={{ dir }} {{ if service != "" { "--service=" + service } else { "" } }} --force --no-interactive
 
 # ─── XRD schema packages (typed child XRs) ────────────────────────────────────
 #
@@ -561,12 +563,30 @@ seed-registry-providers:
 # namespaced *.vault.m.upbound.io CRDs. Its `vault`+`transit` families give the
 # Mount and SecretBackendKey the Composition renders; `kcl import` buckets
 # their v1alpha1 schemas under models/unknown/.
+# The oci backend's provider-oci-kms comes from Oracle (ghcr.io/oracle), and
+# like every OCI sub-provider it authenticates through provider-family-oci,
+# which must be installed first and owns the (Cluster)ProviderConfig — so the
+# family's schemas are seeded alongside it.
 # Bootstrap/refresh the key-management providers used by the kms Composition.
 seed-kms-providers:
     just provider aws-kms        ghcr.io/crossplane-contrib/provider-aws-kms:v2.6.0        kms
     just provider gcp-kms        ghcr.io/crossplane-contrib/provider-gcp-kms:v2.6.0        kms
     just provider azure-keyvault ghcr.io/crossplane-contrib/provider-azure-keyvault:v2.6.0 keyvault
     just provider vault          xpkg.upbound.io/upbound/provider-vault:v4.0.3             vault,transit
+    just provider oci-family     ghcr.io/oracle/provider-family-oci:v2.0.0
+    just provider oci-kms        ghcr.io/oracle/provider-oci-kms:v2.0.0                     kms
+
+# One orchestration service per cloud, each taking the workflow source in its
+# own language: GCP Workflows (YAML/JSON syntax), Step Functions (Amazon States
+# Language) and Logic Apps (Workflow Definition Language). A state machine
+# needs an execution role, so the aws backend shares aws-iam with
+# `seed-iam-providers`.
+# Bootstrap/refresh the orchestration providers used by the workflow Composition.
+seed-workflow-providers:
+    just provider gcp-workflows ghcr.io/crossplane-contrib/provider-gcp-workflows:v2.6.0 workflows
+    just provider aws-sfn       ghcr.io/crossplane-contrib/provider-aws-sfn:v2.6.0       sfn
+    -just provider aws-iam      ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0       iam
+    just provider azure-logic   ghcr.io/crossplane-contrib/provider-azure-logic:v2.6.0   logic
 
 # ─── Generate compositions (XRD + per-provider function-kcl modules) ──────────
 

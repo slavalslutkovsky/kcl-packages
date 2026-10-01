@@ -7,6 +7,10 @@
 # A Release is a whole app in one file: a `workload:` (long-running) or `task:`
 # (batch), plus optional `config:` (→ ConfigMap), `externalSecret:` and
 # `catalog:` (the Backstage entities, rendered on their own — see the bottom).
+#
+# Renders, in apply order: ServiceAccount, Deployment, Service,
+# PodDisruptionBudget, HPA, ServiceMonitor, PrometheusRule, dashboard
+# ConfigMap, then the ConfigMap and ExternalSecret.
 
 workload:
   name: zerg-api
@@ -60,10 +64,39 @@ workload:
       secretName: redis-redis-account-default
       secretKey: password
   hpa:
-    minReplicas: 1
+    minReplicas: 2
     maxReplicas: 10
     cpu: 70
     memory: 80
+  # → ServiceAccount "zerg-api", API token not mounted. `cloud` + `identity`
+  # annotate it for GKE Workload Identity; the GSA side is the
+  # workload-identity module's (packages/cloud/workload-identity).
+  serviceAccount:
+    cloud: gcp
+    identity: zerg-api@my-project.iam.gserviceaccount.com
+  # → PodDisruptionBudget: a node drain never takes the last ready replica.
+  disruptionBudget:
+    minAvailable: 1
+  # → kube-prometheus-stack objects, all pinned to `namespace`: a
+  # ServiceMonitor on the `http` port + /metrics, a PrometheusRule (the three
+  # default alerts plus the p99 one), and a Grafana dashboard ConfigMap the
+  # Grafana sidecar loads into the "Zerg" folder.
+  monitoring:
+    defaultRules: true
+    rules:
+      - alert: ZergApiSlow
+        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{namespace="zerg", service="zerg-api"}[5m]))) > 0.5
+        for: 10m
+        severity: critical
+        summary: zerg-api p99 latency above 500ms
+    dashboards:
+      - name: overview
+        folder: Zerg
+        panels:                     # after the standard replicas/CPU/memory/restarts/targets panels
+          - title: Requests per second
+            expr: sum by (status) (rate(http_requests_total{namespace="zerg", service="zerg-api"}[$__rate_interval]))
+            legend: "{{status}}"
+            unit: reqps
 
 # → ConfigMap "zerg-api-config" (Release-only; a bare Workload can't express this).
 config:

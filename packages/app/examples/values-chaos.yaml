@@ -55,6 +55,28 @@ workload:
     - name: memory-pressure
       type: memory
       size: 256MB
+    # Responses of half of the pods delayed by 2s: do clients time out cleanly?
+    # The port defaults to the workload's own (8080).
+    - name: slow-responses
+      type: http-delay
+      httpTarget: Response
+      latency: 2s
+      mode: fixed-percent
+      value: "50"
+    # 100ms on half of the syscalls against the /tmp volume.
+    - name: slow-disk
+      type: io-latency
+      volumePath: /tmp
+      latency: 100ms
+      percent: 50
+    # The database name stops resolving (needs chaos-dns-server, which the chart deploys).
+    - name: no-db-dns
+      type: dns-error
+      patterns: ["postgres-rw.dbs.svc*"]
+    # The clock an hour behind: token expiry, cache TTLs, cron-in-process.
+    - name: clock-skew
+      type: time-skew
+      timeOffset: "-1h"
 
 # The portal side of chaos. `-D catalog=true` renders a Component annotated
 #   platform.example.org/chaos-faults: kill-one=pod-kill,slow-net=delay,...

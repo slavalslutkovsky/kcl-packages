@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { writeProviderReadme } from './readme';
 
 /**
  * The `k8s` schema package version every generated provider package depends on.
@@ -31,6 +32,7 @@ export interface ImportCrdGeneratorSchema {
   crdPath?: string;
   apiScope?: 'cluster' | 'namespaced';
   sourceLabel?: string;
+  force?: boolean;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -41,13 +43,17 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
+// A filter is a prefix of the CRD file name (repo / local sources) or of the
+// API group (image sources). Dots are allowed so a repo row can name single
+// CRD files — e.g. monitoring.coreos.com_servicemonitors — when importing the
+// whole group would pull in kinds that `kcl import` cannot translate.
 function parseServices(opt?: string): string[] {
   const services = (opt ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
   for (const s of services) {
-    if (!/^[a-zA-Z0-9_-]+$/.test(s)) {
+    if (!/^[a-zA-Z0-9_.-]+$/.test(s)) {
       throw new Error(`Invalid service filter "${s}".`);
     }
   }
@@ -120,8 +126,16 @@ async function fetchRepoCrds(
       logger.warn(`skip ${path}: ${r.status}`);
       continue;
     }
+    const text = await r.text();
+    // CRD directories often carry a kustomization.yaml (argoproj/argo-cd's
+    // manifests/crds does). `kcl import -m crd` cannot parse a non-CRD, and one
+    // bad file makes it dump every schema into models/unknown.
+    if (!/^kind:\s*CustomResourceDefinition\s*$/m.test(text)) {
+      logger.info(`skip ${path}: not a CustomResourceDefinition`);
+      continue;
+    }
     const dest = join(destDir, path.slice(prefix.length));
-    writeFileSync(dest, await r.text());
+    writeFileSync(dest, text);
     files.push(dest);
   }
   return files;
@@ -221,7 +235,15 @@ export default async function importCrdGenerator(
     throw new Error('Use only one of --image, --repo, or --from.');
   }
   if (tree.exists(join(projectRoot, 'kcl.mod'))) {
-    throw new Error(`A KCL package already exists at "${projectRoot}".`);
+    if (!options.force) {
+      throw new Error(
+        `A KCL package already exists at "${projectRoot}". Pass --force to regenerate it.`
+      );
+    }
+    // These packages are always generated, never hand-edited (see justfile),
+    // so a --force refresh can safely wipe the old models/ wholesale rather
+    // than leaving stale files behind (e.g. a CRD renamed/removed upstream).
+    tree.delete(projectRoot);
   }
 
   let provenance = `# Source: ${options.from}`;
@@ -303,6 +325,8 @@ export default async function importCrdGenerator(
     // Nx project. Strip it so models/ stays part of this package.
     rmSync(join(pkgAbs, 'models', 'kcl.mod'), { force: true });
     rmSync(join(pkgAbs, 'models', 'kcl.mod.lock'), { force: true });
+
+    writeProviderReadme(tree.root, projectRoot, name, provenance.replace(/^# Source: /, ''));
 
     // Generated CRD schemas import the `k8s` module (for ObjectMeta). Pin it:
     // a bare `kcl mod add k8s` takes whatever is newest the day the package is

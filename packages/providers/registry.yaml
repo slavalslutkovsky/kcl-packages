@@ -15,7 +15,7 @@
 #
 # Fields
 #   name      schema package directory under packages/providers/
-#   cloud     aws | gcp | azure | kubernetes (in-cluster, no cloud account)
+#   cloud     aws | gcp | azure | oci | kubernetes (in-cluster, no cloud account)
 #   service   --service filter passed to nx-kcl:import-crd ("" = every CRD)
 #   image     provider OCI image WITHOUT the tag (image-sourced rows)
 #   tag       image tag — this is the version the schemas were generated from
@@ -112,10 +112,11 @@ providers:
     service: iam
     image: ghcr.io/crossplane-contrib/provider-aws-iam
     tag: v2.6.0
-    modules: [cluster, iam, serverless, workload-identity]
+    modules: [cluster, iam, serverless, workflow, workload-identity]
     notes: >-
       Shared: EKS clusters cannot exist without their IAM roles, and Lambda
-      needs an execution role, so cluster and serverless compose IAM too.
+      and Step Functions need an execution role, so cluster, serverless and
+      workflow compose IAM too.
 
   - name: aws-kms
     cloud: aws
@@ -208,6 +209,17 @@ providers:
       family (Cluster)ProviderConfig CRDs and every SESv2 MR sits with no
       status conditions at all. The schemas are identical either way.
 
+  - name: aws-sfn
+    cloud: aws
+    service: sfn
+    image: ghcr.io/crossplane-contrib/provider-aws-sfn
+    tag: v2.6.0
+    modules: [workflow]
+    notes: >-
+      Step Functions: the workflow backend composes one StateMachine from an
+      Amazon States Language definition. Activity (worker-polled task tokens)
+      is left to the workers that poll it.
+
   - name: aws-sqs
     cloud: aws
     service: sqs
@@ -216,6 +228,19 @@ providers:
     modules: [queue]
 
   # ── gcp ─────────────────────────────────────────────────────────────────────
+  - name: gcp-accesscontextmanager
+    cloud: gcp
+    service: accesscontextmanager
+    image: ghcr.io/crossplane-contrib/provider-gcp-accesscontextmanager
+    tag: v2.6.0
+    modules: []
+    notes: >-
+      VPC Service Controls (accesscontextmanager.googleapis.com): AccessPolicy
+      (the org-level container), AccessLevel/AccessLevelCondition (context-aware
+      access conditions), and ServicePerimeter/ServicePerimeterResource (the
+      perimeter itself and its per-project membership). Schemas only — no
+      Composition composes these yet; see docs/organization.md's gaps table.
+
   - name: gcp-apigee
     cloud: gcp
     service: apigee
@@ -351,6 +376,16 @@ providers:
     tag: v2.6.0
     modules: [bucket, landing]
 
+  - name: gcp-workflows
+    cloud: gcp
+    service: workflows
+    image: ghcr.io/crossplane-contrib/provider-gcp-workflows
+    tag: v2.6.0
+    modules: [workflow]
+    notes: >-
+      GCP Workflows — the family ships exactly one kind, Workflow, which
+      carries the whole YAML/JSON source in forProvider.sourceContents.
+
   # ── azure ───────────────────────────────────────────────────────────────────
   - name: azure-apimanagement
     cloud: azure
@@ -429,6 +464,18 @@ providers:
       a Vault per EncryptionKey and the Key inside it, with RBAC authorization
       (the provider identity needs "Key Vault Crypto Officer").
 
+  - name: azure-logic
+    cloud: azure
+    service: logic
+    image: ghcr.io/crossplane-contrib/provider-azure-logic
+    tag: v2.6.0
+    modules: [workflow]
+    notes: >-
+      Logic Apps (Consumption). Unlike the other clouds an AppWorkflow does not
+      carry its definition: every trigger and action is a separate
+      AppTriggerCustom / AppActionCustom MR, so the workflow backend splits the
+      definition JSON into one MR per entry.
+
   - name: azure-managedidentity
     cloud: azure
     service: managedidentity
@@ -466,6 +513,33 @@ providers:
     image: ghcr.io/crossplane-contrib/provider-azure-storage
     tag: v2.6.0
     modules: [bucket, landing]
+
+  # ── oci ─────────────────────────────────────────────────────────────────────
+  - name: oci-family
+    cloud: oci
+    image: ghcr.io/oracle/provider-family-oci
+    tag: v2.0.0
+    modules: [kms]
+    notes: >-
+      Oracle's family provider: it ships no managed resources, only the
+      oci.m.upbound.io (Cluster)ProviderConfig every OCI sub-provider
+      authenticates through. The sub-providers declare it as a dependency with
+      `>= 0.0.0`, which would let Crossplane resolve it to whatever is newest,
+      so it gets a row (and a pinned install) of its own. OCI takes the region
+      from the ProviderConfig's credentials, not from the resource — hence one
+      ClusterProviderConfig per region (see kms/xrd/providerconfigs.yaml).
+      `kcl import` buckets the v1beta1 schemas under models/unknown/.
+
+  - name: oci-kms
+    cloud: oci
+    service: kms
+    image: ghcr.io/oracle/provider-oci-kms
+    tag: v2.0.0
+    modules: [kms]
+    notes: >-
+      Oracle publishes the OCI providers on ghcr.io/oracle, not under
+      crossplane-contrib; the kms group is still v1alpha1 at v2.0.0, so `kcl
+      import` buckets it under models/unknown/. Requires oci-family.
 
   # ── kubernetes (in-cluster backends) ────────────────────────────────────────
   - name: helm
@@ -603,6 +677,23 @@ providers:
       of the component module. The helm-controller versions independently of
       the source and kustomize controllers, hence the different `ref`.
 
+  - name: argocd
+    cloud: kubernetes
+    repo: argoproj/argo-cd
+    ref: v3.5.3
+    crdPath: manifests/crds
+    scope: cluster
+    install: none
+    modules: [gitops]
+    notes: >-
+      Argo CD CRDs (Application, ApplicationSet, AppProject), not a Crossplane
+      provider: the gitops package renders an argoproj.io/v1alpha1 AppProject +
+      Application instead of the Flux GitRepository + Kustomization when
+      `engine: argocd`. Nothing in this repo installs Argo CD — the cluster
+      must already run it at this ref. No `service` filter: the files are
+      named <kind>-crd.yaml, not <group>_<plural>.yaml, and the whole
+      directory is the one argoproj.io group.
+
   - name: chaos-mesh
     cloud: kubernetes
     service: chaos-mesh
@@ -614,15 +705,39 @@ providers:
     modules: [app, manager]
     notes: >-
       Operator CRDs, not a Crossplane provider: the app package renders
-      chaos-mesh.org/v1alpha1 PodChaos / NetworkChaos / StressChaos (or a
-      Schedule wrapping one) directly against a Workload's own pods, and the
-      manager package renders the same kinds with a free selector plus
-      Workflows for orchestrated runs. Chaos
+      chaos-mesh.org/v1alpha1 PodChaos / NetworkChaos / StressChaos /
+      HTTPChaos / IOChaos / DNSChaos / TimeChaos (or a Schedule wrapping one)
+      directly against a Workload's own pods, and the manager package renders
+      the same kinds with a free selector plus Workflows for orchestrated
+      runs. Chaos
       Mesh itself is installed by the chaos-mesh helm chart in devkit.toml —
       keep `ref` in step with the chart version pinned there. `service` is
       the API group: every CRD file is chaos-mesh.org_<plural>.yaml, so the
       whole group is imported; packages/providers/crds.yaml says which kinds
       are rendered.
+
+  - name: prometheus-operator
+    cloud: kubernetes
+    service: monitoring.coreos.com_servicemonitors,monitoring.coreos.com_podmonitors,monitoring.coreos.com_prometheusrules
+    repo: prometheus-operator/prometheus-operator
+    ref: v0.85.0
+    crdPath: example/prometheus-operator-crd
+    scope: cluster
+    install: none
+    modules: [app]
+    notes: >-
+      Operator CRDs, not a Crossplane provider: the app package renders
+      monitoring.coreos.com/v1 ServiceMonitor / PodMonitor / PrometheusRule
+      from a Workload's `monitoring:` block. The operator comes with the
+      kube-prometheus-stack chart the manager package installs (chart 77.5.0
+      ships operator v0.85.0) — keep `ref` in step with that chart. Generated
+      here rather than taken from the kcl-lang `prometheus` module, whose
+      0.2.1 schemas do not parse (unquoted matchPattern regexes). `service`
+      names the three CRD files the app renders instead of the whole group:
+      `kcl import` translates the ScrapeConfig CRD into a schema named `str`,
+      which breaks the package, and Prometheus/Alertmanager/ThanosRuler are
+      the operator's own concern. `kcl import` puts every schema under
+      models/unknown; renderers import that directory as one package.
 
   - name: cert-manager
     cloud: kubernetes

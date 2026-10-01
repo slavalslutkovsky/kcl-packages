@@ -4,9 +4,11 @@ GitOps for a self-hosted forge — typed schemas + renderers.
 One values file closes the loop between a seed repository on GitHub and a
 Forgejo instance this platform runs:
 
-  1. Flux reads the cluster's desired state from the seed repo
-     (`source.origin: github`) — a GitRepository + Kustomization in
-     `namespace` (flux-system by default).
+  1. A GitOps engine reads the cluster's desired state from the seed repo
+     (`source.origin: github`). `engine` picks which one: `flux` (default)
+     renders a GitRepository + Kustomization, `argocd` an AppProject +
+     Application — either way in `namespace` (flux-system / argocd by
+     default).
   2. What that state contains is rendered here too: the tenant Namespace, the
      cluster-scoped `Entitlement` that unlocks the paid capabilities, and the
      `Forge` XR that installs Forgejo through provider-helm.
@@ -14,9 +16,9 @@ Forgejo instance this platform runs:
      repositories INSIDE the forge over its REST API — including the gitops
      repo itself.
   4. Once the history has been pushed into the forge, flip
-     `source.origin: forge`: the very same values file now points the
-     GitRepository at the in-cluster clone URL instead of GitHub, and the
-     cluster reconciles from the forge it runs.
+     `source.origin: forge`: the very same values file now points the engine
+     at the in-cluster clone URL instead of GitHub, and the cluster reconciles
+     from the forge it runs.
 
 Nothing here mirrors git history: neither the `Forge` nor the `Repository`
 capability can pull commits from GitHub (the Repository XRD models create /
@@ -40,6 +42,8 @@ Rendered like `app`, `manager` and `cncf`:
 import k8s.api.core.v1 as corev1
 import flux_source.models.v1.source_toolkit_fluxcd_io_v1_git_repository as gitrepo
 import flux_kustomize.models.v1.kustomize_toolkit_fluxcd_io_v1_kustomization as kustomization
+import argocd.models.v1alpha1.argoproj_io_v1alpha1_app_project as appproject
+import argocd.models.v1alpha1.argoproj_io_v1alpha1_application as application
 
 # The group both capabilities are served under (packages/cloud/*/xrd/xrd.yaml).
 cloud_api_version = "cloud.example.org/v1alpha1"
@@ -51,6 +55,14 @@ platform_api_version = "platform.example.org/v1alpha1"
 # built from it, so it is spelled once.
 http_service_suffix = "-http"
 http_port = 3000
+
+# Where an Argo CD Application deploys: the cluster Argo CD itself runs in,
+# which is also where the Flux Kustomization applies.
+in_cluster_server = "https://kubernetes.default.svc"
+
+# Deleting the Application deletes what it deployed, the way deleting a
+# pruning Kustomization garbage-collects its inventory.
+argocd_cascade_finalizer = "resources-finalizer.argocd.argoproj.io"
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
 schema Quota:
@@ -200,29 +212,41 @@ schema Repository:
 
 schema Source:
     """
-    Where Flux reads the cluster's desired state from, and the one switch that
-    closes the loop: `github` follows `url`, `forge` follows the in-cluster
-    clone URL of the `repository` entry below.
+    Where the GitOps engine reads the cluster's desired state from, and the
+    one switch that closes the loop: `github` follows `url`, `forge` follows
+    the in-cluster clone URL of the `repository` entry below.
     """
     origin: "github" | "forge" = "github"
 
     # The seed repository. Required for origin `github`; kept (and ignored)
     # after the switch so the way back is one word, not an edit.
     url?: str
+    # Flux: GitRepository.spec.ref.branch. Argo CD: Application targetRevision.
     branch: str = "main"
-    # Directory inside the repository the Kustomization applies.
+    # Directory inside the repository the engine applies.
     path: str = "./clusters/dev"
-    # How often the source is polled, and how often the Kustomization runs.
+
+    # Flux only: how often the source is polled, and how often the
+    # Kustomization runs. Argo CD polls on its controller-wide
+    # `timeout.reconciliation` (argocd-cm) and has no per-Application interval.
     interval: str = "1m"
     reconcileInterval: str = "10m"
 
-    # Secret in `namespace` with the git credential. Private on both origins:
-    # basic-auth (username/password) for GitHub with a PAT, and the same shape
-    # for Forgejo. Flux never reads the forge's `authorization` Secret.
+    # Flux only: Secret in `namespace` with the git credential. Private on
+    # both origins: basic-auth (username/password) for GitHub with a PAT, and
+    # the same shape for Forgejo. Flux never reads the forge's `authorization`
+    # Secret. Argo CD matches credentials to a repository by URL, never by
+    # name — `engine: argocd` rejects this field (see Gitops).
     secretRef?: str
+    # Flux: Kustomization prune. Argo CD: automated prune plus the cascade
+    # finalizer, so deleting the Application garbage-collects like Flux does.
     prune: bool = True
+
+    # Flux only: Kustomization wait / timeout. Argo CD always waits for health
+    # between sync waves.
     wait: bool = True
     timeout: str = "5m"
+
     # Which `repositories` entry to follow once origin is `forge`.
     repository?: str
 
@@ -235,20 +259,26 @@ schema Gitops:
     """
     The whole loop in one object. `render()` emits, in apply order: the tenant
     Namespace, the Entitlement, the Forge XR, one Repository XR per entry, and
-    the Flux GitRepository + Kustomization that reconcile the cluster.
+    the engine's pair that reconciles the cluster — Flux GitRepository +
+    Kustomization, or Argo CD AppProject + Application.
     """
-    # Names the Flux objects and labels everything app.kubernetes.io/part-of.
+    # Names the engine objects and labels everything app.kubernetes.io/part-of.
     name: str = "gitops"
 
-    # Where the Flux objects live. The Forge and its repositories live in
-    # `tenant.namespace` instead.
-    namespace: str = "flux-system"
+    # Which GitOps engine reconciles the cluster. It must already be running:
+    # nothing here installs Flux or Argo CD.
+    engine: "flux" | "argocd" = "flux"
+
+    # Where the engine objects live — the namespace the engine watches. The
+    # Forge and its repositories live in `tenant.namespace` instead.
+    namespace: str = "argocd" if engine == "argocd" else "flux-system"
     tenant: Tenant
     source: Source
     forge: Forge
     repositories: [Repository] = []
 
     check:
+        engine != "argocd" or not source.secretRef, "source.secretRef is Flux-only: Argo CD matches credentials by repository URL, not by name. Drop it and create a Secret in ${namespace} labelled argocd.argoproj.io/secret-type=repository carrying url (the repository Argo CD clones), username and password"
         len(repositories) <= tenant.quota.repositories, "repositories: ${len(repositories)} exceeds the tenant's quota.repositories (${tenant.quota.repositories})"
         forge.storageGb <= tenant.quota.storageGb, "forge.storageGb ${forge.storageGb} exceeds the tenant's quota.storageGb (${tenant.quota.storageGb})"
         not repositories or "repository" in tenant.features, "tenant.features must grant `repository` to manage repositories inside the forge"
@@ -285,8 +315,8 @@ cloneUrl = lambda g: Gitops, r: Repository -> str {
 
 sourceUrl = lambda g: Gitops -> str {
     """
-    What Flux clones: the seed repository, or — after the switch — the forge's
-    own copy of it.
+    What the engine clones: the seed repository, or — after the switch — the
+    forge's own copy of it.
     """
     _followed = [r for r in g.repositories if r.name == g.source.repository]
     cloneUrl(g, _followed[0]) if g.source.origin == "forge" else g.source.url
@@ -302,6 +332,14 @@ _namespace = lambda g: Gitops -> corev1.Namespace {
     }
 }
 
+schema Shared:
+    name: str
+    namespace?: str = "aris"
+
+schema Datas(Shared):
+    len: int
+
+#list: list()
 _entitlement = lambda g: Gitops -> any {
     """
     The paid-feature record the Forge and Repository Compositions FETCH at
@@ -489,11 +527,64 @@ _kustomization = lambda g: Gitops -> any {
     })
 }
 
+_appProject = lambda g: Gitops -> any {
+    """
+    The Argo CD project the Application belongs to. It admits exactly the one
+    repository `sourceUrl` resolves to — after the forge switch, the
+    in-cluster clone and nothing else — and, like the Flux Kustomization,
+    any namespace and any cluster-scoped kind on the local cluster.
+    """
+    _emit(appproject.AppProject {
+        metadata = {
+            name = g.name
+            namespace = g.namespace
+            labels = _labels(g)
+        }
+        spec = {
+            description = "${g.name}: cluster state reconciled from ${sourceUrl(g)}"
+            sourceRepos = [sourceUrl(g)]
+            destinations = [{server = in_cluster_server, namespace = "*"}]
+            clusterResourceWhitelist = [{group = "*", kind = "*"}]
+        }
+    })
+}
+
+_application = lambda g: Gitops -> any {
+    """What Argo CD syncs out of that repository, automatically."""
+    _emit(application.Application {
+        metadata = {
+            name = g.name
+            namespace = g.namespace
+            labels = _labels(g)
+            if g.source.prune:
+                finalizers = [argocd_cascade_finalizer]
+        }
+        spec = {
+            project = g.name
+            source = {
+                repoURL = sourceUrl(g)
+                targetRevision = g.source.branch
+                path = g.source.path
+            }
+            destination.server = in_cluster_server
+            syncPolicy.automated = {
+                prune = g.source.prune
+                selfHeal = True
+            }
+        }
+    })
+}
+
+_engine = lambda g: Gitops -> [any] {
+    """The pair that keeps the cluster reconciled, for the chosen engine."""
+    [_appProject(g), _application(g)] if g.engine == "argocd" else [_gitRepository(g), _kustomization(g)]
+}
+
 render = lambda g: Gitops -> [any] {
     """
     Every object, in apply order: the tenant namespace and its grant first
     (the Compositions read the grant), then the forge, then the repositories
-    inside it, then the Flux objects that keep the whole thing reconciled.
+    inside it, then the engine objects that keep the whole thing reconciled.
     """
-    ([_namespace(g)] if g.tenant.createNamespace else []) + ([_entitlement(g)] if g.tenant.manageEntitlement else []) + [_forge(g)] + [_repository(g, r) for r in g.repositories] + [_gitRepository(g), _kustomization(g)]
+    ([_namespace(g)] if g.tenant.createNamespace else []) + ([_entitlement(g)] if g.tenant.manageEntitlement else []) + [_forge(g)] + [_repository(g, r) for r in g.repositories] + _engine(g)
 }

@@ -10,6 +10,36 @@
 # ProviderConfig of your own with `credentials.source: Secret` (or IRSA /
 # Workload Identity / a federated Azure identity) before using them.
 #
+# ─── OCI: one ClusterProviderConfig per region ────────────────────────────────
+#
+# The OCI provider has no per-resource region: it signs every call for the
+# region in its credentials. The oci backend therefore binds each managed
+# resource to the ClusterProviderConfig named `oci-<spec.region>`, and you
+# create one such config (and credentials Secret) per region you use. The
+# group/kind below are from provider-family-oci v2.0.0's CRDs. The Secret holds
+# a JSON object under `credentials`, with the API signing key's PEM inlined
+# (jq does the escaping):
+#
+#   kubectl create secret generic oci-creds -n crossplane-system \
+#     --from-literal=credentials="$(jq -n --rawfile key ~/.oci/oci_api_key.pem '{
+#       tenancy_ocid: "ocid1.tenancy.oc1..…", user_ocid: "ocid1.user.oc1..…",
+#       fingerprint: "aa:bb:…", private_key: $key,
+#       region: "il-jerusalem-1", auth: "ApiKey"}')"
+#
+# Left commented out because it needs real credentials:
+#
+# apiVersion: oci.m.upbound.io/v1beta1
+# kind: ClusterProviderConfig
+# metadata:
+#   name: oci-il-jerusalem-1
+# spec:
+#   credentials:
+#     source: Secret
+#     secretRef:
+#       namespace: crossplane-system
+#       name: oci-creds
+#       key: credentials
+#
 # ─── The OpenBao server ───────────────────────────────────────────────────────
 #
 # provider-vault talks to an existing OpenBao (or Vault) API; it cannot install

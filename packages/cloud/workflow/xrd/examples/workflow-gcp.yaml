@@ -1,0 +1,30 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Workflow
+metadata:
+  namespace: default
+  name: order-fulfilment
+spec:
+  region: europe-west1
+  # GCP Workflows syntax, verbatim -> forProvider.sourceContents.
+  definition: |
+    main:
+      params: [input]
+      steps:
+        - reserve:
+            call: http.post
+            args:
+              url: https://inventory.example.com/reserve
+              auth:
+                type: OIDC
+              body: ${input}
+            result: reservation
+        - done:
+            return: ${reservation.body}
+  serviceAccount: orders-wf@my-project.iam.gserviceaccount.com   # unset -> project default SA
+  deletionPolicy: Delete
+  tags:                           # -> labels
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp             # the flag: picks the backend (aws | gcp | azure)

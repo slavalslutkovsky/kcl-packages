@@ -226,6 +226,9 @@ schema Experiment(app.Fault):
     """An `app.Fault` with an explicit target instead of a workload. Same types, same knobs, same `schedule`."""
     target: Target
 
+    check:
+        $type not in ["http-abort", "http-delay"] or port, "experiment ${name}: an HTTP fault needs the `port` the target pods serve on — there is no workload here to take it from"
+
 schema Step(app.Fault):
     """
     One step of a Workflow: an `app.Fault` run for `duration` against `target`
@@ -236,6 +239,7 @@ schema Step(app.Fault):
 
     check:
         not schedule, "step ${name}: a workflow step cannot have a schedule; put the cron on the Workflow via chaos.experiments instead"
+        $type not in ["http-abort", "http-delay"] or port, "step ${name}: an HTTP fault needs the `port` the target pods serve on — there is no workload here to take it from"
 
 schema Workflow:
     """
@@ -491,7 +495,7 @@ _experiment = lambda m: Manager, e: Experiment -> any {
 _stepTemplate = lambda w: Workflow, s: Step -> {str:} {
     _kind = app.faultKind(s)
     _spec = {k: v for k, v in app.faultSpec(s, _selector(s.target or w.target)) if k != "duration"}
-    {name = s.name, templateType = _kind, deadline = s.duration} | ({podChaos = _spec} if _kind == "PodChaos" else {networkChaos = _spec} if _kind == "NetworkChaos" else {stressChaos = _spec})
+    {name = s.name, templateType = _kind, deadline = s.duration} | {"${app.faultEmbedKey(s)}" = _spec}
 }
 
 _workflow = lambda m: Manager, w: Workflow -> cmworkflow.Workflow {

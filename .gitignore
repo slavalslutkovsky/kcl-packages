@@ -2,9 +2,10 @@ node_modules/
 dist/
 .nx/
 *.tar
-oci/
+# Root-only: an unanchored `oci/` also hid the kms oci backend package.
+/oci/
 .env
-
+./.idea
 .claude/worktrees
 # per-developer overrides; .claude/settings.json and the skills/hooks are shared
 .claude/settings.local.json

@@ -1,0 +1,49 @@
+# devkit config for the landing-zone control plane. devkit discovers the
+# nearest devkit.toml walking up from $PWD, so running it from this directory
+# shadows the repo root's file (docs/devkit.md, "Shadow it with a nearer
+# devkit.toml"):
+#
+#   cd manifests/landing-zone
+#   devkit cluster create          # kind, API-server issuer pinned to GCS
+#   devkit cluster setup --flux    # FluxInstance -> the gitops repo below
+#
+# From there nothing is installed by helm CLI or `devkit cluster deps`: Flux
+# owns the cluster, and what it installs is
+# gitops/clusters/devkit — role `zone` (addon baseline + Crossplane) plus the
+# `landing-zone` package (GCP provider families, the XRD and Composition of
+# THIS repository's packages/cloud/organization, and the Organization XR).
+# There is deliberately no [[deps]] row: a chart or a CRD must have one owner,
+# and here that owner is Flux.
+#
+# The whole flow, its GCP prerequisites and the handover to a real cluster:
+# gitops/docs/landing-zone.md.
+
+[cluster]
+name = "landing-zone"       # not kcl-e2e: `just e2e-down` must never touch this one
+workers = 1
+db_workers = 0
+ingress = false             # nothing here serves traffic; it talks OUT to GCP
+
+# Keyless access to GCP. These two values pin the API server's service-account
+# issuer to https://storage.googleapis.com/<oidc_bucket>/<oidc_id>, which is
+# what makes this cluster's projected tokens verifiable by Google's STS — so
+# Crossplane authenticates by Workload Identity Federation instead of a
+# downloaded service-account key. The same URL must be the OIDC_ISSUER in
+# gitops/clusters/devkit/cluster-config.yaml, and the discovery documents must
+# actually be published in that bucket path.
+[cluster.kcl_args]          # MUST sit directly after [cluster]'s scalar keys
+oidc_bucket = "my-oidc-bucket"
+oidc_id = "arus-dev"
+
+# The repository this cluster reconciles. `path` is the cluster root: it is the
+# only per-cluster directory in that repo, and it selects the role and the
+# packages above.
+[flux]
+owner = "yurikrupnik-org"
+repository = "gitops"
+branch = "main"
+path = "clusters/devkit"
+personal = false
+
+[tilt]
+enabled = false

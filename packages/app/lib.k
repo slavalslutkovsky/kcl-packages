@@ -7,11 +7,18 @@ Two archetypes, one package:
     ScaledObject, which also does scale-to-zero and event-driven triggers).
     Backend and frontend are the SAME archetype with different field values
     (e.g. prometheus on/off, nginx volumes, uid/gid).
-  • Task → run-to-completion CLI apps: a batch/v1 Job, or a CronJob when `schedule`
-    is set. Reuses the same container atoms (env/envFrom/security) as Workload.
+  • Task → run-to-completion CLI apps: a batch/v1 Job, a CronJob when `schedule`
+    is set, or a KEDA ScaledJob when `scaler` is (Jobs per pending work item).
+    Reuses the same container atoms (env/envFrom/security) as Workload.
+
+Around either: an optional `serviceAccount` (ServiceAccount, cloud workload
+identity annotation, namespaced Role + RoleBinding); for a Workload also a
+PodDisruptionBudget and `monitoring` (ServiceMonitor / PodMonitor,
+PrometheusRule, Grafana dashboard ConfigMaps for kube-prometheus-stack).
 
 Core resources use the typed `k8s` package, ExternalSecret the typed
-`external-secrets` package, and chaos experiments the `chaos-mesh` schema
+`external-secrets` package, KEDA and Prometheus Operator objects the `keda` /
+`prometheus` packages, and chaos experiments the `chaos-mesh` schema
 package (packages/providers/chaos-mesh), so rendered output is checked against
 the real Kubernetes / CRD APIs. The usual path is a Helm-style values.yaml that
 is a `Release` (a `workload:` or `task:` + optional `config:`/`externalSecret:`),
@@ -20,10 +27,11 @@ rendered by the package's own main.k with no local main.k needed. In code:
 the lower-level `app.render(w)` / `app.renderTask(t)`. See examples/.
 
 Chaos engineering: a Workload's `chaos:` is a list of `Fault`s, each rendered
-as a Chaos Mesh experiment (PodChaos / NetworkChaos / StressChaos, or a
-Schedule around one) pinned to that workload's own pods. Chaos Mesh over
-Litmus because its experiments are self-contained CRs: no per-experiment
-ChaosExperiment install from a hub, no chaos ServiceAccount per namespace.
+as a Chaos Mesh experiment (PodChaos / NetworkChaos / StressChaos / HTTPChaos /
+IOChaos / DNSChaos / TimeChaos, or a Schedule around one) pinned to that
+workload's own pods. Chaos Mesh over Litmus because its experiments are
+self-contained CRs: no per-experiment ChaosExperiment install from a hub, no
+chaos ServiceAccount per namespace.
 
 Backstage: a `catalog:` block turns the same values file into catalog entities
 (`-D catalog=true` renders a Component, plus an API per `catalog.apis`), and
@@ -33,16 +41,33 @@ autoscaler AND its chaos experiments on one component page.
 """
 
 import regex
+import json
+import crypto
 import k8s.api.apps.v1 as appsv1
 import k8s.api.core.v1 as corev1
 import k8s.api.autoscaling.v2 as autoscalingv2
 import k8s.api.batch.v1 as batchv1
+import k8s.api.policy.v1 as policyv1
+import k8s.api.rbac.v1 as rbacv1
 import external_secrets.v1 as esv1
 import keda.v1alpha1 as keda
+import prometheus_operator.models.unknown as promop
 import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_pod_chaos as cmpod
 import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_network_chaos as cmnet
 import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_stress_chaos as cmstress
+import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_http_chaos as cmhttp
+import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_i_o_chaos as cmio
+import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_dns_chaos as cmdns
+import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_time_chaos as cmtime
 import chaos_mesh.models.v1alpha1.chaos_mesh_org_v1alpha1_schedule as cmschedule
+
+schema Dam:
+    resources: [any]
+    name: str
+
+#_es: esv1.ExternalSecret
+#_keda: keda.ScaledObject
+#_res: [appsv1.Deployment | corev1.Service]
 
 # ── Component schemas ────────────────────────────────────────────────────────
 schema Probe:
@@ -78,16 +103,79 @@ schema Hpa:
     cpu: int = 70
     memory: int = 80
 
-schema Scaler:
+schema Trigger:
+    """
+    One KEDA trigger (nats-jetstream, prometheus, gcp-pubsub, kafka, cron, …),
+    passed to the ScaledObject / ScaledJob as written. `auth` names an entry of
+    the same scaler's `authentications`, so a trigger never spells out the
+    rendered TriggerAuthentication name; `authenticationRef` points at one that
+    exists outside this release instead (kind: ClusterTriggerAuthentication for
+    a shared one).
+    """
+    $type: str
+    metadata: {str:str} = {}
+    name?: str
+    metricType?: "AverageValue" | "Value" | "Utilization"
+    useCachedMetrics?: bool
+    auth?: str
+    authenticationRef?: {str:str}
+
+    check:
+        not (auth and authenticationRef), "trigger ${$type}: `auth` (an entry of `authentications`) and `authenticationRef` (an existing object) are two ways to say the same thing — pick one"
+
+schema SecretParam:
+    """A trigger parameter read from a key of a Secret in the workload's namespace."""
+    parameter: str
+    name: str
+    key: str
+
+schema EnvParam:
+    """A trigger parameter read from an env var of the scaled container."""
+    parameter: str
+    name: str
+    containerName?: str
+
+schema TriggerAuth:
+    """
+    A KEDA TriggerAuthentication, rendered as "<workload>-<name>": where a
+    trigger's credentials come from, so none is ever written into the trigger
+    metadata. `podIdentity` makes the KEDA operator authenticate as its own
+    cloud identity (no secret at all) — `azure-workload`, `aws` or `gcp`.
+    """
+    name: str
+    secrets: [SecretParam] = []
+    env: [EnvParam] = []
+    podIdentity?: "azure-workload" | "aws" | "gcp"
+    # podIdentity: the client id / role ARN to assume instead of the operator's own
+    identityId?: str
+
+    check:
+        secrets or env or podIdentity, "authentication ${name}: needs `secrets`, `env` or `podIdentity` — an empty TriggerAuthentication authenticates nothing"
+        podIdentity or not identityId, "authentication ${name}: identityId only applies with podIdentity"
+
+schema Triggers:
+    """What a KEDA ScaledObject and ScaledJob share: triggers, and the TriggerAuthentications they use."""
+    triggers: [Trigger] = []
+    authentications: [TriggerAuth] = []
+
+    check:
+        len(authentications) == len({a.name: 1 for a in authentications}), "authentication names must be unique"
+        all t in triggers {not t.auth or t.auth in [a.name for a in authentications]}, "every trigger `auth` must name an entry of `authentications`: ${[t.auth for t in triggers if t.auth]} vs ${[a.name for a in authentications]}"
+
+schema Fallback:
+    """KEDA fallback: the replica count to hold after `failureThreshold` consecutive failed metric reads."""
+    failureThreshold: int = 3
+    replicas: int
+
+schema Scaler(Triggers):
     """
     KEDA ScaledObject (preferred over native HPA — a superset that also does
     scale-to-zero and event-driven triggers).
 
     Convenience: `cpu`/`memory` become KEDA cpu/memory utilization triggers.
-    `triggers` is passthrough for any KEDA scaler (nats-jetstream, prometheus,
-    cron, kafka, …): each item = {type, metadata:{..}, metricType?, name?}.
-    Set `minReplicas = 0` for scale-to-zero. At least one of cpu/memory/triggers
-    must be present.
+    `triggers` is any KEDA scaler: each item = {type, metadata:{..}, metricType?,
+    name?, auth?}. Set `minReplicas = 0` for scale-to-zero. At least one of
+    cpu/memory/triggers must be present.
     """
     minReplicas: int = 1
     maxReplicas: int = 10
@@ -95,8 +183,6 @@ schema Scaler:
     cpu?: int
     # → KEDA memory trigger, Utilization %
     memory?: int
-    # passthrough KEDA triggers
-    triggers: [{str:}] = []
     pollingInterval?: int
     cooldownPeriod?: int
     # → idleReplicaCount: replicas while every trigger is inactive; KEDA only
@@ -104,42 +190,73 @@ schema Scaler:
     idleReplicas?: int
     # → advanced.horizontalPodAutoscalerConfig.behavior
     behavior?: {str:}
+    fallback?: Fallback
+    # → autoscaling.keda.sh/paused: KEDA stops scaling and leaves the current
+    # replica count alone until the annotation is gone
+    paused: bool = False
 
     check:
         cpu or memory or triggers, "Scaler needs at least one of cpu, memory, or triggers"
         idleReplicas == Undefined or idleReplicas < minReplicas, "idleReplicas (${idleReplicas}) must be below minReplicas (${minReplicas}); KEDA supports only 0"
+        not fallback or not (cpu or memory), "KEDA rejects `fallback` next to cpu/memory triggers: the fallback replaces an external metric, and those are resource metrics"
+        not fallback or all t in triggers {t.metricType == Undefined or t.metricType == "AverageValue"}, "KEDA applies `fallback` only to AverageValue triggers"
+
+schema JobScaler(Triggers):
+    """
+    KEDA ScaledJob: instead of one Job, KEDA starts Jobs from the Task's
+    template as the triggers report pending work (a queue backlog, a
+    subscription), up to `maxReplicas` at once, and none while idle.
+    """
+    minReplicas: int = 0
+    maxReplicas: int = 100
+    pollingInterval?: int
+    # → scalingStrategy.strategy: how pending work maps to new Jobs
+    strategy: "default" | "custom" | "accurate" | "eager" = "default"
+
+    check:
+        triggers, "a ScaledJob needs at least one trigger: it has nothing else to count work with"
 
 schema Fault:
     """
     One Chaos Mesh fault injected into this workload's own pods. The selector is
     always `app=<name>` in the workload's namespace — a Fault never carries one,
     so its blast radius is exactly this workload. `type` picks the experiment:
-      pod-kill | pod-failure | container-kill  → PodChaos
-      delay | loss | partition                 → NetworkChaos
-      cpu | memory                             → StressChaos
+      pod-kill | pod-failure | container-kill                      → PodChaos
+      delay | loss | partition | bandwidth | corrupt | duplicate   → NetworkChaos
+      cpu | memory                                                 → StressChaos
+      http-abort | http-delay                                      → HTTPChaos
+      io-latency | io-fault                                        → IOChaos
+      dns-error | dns-random                                       → DNSChaos
+      time-skew                                                    → TimeChaos
     Without `schedule` it is a one-shot experiment that runs for `duration` as
     soon as it is applied (pod-kill is instantaneous). With `schedule` (cron)
     it is wrapped in a Chaos Mesh Schedule and recurs.
     """
     # → "<workload>-<name>"
     name: str
-    $type: "pod-kill" | "pod-failure" | "container-kill" | "delay" | "loss" | "partition" | "cpu" | "memory"
+    $type: "pod-kill" | "pod-failure" | "container-kill" | "delay" | "loss" | "partition" | "bandwidth" | "corrupt" | "duplicate" | "cpu" | "memory" | "http-abort" | "http-delay" | "io-latency" | "io-fault" | "dns-error" | "dns-random" | "time-skew"
     # how many of the workload's pods are hit
     mode: "one" | "all" | "fixed" | "fixed-percent" | "random-max-percent" = "one"
     # fixed: pod count; fixed-percent / random-max-percent: 0-100
     value?: str
     duration: str = "30s"
-    # delay
+    # delay / http-delay / io-latency
     latency: str = "100ms"
     jitter?: str
     correlation?: str
-    # loss: percent of packets, 0-100
+    # loss / corrupt / duplicate: percent of packets, 0-100
     loss: str = "10"
+    corrupt: str = "10"
+    duplicate: str = "10"
+    # bandwidth: tc tbf rate, bucket size in bytes, queue limit in bytes
+    rate: str = "1mbps"
+    buffer: int = 10000
+    limit: int = 20971520
 
-    # delay / loss / partition: which traffic. Without a target Chaos Mesh only
+    # network types: which traffic. Without a target Chaos Mesh only
     # shapes outbound (`to`) traffic; a partition may also cut `from` / `both`.
     direction: "to" | "from" | "both" = "to"
-    # delay / loss / partition: only traffic to these IPs or hostnames (default: all)
+    # network types: only traffic to these IPs or hostnames (default: all)
     externalTargets?: [str]
     # cpu / memory: stress-ng workers
     workers: int = 1
@@ -147,7 +264,28 @@ schema Fault:
     load: int = 100
     # memory: per-worker allocation, e.g. "256MB" or "50%"
     size?: str
-    # container-kill / cpu / memory: default the workload's own container
+    # http-*: requests into the pod, or its responses; on which port (inside
+    # `app`: the workload's own), for which path / method (default: all)
+    httpTarget: "Request" | "Response" = "Request"
+    port?: int
+    # http-*: URL path; io-*: file glob inside the volume
+    path?: str
+    method?: str
+    # io-*: mount point of the volume to inject into (one volume per fault)
+    volumePath?: str
+    # io-fault: errno returned (5 = EIO)
+    errno: int = 5
+    # io-*: percent of matching calls that are hit
+    percent: int = 100
+    # io-*: syscalls to hit (read, write, open, …; default: all)
+    methods?: [str]
+    # dns-*: domain patterns (wildcards allowed; default: every lookup)
+    patterns?: [str]
+    # time-skew: offset added to the clock, e.g. "-10m" or "2h"
+    timeOffset: str = "-10m"
+    # time-skew: CLOCK_* ids (default CLOCK_REALTIME)
+    clockIds?: [str]
+    # container-kill / stress / io / dns / time: default the workload's own container
     containerNames?: [str]
     # cron → a Chaos Mesh Schedule instead of a one-shot experiment
     schedule?: str
@@ -160,9 +298,131 @@ schema Fault:
         mode in ["one", "all"] or value, "mode ${mode} needs `value` (a pod count or a percent)"
         direction == "to" or $type == "partition", "${$type} without a target can only shape outbound (`to`) traffic; use `partition` for from/both"
         $type != "partition" or direction == "to" or externalTargets, "a partition with direction ${direction} needs `externalTargets`"
+        $type not in ["io-latency", "io-fault"] or volumePath, "${$type} needs `volumePath`: the mount point of the volume Chaos Mesh hooks the syscalls of"
+        0 <= percent <= 100, "percent is a share of calls, 0-100: ${percent}"
+
+schema PolicyRule:
+    """One namespaced RBAC rule granted to the ServiceAccount: verbs on resources of API groups ("" = core)."""
+    apiGroups: [str] = [""]
+    resources: [str]
+    verbs: [str]
+    resourceNames?: [str]
+
+schema ServiceAccount:
+    """
+    The pod's identity. `create` (default) renders a ServiceAccount named after
+    the workload (or `name`); `create: false` only points the pod at one that
+    already exists. The API token is NOT mounted unless `automountToken` — an
+    app that never calls the API server should not carry a credential for it.
+
+    `cloud` + `identity` is the workload-identity shorthand, rendered as the
+    annotation each cloud's federation reads:
+      gcp   → iam.gke.io/gcp-service-account = <GSA email>
+      aws   → eks.amazonaws.com/role-arn = <IAM role ARN>
+      azure → azure.workload.identity/client-id = <managed identity client id>,
+              plus the azure.workload.identity/use pod label the webhook needs
+    `rules` → a Role + RoleBinding for this ServiceAccount alone, in the
+    workload's namespace; there is deliberately no cluster-scope variant.
+    """
+    create: bool = True
+    name?: str
+    automountToken: bool = False
+    annotations: {str:str} = {}
+    labels: {str:str} = {}
+    cloud?: "gcp" | "aws" | "azure"
+    identity?: str
+    imagePullSecrets: [str] = []
+    rules: [PolicyRule] = []
+
+    check:
+        (cloud == Undefined) == (identity == Undefined), "`cloud` and `identity` go together: the cloud says which annotation, the identity is its value"
+        create or not (annotations or labels or cloud or imagePullSecrets), "annotations / labels / cloud / imagePullSecrets describe a ServiceAccount this package creates; with `create: false` it is only referenced"
+
+schema DisruptionBudget:
+    """PodDisruptionBudget over the workload's pods: how many must survive a voluntary eviction (drain, upgrade). Exactly one of the two."""
+    minAvailable?: int | str
+    maxUnavailable?: int | str
+
+    check:
+        (minAvailable == Undefined) != (maxUnavailable == Undefined), "a disruption budget needs exactly one of minAvailable / maxUnavailable"
+
+schema AlertRule:
+    """One Prometheus alerting rule → an entry of the workload's PrometheusRule."""
+    alert: str
+    expr: str
+    $for: str = "5m"
+    severity: "critical" | "warning" | "info" = "warning"
+    summary?: str
+    description?: str
+    runbookUrl?: str
+    labels: {str:str} = {}
+
+schema Panel:
+    """A Grafana panel over one PromQL query; the datasource is the dashboard's `datasource` variable."""
+    title: str
+    expr: str
+    # legendFormat, e.g. "{{pod}}"
+    legend?: str
+    $type: "timeseries" | "stat" | "gauge" = "timeseries"
+    # Grafana unit id: short, percent, bytes, s, reqps, …
+    unit: str = "short"
+
+schema Dashboard:
+    """
+    A Grafana dashboard, shipped as a ConfigMap the Grafana sidecar
+    (kube-prometheus-stack) loads. Either `json` (a dashboard exported from
+    Grafana, used verbatim) or generated: the standard workload panels (replicas,
+    CPU, memory, restarts, scrape targets) followed by `panels`.
+    """
+    name: str
+    # default "<workload> / <name>"
+    title?: str
+    # → the sidecar's folder annotation
+    folder?: str
+    json?: str
+    standard: bool = True
+    panels: [Panel] = []
+
+    check:
+        not (json and panels), "dashboard ${name}: `json` is used verbatim, so `panels` would be ignored — pick one"
+        json or standard or panels, "dashboard ${name}: nothing to show — set `json`, `panels`, or keep `standard`"
+
+schema Monitoring:
+    """
+    Prometheus Operator objects for the workload (kube-prometheus-stack):
+      scrape       → a ServiceMonitor (through the Service) or a PodMonitor
+                     (the pods directly, no Service needed) on `portName` +
+                     `metricsPath`
+      defaultRules → alerts for scrape targets down, restarts and unavailable
+                     replicas (kube-state-metrics)
+      rules        → more alerts, in the same PrometheusRule
+      dashboards   → Grafana dashboards, one ConfigMap each
+    All queries are pinned to the workload's namespace, which is why
+    monitoring needs one — the same rule as `chaos:`.
+    """
+    kind: "ServiceMonitor" | "PodMonitor" = "ServiceMonitor"
+    scrape: bool = True
+    interval: str = "30s"
+    scrapeTimeout?: str
+    # What the Prometheus selectors match: kube-prometheus-stack selects
+    # monitors and rules by release=<helm release> unless its
+    # *SelectorNilUsesHelmValues are false.
+    labels: {str:str} = {release = "kube-prometheus-stack"}
+    defaultRules: bool = False
+    rules: [AlertRule] = []
+    dashboards: [Dashboard] = []
+    # Grafana sidecar discovery: the label it watches and its folderAnnotation
+    dashboardLabels: {str:str} = {grafana_dashboard = "1"}
+    folderAnnotation: str = "grafana_folder"
+    # default: the workload's namespace (the sidecar needs searchNamespace: ALL)
+    dashboardNamespace?: str
+
+    check:
+        scrape or defaultRules or rules or dashboards, "monitoring with nothing to render: enable `scrape`, `defaultRules`, or add `rules` / `dashboards`"
+        len(dashboards) == len({d.name: 1 for d in dashboards}), "dashboard names must be unique"
 
 schema Workload:
-    """A deployable long-running application: Deployment (+ Service, + optional HPA or KEDA ScaledObject, + Chaos Mesh faults)."""
+    """A deployable long-running application: Deployment (+ Service, ServiceAccount/RBAC, PodDisruptionBudget, HPA or KEDA ScaledObject, Prometheus monitors/rules/dashboards, Chaos Mesh faults)."""
     name: str = "app"
     namespace?: str
     component: str = "server"
@@ -189,6 +449,12 @@ schema Workload:
     terminationGracePeriodSeconds: int = 30
     service: bool = True
     serviceType: str = "ClusterIP"
+    # pod identity (+ namespaced RBAC); absent → the namespace's `default` SA
+    serviceAccount?: ServiceAccount
+    # PodDisruptionBudget over the pods
+    disruptionBudget?: DisruptionBudget
+    # ServiceMonitor / PodMonitor, PrometheusRule, Grafana dashboards (needs `namespace`)
+    monitoring?: Monitoring
     # native HPA (legacy; prefer `scaler`)
     hpa?: Hpa
     # KEDA ScaledObject (preferred)
@@ -202,9 +468,12 @@ schema Workload:
         not (hpa and scaler), "use either `hpa` (native) or `scaler` (KEDA), not both"
         not chaos or namespace, "chaos faults need an explicit `namespace`: the experiment selector is pinned to it"
         len(chaos) == len({f.name: 1 for f in chaos}), "chaos fault names must be unique"
+        not monitoring or namespace, "monitoring needs an explicit `namespace`: every query and selector is pinned to it"
+        not (monitoring and monitoring.scrape and monitoring.kind == "ServiceMonitor" and not service), "a ServiceMonitor scrapes through the Service, and `service` is false — use monitoring.kind: PodMonitor"
+        not (serviceAccount and serviceAccount.rules) or namespace, "serviceAccount.rules need an explicit `namespace`: a RoleBinding subject names the ServiceAccount's namespace"
 
 schema Task:
-    """A run-to-completion CLI workload: Job, or CronJob when `schedule` is set."""
+    """A run-to-completion CLI workload: Job, a CronJob when `schedule` is set, or a KEDA ScaledJob when `scaler` is."""
     name: str = "app"
     namespace?: str
     component: str = "job"
@@ -222,7 +491,10 @@ schema Task:
     envFrom: [EnvFrom] = []
     volumeMounts: [{str:}] = [{name = "tmp", mountPath = "/tmp"}]
     volumes: [{str:}] = [{name = "tmp", emptyDir = {}}]
-    serviceAccountName?: str
+    # pod identity (+ namespaced RBAC); absent → the namespace's `default` SA
+    serviceAccount?: ServiceAccount
+    # KEDA ScaledJob instead of a single Job: Jobs started per pending work item
+    scaler?: JobScaler
     # Job controls
     restartPolicy: "Never" | "OnFailure" = "Never"
     backoffLimit: int = 3
@@ -235,9 +507,14 @@ schema Task:
     concurrencyPolicy: "Allow" | "Forbid" | "Replace" = "Forbid"
     suspend?: bool
     startingDeadlineSeconds?: int
+    # CronJob / ScaledJob: finished Jobs kept
     successfulJobsHistoryLimit: int = 3
     failedJobsHistoryLimit: int = 1
     extraManifests: [{str:}] = []
+
+    check:
+        not (schedule and scaler), "a Task runs on a `schedule` (CronJob) or on pending work (`scaler`, a KEDA ScaledJob), not both"
+        not (serviceAccount and serviceAccount.rules) or namespace, "serviceAccount.rules need an explicit `namespace`: a RoleBinding subject names the ServiceAccount's namespace"
 
 schema ExternalSecretSpec:
     """A GCP/cloud ExternalSecret: `items` = [{secretKey, key, property}]."""
@@ -435,6 +712,63 @@ _container = lambda w: Workload -> {str:} {
     }
 }
 
+# ── Identity (ServiceAccount + RBAC) — shared by Workload and Task ───────────
+_saName = lambda owner: str, sa: ServiceAccount -> str {
+    sa.name or owner
+}
+
+# The annotation each cloud's workload-identity federation reads off the
+# ServiceAccount; the cloud side (GSA binding, IAM trust policy, federated
+# credential) is packages/cloud/workload-identity's job, not this package's.
+_identityAnnotation = {
+    gcp = "iam.gke.io/gcp-service-account"
+    aws = "eks.amazonaws.com/role-arn"
+    azure = "azure.workload.identity/client-id"
+}
+
+_saCloudAnnotations = lambda sa: ServiceAccount -> {str:str} {
+    {"${_identityAnnotation[sa.cloud]}" = sa.identity} if sa.cloud else {}
+}
+
+# Azure's mutating webhook only projects the federated token into pods that
+# carry this label; GKE and EKS need nothing on the pod.
+_saPodLabels = lambda sa: ServiceAccount -> {str:str} {
+    {"azure.workload.identity/use" = "true"} if sa.cloud == "azure" else {}
+}
+
+_saPodSpec = lambda owner: str, sa: ServiceAccount -> {str:} {
+    {serviceAccountName = _saName(owner, sa), automountServiceAccountToken = sa.automountToken}
+}
+
+_saObjects = lambda {
+    owner: str,
+    namespace: str,
+    labels: {str:str},
+    sa: ServiceAccount,
+} -> [any] {
+    _name = _saName(owner, sa)
+    _meta = {name = _name, labels = labels} | ({namespace = namespace} if namespace else {})
+    _ann = _saCloudAnnotations(sa) | sa.annotations
+    _account: [any] = [corev1.ServiceAccount {
+        metadata = _meta | {labels = labels | sa.labels} | ({annotations = _ann} if _ann else {})
+        automountServiceAccountToken = sa.automountToken
+        if sa.imagePullSecrets:
+            imagePullSecrets = [{name = s} for s in sa.imagePullSecrets]
+    }] if sa.create else []
+    _rbac: [any] = [
+        rbacv1.Role {
+            metadata = _meta
+            rules = [{apiGroups = r.apiGroups, resources = r.resources, verbs = r.verbs} | ({resourceNames = r.resourceNames} if r.resourceNames else {}) for r in sa.rules]
+        }
+        rbacv1.RoleBinding {
+            metadata = _meta
+            roleRef = {apiGroup = "rbac.authorization.k8s.io", kind = "Role", name = _name}
+            subjects = [{kind = "ServiceAccount", name = _name, namespace = namespace}]
+        }
+    ] if sa.rules else []
+    _account + _rbac
+}
+
 _deployment = lambda w: Workload -> appsv1.Deployment {
     _ann = _podAnnotations(w)
     appsv1.Deployment {
@@ -447,17 +781,61 @@ _deployment = lambda w: Workload -> appsv1.Deployment {
                 matchLabels = {app = w.name}
             }
             template = {
-                metadata = {labels = _labels(w)} | ({annotations = _ann} if _ann else {})
+                metadata = {labels = _labels(w) | (_saPodLabels(w.serviceAccount) if w.serviceAccount else {})} | ({annotations = _ann} if _ann else {})
                 spec = {
                     securityContext = _podSecurity(w)
                     containers = [_container(w)]
                     volumes = w.volumes
                     terminationGracePeriodSeconds = w.terminationGracePeriodSeconds
                     restartPolicy = "Always"
-                }
+                } | (_saPodSpec(w.name, w.serviceAccount) if w.serviceAccount else {})
             }
         }
     }
+}
+
+_app_resources = lambda w: Workload -> [any] {
+    _ann = _podAnnotations(w)
+    _data = _canary(w) + [
+        {}
+    ]
+    _data
+}
+
+schema Resource:
+    workloads: [Workload]
+    config: Workload
+
+_canary = lambda w: Workload -> [any] {
+    _ann = _podAnnotations(w)
+    []
+}
+_generate_resources = lambda w: Workload -> [appsv1.Deployment] {
+    _ann = _podAnnotations(w)
+    [
+        appsv1.Deployment {
+            metadata = {name = w.name, labels = _labels(w)} | ({namespace = w.namespace} if w.namespace else {})
+            # Omit spec.replicas when an autoscaler (HPA or KEDA) owns it — otherwise
+            # GitOps (Flux/ArgoCD) server-side apply and Flagger fight the autoscaler
+            # over the replica count. The autoscaler's min is the floor.
+            spec = ({replicas = w.replicas} if not (w.hpa or w.scaler) else {}) | {
+                selector = {
+                    matchLabels = {app = w.name}
+                }
+                template = {
+                    metadata = {labels = _labels(w)} | ({annotations = _ann} if _ann else {})
+                    spec = {
+                        securityContext = _podSecurity(w)
+                        containers = [_container(w)]
+                        volumes = w.volumes
+                        terminationGracePeriodSeconds = w.terminationGracePeriodSeconds
+                        restartPolicy = "Always"
+                    }
+                }
+            }
+        }
+        _deployment(w)
+    ]
 }
 
 _service = lambda w: Workload -> corev1.Service {
@@ -468,6 +846,22 @@ _service = lambda w: Workload -> corev1.Service {
             ports = [{$protocol = "TCP", name = w.portName, port = w.port, targetPort = w.port}]
             $type = w.serviceType
         }
+    }
+}
+
+_meta = lambda w: Workload -> {str:} {
+    {name = w.name, labels = _labels(w)} | ({namespace = w.namespace} if w.namespace else {})
+}
+
+_pdb = lambda w: Workload -> policyv1.PodDisruptionBudget {
+    _b = w.disruptionBudget
+    policyv1.PodDisruptionBudget {
+        metadata = _meta(w)
+        spec = {
+            selector = {
+                matchLabels = {app = w.name}
+            }
+        } | ({minAvailable = _b.minAvailable} if _b.minAvailable != Undefined else {maxUnavailable = _b.maxUnavailable})
     }
 }
 
@@ -497,25 +891,190 @@ _hpa = lambda w: Workload -> autoscalingv2.HorizontalPodAutoscaler {
     }
 }
 
+# ── KEDA renderers (ScaledObject / ScaledJob / TriggerAuthentication) ────────
+_trigger = lambda owner: str, t: Trigger -> {str:} {
+    {$type = t.$type, metadata = t.metadata} | ({name = t.name} if t.name else {}) | ({metricType = t.metricType} if t.metricType else {}) | ({useCachedMetrics = t.useCachedMetrics} if t.useCachedMetrics != Undefined else {}) | ({
+        authenticationRef = {name = "${owner}-${t.auth}"}
+    } if t.auth else {authenticationRef = t.authenticationRef} if t.authenticationRef else {})
+}
+
+_triggerAuth = lambda {
+    owner: str,
+    namespace: str,
+    labels: {str:str},
+    a: TriggerAuth,
+} -> keda.TriggerAuthentication {
+    keda.TriggerAuthentication {
+        metadata = {name = "${owner}-${a.name}", labels = labels} | ({namespace = namespace} if namespace else {})
+        spec = {} | ({
+            secretTargetRef = [{parameter = s.parameter, name = s.name, key = s.key} for s in a.secrets]
+        } if a.secrets else {}) | ({
+            env = [{parameter = e.parameter, name = e.name} | ({containerName = e.containerName} if e.containerName else {}) for e in a.env]
+        } if a.env else {}) | ({
+            podIdentity = {provider = a.podIdentity} | ({identityId = a.identityId} if a.identityId else {})
+        } if a.podIdentity else {})
+    }
+}
+
 _scaler = lambda w: Workload -> keda.ScaledObject {
     _s = w.scaler
     # cpu/memory convenience → KEDA built-in scaler triggers
     _cpu: [{str:}] = [{$type = "cpu", metricType = "Utilization", metadata = {value = "${_s.cpu}"}}] if _s.cpu else []
     _mem: [{str:}] = [{$type = "memory", metricType = "Utilization", metadata = {value = "${_s.memory}"}}] if _s.memory else []
-    _triggers = _cpu + _mem + _s.triggers
+    _triggers = _cpu + _mem + [_trigger(w.name, t) for t in _s.triggers]
     keda.ScaledObject {
-        metadata = {name = w.name, labels = _labels(w)} | ({namespace = w.namespace} if w.namespace else {})
+        metadata = _meta(w) | ({
+            annotations = {"autoscaling.keda.sh/paused" = "true"}
+        } if _s.paused else {})
         spec = {
             scaleTargetRef = {name = w.name}
             minReplicaCount = _s.minReplicas
             maxReplicaCount = _s.maxReplicas
             triggers = _triggers
         } | ({pollingInterval = _s.pollingInterval} if _s.pollingInterval else {}) | ({cooldownPeriod = _s.cooldownPeriod} if _s.cooldownPeriod else {}) | ({idleReplicaCount = _s.idleReplicas} if _s.idleReplicas != Undefined else {}) | ({
+            fallback = {failureThreshold = _s.fallback.failureThreshold, replicas = _s.fallback.replicas}
+        } if _s.fallback else {}) | ({
             advanced = {
                 horizontalPodAutoscalerConfig = {behavior = _s.behavior}
             }
         } if _s.behavior else {})
     }
+}
+
+# ── Monitoring renderers (Prometheus Operator + Grafana sidecar) ─────────────
+# The `job` label Prometheus gives the targets: a ServiceMonitor's default is
+# the Service name, a PodMonitor's "<namespace>/<podmonitor name>".
+_scrapeJob = lambda w: Workload -> str {
+    w.name if w.monitoring.kind == "ServiceMonitor" else "${w.namespace}/${w.name}"
+}
+
+_monitor = lambda w: Workload -> any {
+    _m = w.monitoring
+    _metadata = {name = w.name, namespace = w.namespace, labels = _labels(w) | _m.labels}
+    _endpoint = {port = w.portName, path = w.metricsPath, interval = _m.interval} | ({scrapeTimeout = _m.scrapeTimeout} if _m.scrapeTimeout else {})
+    _spec = {
+        selector = {
+            matchLabels = {app = w.name}
+        }
+        namespaceSelector = {matchNames = [w.namespace]}
+    }
+    promop.ServiceMonitor {
+        metadata = _metadata
+        spec = _spec | {endpoints = [_endpoint]}
+    } if _m.kind == "ServiceMonitor" else promop.PodMonitor {
+        metadata = _metadata
+        spec = _spec | {podMetricsEndpoints = [_endpoint]}
+    }
+}
+
+# Alerts every workload wants, over kube-state-metrics (shipped by
+# kube-prometheus-stack) and the scrape itself. A workload KEDA scaled to zero
+# has no `up` series at all, so AppTargetDown stays silent then.
+_defaultRules = lambda w: Workload -> [AlertRule] {
+    _ns = w.namespace
+    ([AlertRule {
+        alert = "AppTargetDown"
+        expr = 'sum(up{namespace="${_ns}", job="${_scrapeJob(w)}"}) == 0'
+        severity = "critical"
+        summary = "${w.name}: no scrape target is up"
+        description = "Prometheus has not scraped a healthy ${w.name} pod in ${_ns} for 5 minutes."
+    }] if w.monitoring.scrape else []) + [
+        AlertRule {
+            alert = "AppRestarting"
+            expr = 'increase(kube_pod_container_status_restarts_total{namespace="${_ns}", container="${w.name}"}[15m]) > 3'
+            $for = "1m"
+            summary = "${w.name}: {{ $labels.pod }} is restarting"
+            description = "{{ $labels.pod }} restarted more than 3 times in 15 minutes."
+        }
+        AlertRule {
+            alert = "AppReplicasUnavailable"
+            expr = 'kube_deployment_status_replicas_unavailable{namespace="${_ns}", deployment="${w.name}"} > 0'
+            $for = "10m"
+            summary = "${w.name}: replicas unavailable"
+            description = "{{ $value }} replica(s) of ${w.name} in ${_ns} have been unavailable for 10 minutes."
+        }
+    ]
+}
+
+_rule = lambda w: Workload, r: AlertRule -> {str:} {
+    _ann = ({summary = r.summary} if r.summary else {}) | ({description = r.description} if r.description else {}) | ({runbook_url = r.runbookUrl} if r.runbookUrl else {})
+    {
+        alert = r.alert
+        expr = r.expr
+        "for" = r.$for
+        labels = {severity = r.severity, app = w.name} | r.labels
+    } | ({annotations = _ann} if _ann else {})
+}
+
+_prometheusRule = lambda w: Workload -> promop.PrometheusRule {
+    _m = w.monitoring
+    promop.PrometheusRule {
+        metadata = {name = w.name, namespace = w.namespace, labels = _labels(w) | _m.labels}
+        spec = {
+            groups = [{name = "${w.namespace}.${w.name}", rules = [_rule(w, r) for r in (_defaultRules(w) if _m.defaultRules else []) + _m.rules]}]
+        }
+    }
+}
+
+# The panels every generated dashboard starts with: cAdvisor + kube-state-metrics
+# series for this workload's container, and its scrape targets.
+_standardPanels = lambda w: Workload -> [Panel] {
+    _sel = 'namespace="${w.namespace}", container="${w.name}"'
+    [
+        Panel {title = "Available replicas", expr = 'kube_deployment_status_replicas_available{namespace="${w.namespace}", deployment="${w.name}"}', legend = "available"}
+        Panel {title = "CPU (cores)", expr = 'sum by (pod) (rate(container_cpu_usage_seconds_total{${_sel}}[$__rate_interval]))', legend = "{{pod}}"}
+        Panel {title = "Memory (working set)", expr = 'sum by (pod) (container_memory_working_set_bytes{${_sel}})', legend = "{{pod}}", unit = "bytes"}
+        Panel {title = "Container restarts", expr = 'sum by (pod) (increase(kube_pod_container_status_restarts_total{${_sel}}[$__rate_interval]))', legend = "{{pod}}"}
+    ] + ([Panel {title = "Scrape targets up", expr = 'sum(up{namespace="${w.namespace}", job="${_scrapeJob(w)}"})', $type = "stat"}] if w.monitoring.scrape else [])
+}
+
+_panel = lambda i: int, p: Panel -> {str:} {
+    _ds = {$type = "prometheus", uid = "\${datasource}"}
+    {
+        id = i + 1
+        title = p.title
+        $type = p.$type
+        datasource = _ds
+        # two panels per row, 8 grid units high
+        gridPos = {h = 8, w = 12, x = (i % 2) * 12, y = (i // 2) * 8}
+        fieldConfig = {defaults = {unit = p.unit}, overrides = []}
+        targets = [{refId = "A", datasource = _ds, expr = p.expr} | ({legendFormat = p.legend} if p.legend else {})]
+    }
+}
+
+# Grafana dashboard JSON. The uid is derived from namespace/workload/name, so
+# a re-render updates the same dashboard instead of adding a copy.
+_dashboardJson = lambda w: Workload, d: Dashboard -> str {
+    d.json if d.json else json.encode({
+        uid = crypto.md5("${w.namespace}/${w.name}/${d.name}")
+        title = d.title or "${w.name} / ${d.name}"
+        tags = [w.partOf, w.name]
+        editable = True
+        schemaVersion = 39
+        refresh = "30s"
+        time = {"from" = "now-6h", to = "now"}
+        templating = {list = [{name = "datasource", label = "Data source", $type = "datasource", query = "prometheus"}]}
+        panels = [_panel(i, p) for i, p in (_standardPanels(w) if d.standard else []) + d.panels]
+    }, indent=2)
+}
+
+_dashboard = lambda w: Workload, d: Dashboard -> corev1.ConfigMap {
+    _m = w.monitoring
+    corev1.ConfigMap {
+        metadata = {
+            name = "${w.name}-dashboard-${d.name}"
+            namespace = _m.dashboardNamespace or w.namespace
+            labels = _labels(w) | _m.dashboardLabels
+        } | ({
+            annotations = {"${_m.folderAnnotation}" = d.folder}
+        } if d.folder else {})
+        data = {"${w.name}-${d.name}.json" = _dashboardJson(w, d)}
+    }
+}
+
+_monitoring = lambda w: Workload -> [any] {
+    _m = w.monitoring
+    ([_monitor(w)] if _m.scrape else []) + ([_prometheusRule(w)] if _m.defaultRules or _m.rules else []) + [_dashboard(w, d) for d in _m.dashboards]
 }
 
 # ── Chaos Mesh renderers ─────────────────────────────────────────────────────
@@ -553,7 +1112,13 @@ _networkChaosSpec = lambda f: Fault, selector: {str:} -> {str:} {
         delay = {latency = f.latency} | ({jitter = f.jitter} if f.jitter else {}) | ({correlation = f.correlation} if f.correlation else {})
     } if f.$type == "delay" else {
         loss = {loss = f.loss} | ({correlation = f.correlation} if f.correlation else {})
-    } if f.$type == "loss" else {})
+    } if f.$type == "loss" else {
+        corrupt = {corrupt = f.corrupt} | ({correlation = f.correlation} if f.correlation else {})
+    } if f.$type == "corrupt" else {
+        duplicate = {duplicate = f.duplicate} | ({correlation = f.correlation} if f.correlation else {})
+    } if f.$type == "duplicate" else {
+        bandwidth = {rate = f.rate, buffer = f.buffer, limit = f.limit}
+    } if f.$type == "bandwidth" else {})
 }
 
 _stressChaosSpec = lambda f: Fault, selector: {str:} -> {str:} {
@@ -569,21 +1134,104 @@ _stressChaosSpec = lambda f: Fault, selector: {str:} -> {str:} {
     } | ({value = f.value} if f.value else {}) | ({containerNames = f.containerNames} if f.containerNames else {})
 }
 
+_httpAction = lambda f: Fault -> {str:} {
+    {abort = True} if f.$type == "http-abort" else {delay = f.latency}
+}
+
+_ioAction = lambda f: Fault -> {str:} {
+    {delay = f.latency} if f.$type == "io-latency" else {errno = f.errno}
+}
+
+_httpChaosSpec = lambda f: Fault, selector: {str:} -> {str:} {
+    {
+        mode = f.mode
+        selector = selector
+        target = f.httpTarget
+        duration = f.duration
+    } | _httpAction(f) | ({value = f.value} if f.value else {}) | ({port = f.port} if f.port else {}) | ({path = f.path} if f.path else {}) | ({method = f.method} if f.method else {})
+}
+
+_ioChaosSpec = lambda f: Fault, selector: {str:} -> {str:} {
+    {
+        action = "latency" if f.$type == "io-latency" else "fault"
+        mode = f.mode
+        selector = selector
+        volumePath = f.volumePath
+        percent = f.percent
+        duration = f.duration
+    } | _ioAction(f) | ({value = f.value} if f.value else {}) | ({path = f.path} if f.path else {}) | ({methods = f.methods} if f.methods else {}) | ({containerNames = f.containerNames} if f.containerNames else {})
+}
+
+_dnsChaosSpec = lambda f: Fault, selector: {str:} -> {str:} {
+    {
+        action = "error" if f.$type == "dns-error" else "random"
+        mode = f.mode
+        selector = selector
+        duration = f.duration
+    } | ({value = f.value} if f.value else {}) | ({patterns = f.patterns} if f.patterns else {}) | ({containerNames = f.containerNames} if f.containerNames else {})
+}
+
+_timeChaosSpec = lambda f: Fault, selector: {str:} -> {str:} {
+    {
+        mode = f.mode
+        selector = selector
+        timeOffset = f.timeOffset
+        duration = f.duration
+    } | ({value = f.value} if f.value else {}) | ({clockIds = f.clockIds} if f.clockIds else {}) | ({containerNames = f.containerNames} if f.containerNames else {})
+}
+
+_faultKinds = {
+    "pod-kill" = "PodChaos"
+    "pod-failure" = "PodChaos"
+    "container-kill" = "PodChaos"
+    "delay" = "NetworkChaos"
+    "loss" = "NetworkChaos"
+    "partition" = "NetworkChaos"
+    "bandwidth" = "NetworkChaos"
+    "corrupt" = "NetworkChaos"
+    "duplicate" = "NetworkChaos"
+    "cpu" = "StressChaos"
+    "memory" = "StressChaos"
+    "http-abort" = "HTTPChaos"
+    "http-delay" = "HTTPChaos"
+    "io-latency" = "IOChaos"
+    "io-fault" = "IOChaos"
+    "dns-error" = "DNSChaos"
+    "dns-random" = "DNSChaos"
+    "time-skew" = "TimeChaos"
+}
+
+# The field a Schedule / Workflow template embeds each kind's spec under.
+_embedKeys = {
+    PodChaos = "podChaos"
+    NetworkChaos = "networkChaos"
+    StressChaos = "stressChaos"
+    HTTPChaos = "httpChaos"
+    IOChaos = "ioChaos"
+    DNSChaos = "dnsChaos"
+    TimeChaos = "timeChaos"
+}
+
 faultKind = lambda f: Fault -> str {
-    """Chaos Mesh kind a fault renders to: PodChaos, NetworkChaos or StressChaos."""
-    "PodChaos" if f.$type in ["pod-kill", "pod-failure", "container-kill"] else "NetworkChaos" if f.$type in ["delay", "loss", "partition"] else "StressChaos"
+    """Chaos Mesh kind a fault renders to: PodChaos, NetworkChaos, StressChaos, HTTPChaos, IOChaos, DNSChaos or TimeChaos."""
+    _faultKinds[f.$type]
+}
+
+faultEmbedKey = lambda f: Fault -> str {
+    """The field a Chaos Mesh Schedule or Workflow template carries this fault's spec under (podChaos, networkChaos, …)."""
+    _embedKeys[faultKind(f)]
 }
 
 faultSpec = lambda f: Fault, selector: {str:} -> {str:} {
     """The <kind>Spec for a fault against `selector` (a Chaos Mesh pod selector: namespaces, labelSelectors, …)."""
     _kind = faultKind(f)
-    _podChaosSpec(f, selector) if _kind == "PodChaos" else _networkChaosSpec(f, selector) if _kind == "NetworkChaos" else _stressChaosSpec(f, selector)
+    _podChaosSpec(f, selector) if _kind == "PodChaos" else _networkChaosSpec(f, selector) if _kind == "NetworkChaos" else _stressChaosSpec(f, selector) if _kind == "StressChaos" else _httpChaosSpec(f, selector) if _kind == "HTTPChaos" else _ioChaosSpec(f, selector) if _kind == "IOChaos" else _dnsChaosSpec(f, selector) if _kind == "DNSChaos" else _timeChaosSpec(f, selector)
 }
 
 experiment = lambda f: Fault, selector: {str:}, metadata: {str:} -> any {
     """
-    A typed Chaos Mesh object for a fault: the one-shot PodChaos / NetworkChaos /
-    StressChaos, or a Schedule embedding it when `f.schedule` is set.
+    A typed Chaos Mesh object for a fault: the one-shot experiment of its kind
+    (see `faultKind`), or a Schedule embedding it when `f.schedule` is set.
     `metadata` is used as given (name, namespace, labels, annotations).
     """
     _kind = faultKind(f)
@@ -595,7 +1243,7 @@ experiment = lambda f: Fault, selector: {str:}, metadata: {str:} -> any {
             $type = _kind
             concurrencyPolicy = f.concurrencyPolicy
             historyLimit = f.historyLimit
-        } | ({podChaos = _spec} if _kind == "PodChaos" else {networkChaos = _spec} if _kind == "NetworkChaos" else {stressChaos = _spec})
+        } | {"${faultEmbedKey(f)}" = _spec}
     } if f.schedule else cmpod.PodChaos {
         metadata = metadata
         spec = _spec
@@ -605,11 +1253,25 @@ experiment = lambda f: Fault, selector: {str:}, metadata: {str:} -> any {
     } if _kind == "NetworkChaos" else cmstress.StressChaos {
         metadata = metadata
         spec = _spec
+    } if _kind == "StressChaos" else cmhttp.HTTPChaos {
+        metadata = metadata
+        spec = _spec
+    } if _kind == "HTTPChaos" else cmio.IOChaos {
+        metadata = metadata
+        spec = _spec
+    } if _kind == "IOChaos" else cmdns.DNSChaos {
+        metadata = metadata
+        spec = _spec
+    } if _kind == "DNSChaos" else cmtime.TimeChaos {
+        metadata = metadata
+        spec = _spec
     }
 }
 
 _fault = lambda w: Workload, f: Fault -> any {
-    experiment(f, _faultSelector(w), _faultMeta(w, f))
+    # An HTTP fault against a workload defaults to the port it serves on.
+    _f = f | {port = w.port} if f.$type in ["http-abort", "http-delay"] and not f.port else f
+    experiment(_f, _faultSelector(w), _faultMeta(w, f))
 }
 
 # ── Backstage catalog ────────────────────────────────────────────────────────
@@ -725,14 +1387,15 @@ _jobPodSpec = lambda t: Task -> {str:} {
         containers = [_taskContainer(t)]
         volumes = t.volumes
         restartPolicy = t.restartPolicy
-    } | ({serviceAccountName = t.serviceAccountName} if t.serviceAccountName else {})
+    } | (_saPodSpec(t.name, t.serviceAccount) if t.serviceAccount else {})
 }
 
-# Shared JobSpec, used directly for a Job and nested under a CronJob's jobTemplate.
+# Shared JobSpec, used directly for a Job, nested under a CronJob's
+# jobTemplate, and as a ScaledJob's jobTargetRef.
 _jobSpec = lambda t: Task -> {str:} {
     {
         template = {
-            metadata = {labels = _taskLabels(t)}
+            metadata = {labels = _taskLabels(t) | (_saPodLabels(t.serviceAccount) if t.serviceAccount else {})}
             spec = _jobPodSpec(t)
         }
         backoffLimit = t.backoffLimit
@@ -759,6 +1422,22 @@ _cronjob = lambda t: Task -> batchv1.CronJob {
     }
 }
 
+_scaledJob = lambda t: Task -> keda.ScaledJob {
+    _s = t.scaler
+    keda.ScaledJob {
+        metadata = {name = t.name, labels = _taskLabels(t)} | ({namespace = t.namespace} if t.namespace else {})
+        spec = {
+            jobTargetRef = _jobSpec(t)
+            minReplicaCount = _s.minReplicas
+            maxReplicaCount = _s.maxReplicas
+            successfulJobsHistoryLimit = t.successfulJobsHistoryLimit
+            failedJobsHistoryLimit = t.failedJobsHistoryLimit
+            scalingStrategy = {strategy = _s.strategy}
+            triggers = [_trigger(t.name, tr) for tr in _s.triggers]
+        } | ({pollingInterval = _s.pollingInterval} if _s.pollingInterval else {})
+    }
+}
+
 # ── Public API ───────────────────────────────────────────────────────────────
 mergeValues = lambda base: {str:}, overlay: {str:} -> {str:} {
     """
@@ -770,14 +1449,28 @@ mergeValues = lambda base: {str:}, overlay: {str:} -> {str:} {
 }
 
 render = lambda w: Workload -> [any] {
-    """All manifests for a long-running workload: Deployment, optional Service, optional HPA/ScaledObject, Chaos Mesh faults, extras."""
-    [_deployment(w)] + ([_service(w)] if w.service else []) + ([_hpa(w)] if w.hpa else []) + ([_scaler(w)] if w.scaler else []) + [_fault(w, f) for f in w.chaos] + w.extraManifests
+    """
+    All manifests for a long-running workload, in apply order: ServiceAccount
+    (+ Role/RoleBinding), Deployment, Service, PodDisruptionBudget, HPA or KEDA
+    TriggerAuthentications + ScaledObject, ServiceMonitor/PodMonitor +
+    PrometheusRule + dashboard ConfigMaps, Chaos Mesh faults, extras.
+    """
+    _ns = w.namespace or ""
+    _sa: [any] = _saObjects(w.name, _ns, _labels(w), w.serviceAccount) if w.serviceAccount else []
+    _auths: [any] = [_triggerAuth(w.name, _ns, _labels(w), a) for a in w.scaler.authentications] if w.scaler else []
+    _sa + [_deployment(w)] + ([_service(w)] if w.service else []) + ([_pdb(w)] if w.disruptionBudget else []) + ([_hpa(w)] if w.hpa else []) + _auths + ([_scaler(w)] if w.scaler else []) + (_monitoring(w) if w.monitoring else []) + [_fault(w, f) for f in w.chaos] + w.extraManifests
 }
 
 renderTask = lambda t: Task -> [any] {
-    """Manifests for a batch workload: a CronJob when `schedule` is set, else a Job, plus extras."""
-    _base: [any] = [_cronjob(t)] if t.schedule else [_job(t)]
-    _base + t.extraManifests
+    """
+    Manifests for a batch workload: ServiceAccount (+ Role/RoleBinding), then a
+    KEDA ScaledJob (after its TriggerAuthentications) when `scaler` is set, a
+    CronJob when `schedule` is, else a Job; plus extras.
+    """
+    _ns = t.namespace or ""
+    _sa: [any] = _saObjects(t.name, _ns, _taskLabels(t), t.serviceAccount) if t.serviceAccount else []
+    _base: [any] = [_triggerAuth(t.name, _ns, _taskLabels(t), a) for a in t.scaler.authentications] + [_scaledJob(t)] if t.scaler else [_cronjob(t)] if t.schedule else [_job(t)]
+    _sa + _base + t.extraManifests
 }
 
 renderRelease = lambda r: Release -> [any] {

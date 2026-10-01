@@ -99,6 +99,10 @@
     name = "postgres-gcp"
     full_name = "postgres-gcp_0.1.4"
     version = "0.1.4"
+  [dependencies.prometheus-operator]
+    name = "prometheus-operator"
+    full_name = "prometheus-operator_0.0.1"
+    version = "0.0.1"
   [dependencies.vm-aws]
     name = "vm-aws"
     full_name = "vm-aws_0.1.4"

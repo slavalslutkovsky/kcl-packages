@@ -1,0 +1,24 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: EncryptionKey
+metadata:
+  namespace: default
+  name: app-data-key
+spec:
+  region: il-jerusalem-1        # OCI region; binds to ClusterProviderConfig `oci-il-jerusalem-1`
+  compartmentId: ocid1.compartment.oc1..aaaaaaaaexampleexampleexampleexampleexampleexample
+  purpose: encrypt-decrypt      # encrypt-decrypt | sign-verify (OCI infers it from the algorithm)
+  algorithm: symmetric          # keyShape AES, 32 bytes
+  protectionLevel: software     # software | hsm -> Key protectionMode
+  deletionPolicy: Delete        # Delete | Orphan — Orphan leaves the vault and key alive
+  tags:                         # rendered as freeformTags on the vault and the key
+    team: platform
+  # A DEFAULT (free, multitenant) Vault is composed alongside the key and named
+  # after the XR; the Key is created once the vault reports its management
+  # endpoint, so the first reconcile renders the vault only.
+  # Ignored by this backend: rotationDays (auto rotation needs a private
+  # vault), deletionWindowDays (OCI's 30-day default applies), multiRegion,
+  # exportable, mountPath.
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: oci           # the flag: picks the backend (aws | gcp | azure | oci | openbao)

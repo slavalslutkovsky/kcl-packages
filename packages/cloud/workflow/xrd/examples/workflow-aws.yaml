@@ -1,0 +1,31 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Workflow
+metadata:
+  namespace: default
+  name: order-fulfilment
+spec:
+  region: eu-west-1
+  # Amazon States Language, verbatim -> forProvider.definition.
+  definition: |
+    {
+      "Comment": "Reserve stock, then finish",
+      "StartAt": "Reserve",
+      "States": {
+        "Reserve": {
+          "Type": "Pass",
+          "Result": {"reserved": true},
+          "Next": "Done"
+        },
+        "Done": {"Type": "Succeed"}
+      }
+    }
+  # No serviceAccount: a Role trusting states.amazonaws.com is composed with
+  # no permissions; attach what the Task states call, or name an existing role:
+  # serviceAccount: arn:aws:iam::123456789012:role/orders-wf
+  deletionPolicy: Delete
+  tags:                           # -> tags on the state machine and the role
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws             # the flag: picks the backend (aws | gcp | azure)

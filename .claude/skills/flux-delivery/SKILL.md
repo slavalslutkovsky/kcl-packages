@@ -11,7 +11,7 @@ paths:
 
 # FluxCD in this workspace
 
-Flux appears in exactly three roles. Nothing else in the repo reconciles.
+Flux appears in exactly three roles, plus `packages/gitops`, whose `engine: flux | argocd` renders either a Flux `GitRepository` + `Kustomization` or an Argo CD `AppProject` + `Application` (schemas: `packages/providers/argocd`, argoproj/argo-cd v3.5.3). No Argo CD is installed anywhere in the repo; nothing else reconciles.
 
 ## A. Crossplane-composed Flux — the `Component` XR
 

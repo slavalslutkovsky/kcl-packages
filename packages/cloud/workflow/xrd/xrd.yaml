@@ -1,0 +1,104 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: workflows.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: Workflow
+    plural: workflows
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable managed workflow orchestration: a serverless state
+                machine that sequences calls to other services, retries failed
+                steps and survives for as long as an execution runs. Every
+                field below is a COMMON parameter mapped onto each backend's
+                native resources (GCP Workflows Workflow, AWS Step Functions
+                StateMachine [+ execution Role], Azure Logic Apps AppWorkflow
+                + one AppTriggerCustom / AppActionCustom per definition entry).
+                Fields a backend cannot express are documented as ignored
+                rather than silently dropped.
+
+                The workflow SOURCE is not portable and is not translated: each
+                cloud has its own workflow language, so `definition` is written
+                in the language of the backend the XR selects.
+              properties:
+                region:
+                  type: string
+                  description: Cloud region the workflow runs in (GCP Workflows region / Step Functions region / Logic App location).
+                definition:
+                  type: string
+                  description: |
+                    The workflow source, in the selected backend's own language, verbatim:
+                    gcp — Workflows syntax, YAML or JSON (forProvider.sourceContents, 128 KB max);
+                    aws — Amazon States Language JSON (forProvider.definition);
+                    azure — a Workflow Definition Language object, JSON, with `triggers`, `actions` and optionally `parameters`, `$schema`, `contentVersion`. Each trigger and each action becomes its own managed resource named after its key; a non-empty `outputs` is rejected, because a Consumption Logic App resource has nowhere to carry it.
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the existing resource group the Logic App is created in. Required by the azure backend, ignored elsewhere.
+                serviceAccount:
+                  type: string
+                  description: Runtime identity the workflow calls other services as. GCP service account email (unset → the project's default compute service account). AWS an EXISTING execution role ARN (unset → a Role trusting states.amazonaws.com is composed WITHOUT permissions; attach the policies your Task states need to it). Azure the ARM id of an existing user-assigned managed identity (unset → a system-assigned identity).
+                encryptionKmsKeyId:
+                  type: string
+                  description: CMEK for workflow and execution data. GCP cryptoKeyName (full resource path); AWS encryptionConfiguration kmsKeyId (the execution role then also needs kms:Decrypt and kms:GenerateDataKey on it). Ignored by the azure backend — Consumption Logic Apps always encrypt with Microsoft-managed keys.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the backing resources when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them). GCP's own deletionProtection lock is always off, so this is the only lifecycle knob.
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. GCP labels, AWS tags (on the state machine and the composed role), Azure tags.
+              required:
+                - region
+                - definition
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the workflow is deployed and can be executed.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp | azure).
+                name:
+                  type: string
+                  description: The workflow's name in the cloud — what an execution is started against.
+                id:
+                  type: string
+                  description: Provider-assigned resource id (GCP projects/<p>/locations/<r>/workflows/<n>, AWS state machine ARN, Azure ARM id).
+                arn:
+                  type: string
+                  description: AWS ARN of the state machine (AWS only).
+                revision:
+                  type: string
+                  description: Revision id of the deployed source (GCP revisionId / AWS revisionId). Absent on Azure, which does not version workflows.
+                identity:
+                  type: string
+                  description: The identity the workflow runs as — GCP service account email, AWS execution role ARN, Azure managed identity principal id. Grant this identity whatever the workflow calls.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the workflow.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: WORKFLOW
+          type: string
+          jsonPath: .status.name

@@ -17,6 +17,14 @@ tasks:
       - task --taskfile https://raw.githubusercontent.com/go-task/task/main/website/src/public/Taskfile.yml hello
   clus:
     desc: Create the kind cluster from the gitops repo's remote Taskfile
+    # Skip (task reports "up to date") when a kind cluster named "kind" already exists.
+    status:
+      - kind get clusters 2>/dev/null | grep -qx kind
+    preconditions:
+      - sh: command -v kind
+        msg: kind is not installed
+      - sh: command -v kubectl
+        msg: git is not installed
     cmds:
       # --yes auto-accepts the remote-Taskfile trust prompt (checksum changes on every upstream edit)
       - task --yes --taskfile https://raw.githubusercontent.com/yurikrupnik/gitops/refs/heads/main/cluster/Taskfile.yml create
@@ -26,3 +34,26 @@ tasks:
     cmds:
       # --yes auto-accepts the remote-Taskfile trust prompt (checksum changes on every upstream edit)
       - task --yes --taskfile https://raw.githubusercontent.com/yurikrupnik/gitops/refs/heads/main/cluster/Taskfile.yml delete
+  rust:build:
+    desc: Build the rust project
+    cmds:
+      - cargo build -r
+  rust:doc:
+    desc: Build the rust project
+    cmds:
+      - cargo doc -r --open
+      - cargo doc --open
+  flux-graph:
+    desc: Render the Flux dependsOn graph
+    vars:
+      CLUSTER: '{{.CLUSTER | default "$HOME/shitv1/gitops/clusters/local"}}'
+      FORMAT: '{{.FORMAT | default "mermaid"}}'
+    env:
+      KUBECONFIG: '{{.KUBECONFIG | default "$HOME/.kube/config"}}'
+    cmds:
+      - flux-graph -c {{.CLUSTER}} -f {{.FORMAT}} {{.CLI_ARGS}}
+#  rust:cli:install:
+#    desc: Build the rust project
+#    cmds:
+#      - cargo install --path .
+#      -

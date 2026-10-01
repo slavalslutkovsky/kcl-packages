@@ -8,7 +8,7 @@
 #   providers.sh check            fail on drift between registry, generated
 #                                 packages and the xrd/providers.yaml manifests
 #
-# `filter`/`target` match a provider name, a cloud (aws|gcp|azure|kubernetes)
+# `filter`/`target` match a provider name, a cloud (aws|gcp|azure|oci|kubernetes)
 # or a module (bucket, redis, …); "all"/empty means everything.
 #
 # Requires: yq v4. `seed` additionally needs node_modules (nx) plus docker for
@@ -85,7 +85,7 @@ cmd_seed() {
         found=1
         src=$(source_ref "$image" "$tag" "$repo" "$ref" "$catalog")
         echo "== $name ($src)"
-        local args=("$name" --directory=packages/providers "--apiScope=$scope" --no-interactive)
+        local args=("$name" --directory=packages/providers "--apiScope=$scope" --force --no-interactive)
         [ -n "$service" ] && args+=("--service=$service")
         if [ -n "$image" ]; then
             args+=("--image=$image:$tag")

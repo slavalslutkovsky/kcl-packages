@@ -40,6 +40,26 @@ metadata:
 spec:
   package: xpkg.upbound.io/upbound/provider-vault:v4.0.3
 ---
+# The oci backend needs two packages from ghcr.io/oracle: the family provider,
+# which ships no managed resources but owns the oci.m.upbound.io
+# (Cluster)ProviderConfig every OCI sub-provider authenticates through, and
+# the kms sub-provider (Vault, Key). Install the family first: provider-oci-kms
+# declares it as a dependency with `>= 0.0.0`, so leaving it to dependency
+# resolution would pull whatever family release is newest, not v2.0.0.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-family-oci
+spec:
+  package: ghcr.io/oracle/provider-family-oci:v2.0.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-oci-kms
+spec:
+  package: ghcr.io/oracle/provider-oci-kms:v2.0.0
+---
 # The openbao backend does not compose a Helm release, but its prerequisite —
 # the OpenBao server in providerconfigs.yaml — is one, so provider-helm has to
 # be here too. v1.x is the first line with the namespaced

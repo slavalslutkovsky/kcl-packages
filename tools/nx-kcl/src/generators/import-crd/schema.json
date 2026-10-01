@@ -37,7 +37,7 @@
     },
     "service": {
       "type": "string",
-      "description": "Comma-separated service/group prefixes to include, e.g. storage,compute. Omit to include all (large)."
+      "description": "Comma-separated prefixes to include: of the API group for image sources, of the CRD file name for repo/local sources (e.g. storage,compute or monitoring.coreos.com_servicemonitors). Omit to include all (large)."
     },
     "crdPath": {
       "type": "string",
@@ -53,6 +53,11 @@
     "sourceLabel": {
       "type": "string",
       "description": "Overrides the `# Source:` provenance line stamped into main.k. For --from directories built from a pinned upstream (see tools/datree-crd.sh), where the local path is meaningless."
+    },
+    "force": {
+      "type": "boolean",
+      "description": "Delete and regenerate a package that already exists at <directory>/<name>, instead of failing. Use to refresh a provider schema package after the upstream CRDs changed.",
+      "default": false
     }
   },
   "required": ["name"]

@@ -5,18 +5,20 @@ Same contract as `app`, `manager` and `cncf`:
 
   kcl run packages/gitops -D values=packages/gitops/examples/values.yaml -q | kubectl apply -f -
   kcl run packages/gitops -D values=packages/gitops/examples/values.yaml -D env=forge -q
+  kcl run packages/gitops -D values=packages/gitops/examples/values.yaml -D env=argocd -q
   # after publish: kcl run oci://docker.io/yurikrupnik/gitops -D values=... -q
 
 `-D values=<path>` (like helm -f) or a values.yaml in the current directory;
 `-D env=<name>` deep-merges <stem>.<name>.yaml over it (right wins; lists
-replace, so the `forge` overlay only has to flip `source.origin`). The merged
-result is validated against the typed `Gitops` schema.
+replace, so the `forge` overlay only has to flip `source.origin` and the
+`argocd` overlay only `engine`, `namespace` and `source.secretRef`). The
+merged result is validated against the typed `Gitops` schema.
 
 Apply order matters and the stream is already in it, but a bare cluster needs
 two passes: `Entitlement`, `Forge` and `Repository` are instances of CRDs that
 Crossplane and this repo's XRDs install (`just install-module forge`,
-`just install-module repository`), and Flux must already be running for the
-GitRepository and Kustomization to mean anything.
+`just install-module repository`), and the engine — Flux or Argo CD, per
+`engine` — must already be running for its two objects to mean anything.
 
 With no values file present (e.g. `nx build gitops` from the repo root) this
 renders a built-in demo so the build still smoke-tests the package.

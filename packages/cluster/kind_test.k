@@ -56,6 +56,24 @@ test_db_workers_only = lambda {
     assert len(cluster.nodes[1].kubeadmConfigPatches) == 1
 }
 
+# Test Kafka-dedicated workers: their own label and taint, after the db pool
+test_kafka_workers = lambda {
+    cluster = kind.Cluster {
+        _workers: 1
+        _db_workers: 1
+        _kafka_workers: 2
+    }
+    assert len(cluster.nodes) == 5, "Should have 1 control-plane + 1 worker + 1 db worker + 2 kafka workers"
+    assert "dedicated=database" in cluster.nodes[2].kubeadmConfigPatches[0]
+    assert "value: \"kafka\"" not in cluster.nodes[2].kubeadmConfigPatches[0], "db worker must not carry the kafka taint"
+    kafka_patch = cluster.nodes[3].kubeadmConfigPatches[0]
+    assert len(cluster.nodes[3].kubeadmConfigPatches) == 1, "Kafka worker should have 1 patch"
+    assert "node-labels: \"dedicated=kafka\"" in kafka_patch
+    assert "value: \"kafka\"" in kafka_patch
+    assert "effect: \"NoSchedule\"" in kafka_patch
+    assert cluster.nodes[4].kubeadmConfigPatches == cluster.nodes[3].kubeadmConfigPatches
+}
+
 # Test that no issuer patch is emitted by default
 test_no_issuer_by_default = lambda {
     cluster = kind.Cluster {}
@@ -100,13 +118,31 @@ test_oidc_issuer_leaves_workers_alone = lambda {
     assert "JoinConfiguration" in cluster.nodes[1].kubeadmConfigPatches[0]
 }
 
+# Test host /proc mount: on every node (DaemonSet agents), independent of ingress
+test_host_proc_every_node = lambda {
+    cluster = kind.Cluster {
+        _host_proc: True
+        _workers: 1
+        _db_workers: 1
+        _kafka_workers: 1
+    }
+    assert len(cluster.nodes) == 4
+    assert all n in cluster.nodes {
+        len(n.extraMounts) == 1 and n.extraMounts[0].hostPath == "/proc" and n.extraMounts[0].containerPath == "/procHost"
+    }, "every node mounts host /proc at /procHost"
+    assert not cluster.nodes[0].extraPortMappings, "host_proc does not imply ingress"
+    assert not kind.Cluster {_ingress: True}.nodes[0].extraMounts, "ingress does not imply host_proc"
+}
+
 # Run tests
 test_default_cluster()
 test_cluster_with_workers()
 test_ingress_config()
 test_db_workers()
 test_db_workers_only()
+test_kafka_workers()
 test_no_issuer_by_default()
 test_oidc_issuer()
 test_oidc_issuer_with_ingress()
 test_oidc_issuer_leaves_workers_alone()
+test_host_proc_every_node()
