@@ -1,0 +1,227 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: gitopsplatforms.platform.example.org
+spec:
+  scope: Namespaced
+  group: platform.example.org
+  names:
+    kind: GitOpsPlatform
+    plural: gitopsplatforms
+  # One implementation; the GitOps engine is a field, not a Composition.
+  defaultCompositionRef:
+    name: gitopsplatform
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                A GitOps engine (FluxCD or Argo CD) installed onto a cluster,
+                gated on the platform database being reachable.
+
+                The database is resolved FIRST, in one of two ways:
+
+                  1. spec.db.connection names an existing PostgreSQL. A Job in
+                     this namespace tries to connect to it up to
+                     spec.db.check.attempts times (default 3). If any attempt
+                     succeeds, that database is used and nothing is provisioned.
+                  2. Every attempt failed — or no connection was given — so a
+                     PostgresInstance child XR is composed from
+                     spec.db.provision: CloudNativePG in-cluster, AWS RDS, GCP
+                     Cloud SQL, Azure Flexible Server, or self-managed
+                     PostgreSQL on a VM in any of the three clouds.
+
+                Only once the database is resolved (and, when provisioned,
+                reports ready) is the engine's Helm chart released. Both
+                decisions are sticky: a provisioned database and an installed
+                engine are never removed because a later check came out
+                differently — removing either would destroy state.
+              properties:
+                engine:
+                  type: string
+                  enum: [flux, argocd]
+                  description: 'GitOps engine to install. flux: fluxcd-community chart flux2 into flux-system (image automation, image reflection and notification controllers off, as on every cluster in this repo). argocd: argo-helm chart argo-cd into argocd.'
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: engine is immutable — switching would install the second engine beside the first under the same Release; create a new GitOpsPlatform instead
+                version:
+                  type: string
+                  description: Chart version override. Defaults pin flux2 2.19.0 (Flux v2.9.1) and argo-cd 10.9.6 (Argo CD v3.5.3).
+                namespace:
+                  type: string
+                  description: Namespace the engine is installed into (created when missing). Defaults to flux-system / argocd.
+                values:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: Helm values merged over the engine defaults.
+                kubeconfigSecret:
+                  type: string
+                  description: |
+                    Secret in this namespace (key `kubeconfig`) reaching the
+                    cluster to install into. Unset installs into the cluster
+                    Crossplane runs on, through the `default`
+                    ClusterProviderConfig of provider-helm. The database check
+                    always runs HERE, in the XR's namespace — it validates
+                    the database from the management cluster's network.
+                db:
+                  type: object
+                  description: The platform database — the existing one to validate, and the definition to provision when it cannot be reached.
+                  properties:
+                    connection:
+                      type: object
+                      description: An existing PostgreSQL to validate. Omit it to provision unconditionally.
+                      properties:
+                        host:
+                          type: string
+                          description: Hostname or IP address.
+                        port:
+                          type: integer
+                          default: 5432
+                          minimum: 1
+                          maximum: 65535
+                        database:
+                          type: string
+                          default: app
+                        username:
+                          type: string
+                          default: app
+                        passwordSecret:
+                          type: object
+                          description: Secret in this namespace holding the password. When set the check logs in and runs `SELECT 1` (validating credentials too); when unset it only asks whether the server accepts connections (pg_isready).
+                          properties:
+                            name:
+                              type: string
+                            key:
+                              type: string
+                              default: password
+                          required: [name]
+                        sslMode:
+                          type: string
+                          enum: [disable, allow, prefer, require, verify-ca, verify-full]
+                          default: prefer
+                          description: libpq sslmode used by the check.
+                      required: [host]
+                    check:
+                      type: object
+                      description: |
+                        How the connection is validated. One Job, `attempts`
+                        pods: Kubernetes retries a failed attempt with its own
+                        exponential backoff (10s, 20s, 40s, …), and the Job's
+                        terminal condition is the verdict. Changing any
+                        connection or check field starts a fresh Job.
+                      properties:
+                        attempts:
+                          type: integer
+                          default: 3
+                          minimum: 1
+                          maximum: 10
+                          description: Connection attempts before the database is declared unreachable (Job backoffLimit = attempts - 1).
+                        timeoutSeconds:
+                          type: integer
+                          default: 5
+                          minimum: 1
+                          maximum: 60
+                          description: Per-attempt connect timeout.
+                        deadlineSeconds:
+                          type: integer
+                          default: 300
+                          minimum: 30
+                          description: Upper bound for the whole check (Job activeDeadlineSeconds). An attempt that can never run — a missing passwordSecret, an unpullable image — fails the check here instead of hanging it.
+                        image:
+                          type: string
+                          default: postgres:17-alpine
+                          description: Image providing pg_isready and psql. Must run as uid 70 (the official alpine image's postgres user).
+                    provision:
+                      type: object
+                      description: The PostgresInstance to compose when the existing database is unreachable or absent.
+                      properties:
+                        backend:
+                          type: string
+                          enum: [cnpg, aws, gcp, azure, vm]
+                          description: PostgresInstance Composition to select (its provider label). cnpg = CloudNativePG in-cluster; aws = RDS; gcp = Cloud SQL; azure = Flexible Server; vm = self-managed on a VirtualMachine (pick the cloud with spec.vm.provider inside `spec`).
+                        spec:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                          description: The PostgresInstance spec, verbatim (see postgresinstances.cloud.example.org). `region` defaults to "in-cluster" for cnpg and is required otherwise; `database` and `username` default to the connection's, so the replacement serves the same names; deletionPolicy defaults to this XR's.
+                      required: [backend]
+                  required: [provision]
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the engine release and a provisioned database when this XR is deleted (Orphan keeps both).
+              required:
+                - engine
+                - db
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the database is resolved and the engine chart is deployed.
+                engine:
+                  type: string
+                chartVersion:
+                  type: string
+                  description: Chart version requested for the engine.
+                namespace:
+                  type: string
+                  description: Namespace the engine runs in.
+                engineState:
+                  type: string
+                  description: Helm release state reported by provider-helm (deployed, failed, …); empty until the release exists.
+                db:
+                  type: object
+                  description: The resolved database. Every field is non-secret; read the password from authSecret/authSecretKey.
+                  properties:
+                    source:
+                      type: string
+                      enum: [checking, existing, provisioned]
+                      description: checking = the connection Job is still running; existing = it connected; provisioned = a PostgresInstance was composed.
+                    check:
+                      type: string
+                      description: Verdict of the connection check (Running, Passed, Failed, Skipped).
+                    attempts:
+                      type: integer
+                      description: Connection attempts made so far by the check.
+                    backend:
+                      type: string
+                      description: existing, or the PostgresInstance backend that fulfilled the provision.
+                    ready:
+                      type: boolean
+                    host:
+                      type: string
+                    port:
+                      type: integer
+                    endpoint:
+                      type: string
+                    url:
+                      type: string
+                      description: Connection URI without credentials.
+                    database:
+                      type: string
+                    username:
+                      type: string
+                    authSecret:
+                      type: string
+                    authSecretKey:
+                      type: string
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: ENGINE
+          type: string
+          jsonPath: .status.engine
+        - name: DB-SOURCE
+          type: string
+          jsonPath: .status.db.source
+        - name: DB-ENDPOINT
+          type: string
+          jsonPath: .status.db.endpoint

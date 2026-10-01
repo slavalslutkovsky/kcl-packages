@@ -1,0 +1,27 @@
+apiVersion: platform.example.org/v1alpha1
+kind: GitOpsPlatform
+metadata:
+  namespace: default
+  name: platform-aws
+spec:
+  engine: argocd                  # argo-helm argo-cd 10.9.6 (Argo CD v3.5.3) -> argocd
+  values:                         # merged over the chart defaults
+    configs:
+      params:
+        server.insecure: true
+  kubeconfigSecret: edge-kubeconfig  # install into another cluster; the check still runs here
+  deletionPolicy: Orphan          # keep the release and a provisioned database on delete
+  db:
+    connection:
+      host: platform.cluster-abc.eu-west-1.rds.amazonaws.com
+      sslMode: require            # no passwordSecret: pg_isready reachability only
+    provision:
+      backend: aws                # RDS
+      spec:
+        region: eu-west-1         # required for every backend but cnpg
+        memoryGb: 4
+        storageGb: 50
+        highAvailability: true
+        network:
+          subnetGroupName: platform-db
+          securityGroupIds: [sg-0123456789abcdef0]

@@ -1,0 +1,23 @@
+apiVersion: platform.example.org/v1alpha1
+kind: GitOpsPlatform
+metadata:
+  namespace: default
+  name: platform
+spec:
+  engine: flux                    # fluxcd-community flux2 2.19.0 -> flux-system
+  db:
+    connection:                   # validated first: 3 attempts, then the fallback
+      host: postgres.shared.svc.cluster.local
+      port: 5432
+      database: platform
+      username: platform
+      passwordSecret:
+        name: platform-db         # with a password the check logs in (SELECT 1)
+    check:
+      attempts: 3                 # Job backoffLimit 2
+      timeoutSeconds: 5
+    provision:                    # only when every attempt failed
+      backend: cnpg               # in-cluster CloudNativePG; region defaults to in-cluster
+      spec:                       # a PostgresInstance spec, verbatim
+        storageGb: 20             # database/username default to the connection's
+        replicas: 1

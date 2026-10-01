@@ -1,0 +1,28 @@
+# Cluster prerequisites for the GitOpsPlatform Composition.
+#
+# What it composes, and what each needs:
+#
+#   - batch/v1 Job (the database connection check) — a built-in kind Crossplane
+#     has no rights over by default. Crossplane's ServiceAccount is granted
+#     rights over composed kinds by the rbac-manager, which aggregates every
+#     ClusterRole labelled rbac.crossplane.io/aggregate-to-crossplane=true;
+#     the ClusterRole below is that grant.
+#   - helm.m.crossplane.io Release / ProviderConfig (the engine install) —
+#     provider-helm v1.x and its `default` ClusterProviderConfig, exactly as
+#     packages/cloud/postgres/xrd/providers.yaml and providerconfigs.yaml
+#     install them. CRDs from a Crossplane package are aggregated
+#     automatically.
+#   - cloud.example.org PostgresInstance (the fallback database) — the
+#     postgres module's XRD plus the Composition of every backend you intend
+#     to provision with (`just install-module postgres`), and for the vm
+#     backend the vm module as well.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gitopsplatform:aggregate-to-crossplane
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: ["*"]

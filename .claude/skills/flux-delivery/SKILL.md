@@ -11,7 +11,7 @@ paths:
 
 # FluxCD in this workspace
 
-Flux appears in exactly three roles, plus `packages/gitops`, whose `engine: flux | argocd` renders either a Flux `GitRepository` + `Kustomization` or an Argo CD `AppProject` + `Application` (schemas: `packages/providers/argocd`, argoproj/argo-cd v3.5.3). No Argo CD is installed anywhere in the repo; nothing else reconciles.
+Flux appears in exactly three roles, plus `packages/gitops`, whose `engine: flux | argocd` renders either a Flux `GitRepository` + `Kustomization` or an Argo CD `AppProject` + `Application` (schemas: `packages/providers/argocd`, argoproj/argo-cd v3.5.3), and the `GitOpsPlatform` XR (`packages/platform/gitopsplatform`), which installs the `flux2` or `argo-cd` chart through provider-helm once its database check passes or its fallback `PostgresInstance` is ready. That XR is the only Argo CD install in the repo; nothing else reconciles.
 
 ## A. Crossplane-composed Flux — the `Component` XR
 
