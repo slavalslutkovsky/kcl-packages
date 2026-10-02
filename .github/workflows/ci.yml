@@ -40,3 +40,12 @@ jobs:
 
       - name: Build, test and lint
         run: pnpm exec nx affected -t build test lint
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      # docs/devkit-commands.md (`just nu-docs-check`) is local only: it needs
+      # monodocs and the installed devkit module, which this runner has neither of.
+      - name: Generated docs are current
+        run: just graph-check

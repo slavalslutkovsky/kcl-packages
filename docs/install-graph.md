@@ -22,6 +22,7 @@ flowchart TB
   flagger(["flagger 1.44.0"])
   chaos_mesh(["chaos-mesh 2.8.4"])
   flux2(["flux2 2.19.0"])
+  dam["dam"]
   kubeblocks(["kubeblocks 1.2.0-alpha.3"])
   entitlement_crd["entitlement-crd"]
   entitlement_rbac["entitlement-rbac"]
@@ -59,6 +60,7 @@ flowchart TB
   flagger --> wave1
   chaos_mesh --> wave1
   flux2 --> wave1
+  dam --> wave1
   wave1 --> kubeblocks
   wave1 --> entitlement_crd
   wave1 --> entitlement_rbac
@@ -154,6 +156,7 @@ flowchart TB
   class repository_providers mod_repository
   class repository_composition_forgejo mod_repository
   class repository_examples mod_repository
+  class dam mod_repository
 ```
 
 ## `manager` — Flux `dependsOn`

@@ -18,3 +18,11 @@ onlyBuiltDependencies:
   - nx
   - protobufjs
   - puppeteer
+
+# `trustPolicy: no-downgrade` flags releases published without provenance after
+# earlier ones had it. These two are legitimate manual publishes (semver 6.3.1 is
+# the ReDoS backport by the npm CLI team; undici-types 6.21.0 by its maintainer);
+# lockfile integrity matches the registry. Pinned to exact versions only.
+trustPolicyExclude:
+  - 'semver@6.3.1'
+  - 'undici-types@6.21.0'

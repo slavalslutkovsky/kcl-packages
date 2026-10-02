@@ -348,6 +348,11 @@ name = "repository-examples"
 manifest = "packages/cloud/repository/xrd/examples/"
 wave = 5
 
+[[deps]]
+name = "dam"
+manifest = "packages/cloud/repository/xrd/examples/1"
+#wave = 5
+
 [tilt]
 enabled = true
 

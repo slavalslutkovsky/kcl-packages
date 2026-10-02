@@ -290,7 +290,7 @@ via `kcl mod init`, strips the nested `models/kcl.mod` that `kcl import` emits
 generated schemas import `k8s.apimachinery…`).
 
 - **`--image`** extracts `/package.yaml` from the provider image (`docker create`
-  + `docker export | tar`), filters CRDs to `--apiScope` (+ `--service`) with
+  - `docker export | tar`), filters CRDs to `--apiScope` (+ `--service`) with
   `yq`, then imports. Requires `docker` and `yq`. This is the versioned artifact
   the providers actually publish — pin the image tag for reproducibility.
 - **`--repo`** downloads only the matching CRDs from the repo at `--ref`.

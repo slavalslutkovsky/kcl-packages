@@ -561,6 +561,23 @@ graph:
 graph-check:
     node tools/graph/src/install-graph.ts --check
 
+# Regenerate docs/devkit-commands.md: every `devkit …` command, flag and
+# default, from the installed devkit module's own help text (`monodocs nu`,
+# which works the same on any Nushell module or script, in any repo).
+nu-docs:
+    monodocs nu devkit --prefix devkit --out docs/devkit-commands.md
+
+# Fail if docs/devkit-commands.md differs from the installed devkit's help text.
+# Local only: CI has neither monodocs nor the devkit module.
+nu-docs-check:
+    monodocs nu devkit --prefix devkit | diff -u docs/devkit-commands.md - || { echo 'docs/devkit-commands.md is stale: run `just nu-docs`' >&2; exit 1; }
+
+# Regenerate every generated doc under docs/.
+docs: graph nu-docs
+
+# Fail if any generated doc under docs/ is stale.
+docs-check: graph-check nu-docs-check
+
 # Merge, revert and fixup!/squash! subjects are git's own wording, so they pass
 # through untouched.
 # `nx release` writes the package changelogs from these.
