@@ -1,0 +1,59 @@
+# Local overrides for lefthook.yml: `butler repo init` merges this over its template, and this file wins.
+assert_lefthook_installed: true
+pre-commit:
+  parallel: false
+  jobs:
+  - name: kcl-fmt
+    exclude:
+    - packages/providers/**
+    run: just fmt-files {staged_files}
+  - name: kcl-lint
+    glob: '*.k'
+    exclude:
+    - packages/providers/**
+    run: just lint-files {staged_files}
+  - name: yaml-syntax
+    glob: '*.{yaml,yml}'
+    run: just yaml-check {staged_files}
+  - name: package-integrity
+    glob: '*.{mod,yaml}'
+    run: just mod-check
+  - name: secrets
+    run: just secrets-check {staged_files}
+  - name: install-graph
+    glob: '{devkit.toml,packages/manager/examples/values.yaml,tools/graph/**}'
+    run: just graph-check
+  - name: typecheck
+    glob: tools/**/*.ts
+    run: just typecheck
+  - name: biome
+    skip: true
+commit-msg:
+  jobs:
+  - name: conventional-commit
+    run: just commit-msg {1}
+  - name: conventional
+    skip: true
+  - name: authorship
+    skip: true
+pre-push:
+  parallel: false
+  jobs:
+  - name: check
+    run: just check
+  - name: typecheck
+    run: just typecheck
+  - name: biome-ci
+    skip: true
+prepare-commit-msg:
+  jobs:
+  - name: authorship-stamp
+    skip: true
+post-checkout:
+  jobs:
+  - name: deps-sync
+    skip: true
+post-merge:
+  jobs:
+  - name: deps-update
+    skip: true

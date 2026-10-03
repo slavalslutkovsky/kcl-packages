@@ -578,6 +578,15 @@ docs: graph nu-docs
 # Fail if any generated doc under docs/ is stale.
 docs-check: graph-check nu-docs-check
 
+# Regenerate lefthook.yml, tools/authorship/ from butler's templates, merged
+# with their `<name>.local.<ext>` overlays (lefthook.local.yml, …).
+repo-init:
+    butler repo init
+
+# Fail if a repo file is missing or stale.
+repo-check:
+    butler repo init --check
+
 # Merge, revert and fixup!/squash! subjects are git's own wording, so they pass
 # through untouched.
 # `nx release` writes the package changelogs from these.
