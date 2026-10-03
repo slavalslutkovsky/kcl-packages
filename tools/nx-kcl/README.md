@@ -129,7 +129,7 @@ Each KCL package gets these targets:
 | Target               | Command                          | Cached | Notes |
 | -------------------- | -------------------------------- | :----: | ----- |
 | `build`              | `kcl run main.k`                 | yes    | Compiles the entry point. |
-| `test`               | `kcl test`                       | yes    | Runs `*_test.k` tests. |
+| `test`               | `kcl test`                       | yes    | Runs `*_test.k` tests; depends on `lint` (same package — `kcl test` drops a temp `.k` that a concurrent `kcl lint` would compile). |
 | `lint`               | `kcl lint`                       | yes    | |
 | `fmt`                | `kcl fmt`                        | no     | Formats sources in place. |
 | `add`               | `kcl mod add <args>`             | no     | Add a dependency (args forwarded). |
@@ -295,7 +295,10 @@ generated schemas import `k8s.apimachinery…`).
   the providers actually publish — pin the image tag for reproducibility.
 - **`--repo`** downloads only the matching CRDs from the repo at `--ref`.
 
-Provenance is written into the package's `main.k`. Requires `kcl` + network.
+Provenance is written into the package's `main.k`, and a `README.md` lists every
+resource kind under `models/<apiVersion>/` with its import path (nested field
+schemas and the vendored `models/k8s` are left out; `models/unknown` is listed
+as one package to import whole). Requires `kcl` + network.
 
 | Option      | Default        | Description |
 | ----------- | -------------- | ----------- |

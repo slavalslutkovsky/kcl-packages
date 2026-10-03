@@ -1,0 +1,110 @@
+# The app of apps of one cluster → fleet.Fleet. Render with
+#   kcl run /abs/path/to/packages/fleet -D values=<this file> -q | kubectl apply -f -
+# or `just fleet` (this file is the default).
+#
+# Every entry becomes a `Component` XR in `namespace` (flux-system): one Flux
+# source plus one Kustomization or HelmRelease, composed by
+# packages/platform/component. The cluster therefore needs Crossplane with that
+# XRD and Composition installed (`just install-module component`) and Flux.
+#
+# Two layers. `platform:` is what the platform team owns and what everything
+# else needs first — Crossplane, the provider, this repo's XRDs and
+# Compositions. `teams:` is one entry per application team; each team's apps
+# land in the team's namespace and, because `waitForPlatform` defaults to true,
+# each one waits for the whole platform layer to be Ready.
+#
+# The three engines are the three ways teams actually ship: a Helm chart
+# (`web`'s nginx), a kustomize overlay in Git (`web`'s own service), and
+# Crossplane XRs applied as plain YAML (`data`'s database). A team picks one per
+# app, not per fleet.
+
+name: platform
+namespace: flux-system            # where every Component XR lives
+waitForPlatform: true             # the application layer waits for the platform layer
+
+platform:
+  # Crossplane itself: a chart, from the upstream Helm index.
+  - name: crossplane
+    engine: helm
+    source:
+      url: https://charts.crossplane.io/stable
+      interval: 1h                # a pinned chart does not need minute-level polling
+    chart: crossplane
+    version: 2.3.4
+    targetNamespace: crossplane-system
+  # The platform's own API surface — XRDs and Compositions, pushed as an OCI
+  # artifact by CI (`flux push artifact`). `engine: crossplane` says the content
+  # is Crossplane objects: applied by kustomize-controller, health-checked
+  # before the layer counts as Ready.
+  - name: platform-apis
+    engine: crossplane
+    source:
+      url: oci://ghcr.io/example/platform-apis
+      tag: v1.4.0
+    path: ./apis
+    dependsOn: [crossplane]       # a platform app may only depend on platform apps
+  # Cluster-wide policy, plain YAML from Git.
+  - name: policy
+    engine: kustomize
+    source:
+      url: https://github.com/example/platform-policy
+      branch: main
+    path: ./clusters/dev
+    dependsOn: [crossplane]
+
+teams:
+  # An application team that ships charts and a kustomize overlay.
+  - name: web
+    namespace: web
+    labels:
+      team: web
+      cost-center: "4711"
+    apps:
+      # The nginx case: a chart out of an OCI Helm registry, values inline.
+      - name: nginx
+        engine: helm
+        source:
+          url: oci://registry-1.docker.io/bitnamicharts
+        chart: nginx
+        version: 21.1.24
+        values:
+          replicaCount: 2
+          service:
+            type: ClusterIP
+      # The same team's own app: a kustomize overlay in their repository,
+      # applied after nginx exists.
+      - name: web-api
+        engine: kustomize
+        source:
+          url: https://github.com/example/web-api
+          branch: main
+          secretRef: web-api-git   # existing Secret in flux-system, basic-auth
+        path: ./deploy/overlays/dev
+        dependsOn: [nginx]
+        # The Flux controller impersonates this ServiceAccount while applying,
+        # so the team cannot create objects it was not granted.
+        serviceAccount: web-deployer
+
+  # A team that consumes the platform through Crossplane XRs instead of YAML.
+  - name: data
+    namespace: data
+    labels:
+      team: data
+    apps:
+      # Claims/XRs (a Postgres, a Bucket) pushed as an OCI artifact by the
+      # team's CI. Waits for platform-apis through the platform barrier, since
+      # the XRDs it instantiates arrive there.
+      - name: data-resources
+        engine: crossplane
+        source:
+          url: oci://ghcr.io/example/data-resources
+          semver: ">=1.0.0 <2.0.0"
+        path: ./
+      # An operator the team owns, from a classic Helm index.
+      - name: cnpg
+        engine: helm
+        source:
+          url: https://cloudnative-pg.github.io/charts
+        chart: cloudnative-pg
+        version: 0.27.0
+        targetNamespace: cnpg-system   # overrides the team namespace

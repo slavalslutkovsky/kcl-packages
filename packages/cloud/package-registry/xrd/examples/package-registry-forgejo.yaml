@@ -1,0 +1,45 @@
+# The XR comes FIRST in this file on purpose: `crossplane render` (and
+# `just pkgreg-render forgejo`) reads the first document as the composite, and
+# the admin Secret below is a prerequisite of the chart, not something the
+# Composition renders. `kubectl apply -f examples/` applies both.
+apiVersion: cloud.example.org/v1alpha1
+kind: PackageRegistry
+metadata:
+  namespace: default
+  name: my-packages
+spec:
+  # No cloud account involved: the Forgejo chart is installed into this XR's
+  # own namespace by provider-helm. `region` stays required by the XRD, so give
+  # it something honest.
+  region: in-cluster
+  # The only backend that serves every format from one instance.
+  formats:
+    - oci
+    - npm
+    - pypi
+    - cargo
+  owner: packages                # forgejo-only, REQUIRED: the user that owns the packages
+  adminSecret: my-packages-admin # forgejo-only, REQUIRED: the Secret below
+  storageGb: 20                  # self-hosted only: PVC the repository data lives on
+  publicAccess: false            # true drops REQUIRE_SIGNIN_VIEW, so reads need no login
+  deletionPolicy: Delete         # Orphan leaves the Helm release (and the packages) installed
+  # Ignored by this backend: immutableTags, scanOnPush, untaggedRetentionDays,
+  # keepLastImages, encryptionKeyId, replicationRegions, forceDestroy and tags
+  # — Forgejo's retention rules are per-owner UI/API settings, not chart values.
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: forgejo        # the flag: picks the backend (aws | gcp | azure | zot | forgejo)
+---
+# kind-only demo credential. The Forgejo chart creates its admin user from an
+# EXISTING Secret with `username`/`password` keys, and `username` must be the
+# spec.owner above — every package endpoint is /api/packages/<owner>/…. Replace
+# both values (or point adminSecret at a Secret you manage) outside a sandbox.
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: default
+  name: my-packages-admin
+stringData:
+  username: packages
+  password: change-me-packages

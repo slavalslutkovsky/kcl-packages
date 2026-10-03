@@ -1,0 +1,27 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: PostgresInstance
+metadata:
+  namespace: default
+  name: my-pg
+spec:
+  region: us-central1             # VirtualMachine region
+  engineVersion: "16"             # -> PGDG package postgresql-16
+  memoryGb: 8                     # -> VirtualMachine size medium
+  storageGb: 50                   # -> root disk 60 GiB (data lives on it)
+  database: app                   # created by the boot script
+  username: app                   # owner of `database`
+  passwordSecret:                 # REQUIRED: only md5(password + username) reaches the VM
+    name: my-pg-password
+    key: password
+  parameters:
+    max_connections: "200"
+  vm:
+    provider: gcp                 # the VirtualMachine backend: aws | gcp | azure
+    image: ubuntu-24-04
+    allowedCidr: 10.0.0.0/8       # pg_hba.conf client range
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: vm              # the flag: picks the backend (aws | gcp | azure | cnpg | vm)

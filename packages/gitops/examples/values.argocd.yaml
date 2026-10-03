@@ -1,0 +1,22 @@
+# Overlay for `-D env=argocd`: the same loop, reconciled by Argo CD instead of
+# Flux — an AppProject + Application in `argocd` replace the GitRepository +
+# Kustomization in `flux-system`. Argo CD must already run on the cluster.
+#
+#   kcl run packages/gitops -D values=packages/gitops/examples/values.yaml -D env=argocd -q
+#
+# Argo CD finds a repository's credential by URL, not by a name on the
+# Application, so `secretRef` is dropped and the Secret is a labelled
+# repository Secret in the argocd namespace instead:
+#
+#   kubectl -n argocd create secret generic gitops-repo \
+#     --from-literal=url=https://github.com/yurikrupnik-org/gitops \
+#     --from-literal=username=yurikrupnik \
+#     --from-literal=password="$GITHUB_PAT"
+#   kubectl -n argocd label secret gitops-repo argocd.argoproj.io/secret-type=repository
+#
+# After the forge switch, set `source.origin: forge` here as well and point a
+# second repository Secret at http://git-http.platform.svc:3000/yurikrupnik-org/gitops.git.
+engine: argocd
+namespace: argocd # the namespace Argo CD watches for Applications
+source:
+  secretRef: null # Flux-only; see the repository Secret above

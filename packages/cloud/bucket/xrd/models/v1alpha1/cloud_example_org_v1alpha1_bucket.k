@@ -51,6 +51,8 @@ schema CloudExampleOrgV1alpha1BucketSpec:
         CMEK/SSE-KMS key. When set, GCP encryption.defaultKmsKeyName / AWS SSE aws:kms with this key; otherwise provider-default encryption.
     forceDestroy : bool, default is Undefined, optional
         Delete all contained objects when the bucket is destroyed. GCP/AWS forceDestroy.
+    $import : CloudExampleOrgV1alpha1BucketSpecImport, default is Undefined, optional
+        import
     lifecycleRules : [CloudExampleOrgV1alpha1BucketSpecLifecycleRulesItems0], default is Undefined, optional
         Object lifecycle management rules (in addition to the storageClass tier mapping).
     logging : CloudExampleOrgV1alpha1BucketSpecLogging, default is Undefined, optional
@@ -78,6 +80,7 @@ schema CloudExampleOrgV1alpha1BucketSpec:
     deletionPolicy?: "Delete" | "Orphan" = "Delete"
     encryptionKmsKeyId?: str
     forceDestroy?: bool = False
+    $import?: CloudExampleOrgV1alpha1BucketSpecImport
     lifecycleRules?: [CloudExampleOrgV1alpha1BucketSpecLifecycleRulesItems0]
     logging?: CloudExampleOrgV1alpha1BucketSpecLogging
     region: str
@@ -178,6 +181,42 @@ schema CloudExampleOrgV1alpha1BucketSpecCrossplaneCompositionSelector:
     """
     matchLabels: {str:str}
 
+schema CloudExampleOrgV1alpha1BucketSpecImport:
+    r"""
+    Adopt a bucket that already exists — typically one Terraform or
+    Pulumi created — instead of creating a new one. existingName is
+    pinned as crossplane.io/external-name on every composed managed
+    resource, so the provider observes the real bucket rather than
+    creating a second one. Start in mode=observe (Crossplane only
+    reads; the old tool still owns writes), compare status against
+    the spec, then flip to mode=manage and drop the bucket from the
+    old tool's state (`terraform state rm` / `pulumi state delete`).
+    See docs/bucket-import.md.
+
+
+    Attributes
+    ----------
+    address : str, default is Undefined, optional
+        Where the bucket lives in the old tool's state — a Terraform resource address (aws_s3_bucket.assets) or a Pulumi URN — so the state-removal step can be scripted from the XR alone.
+    existingName : str, default is Undefined, required
+        Exact cloud name of the bucket to adopt (S3 bucket name, GCS bucket name, Azure storage account name). Terraform/Pulumi usually suffix these, so it rarely equals metadata.name.
+    mode : str, default is "observe", optional
+        observe sets managementPolicies=[Observe] — Crossplane never writes, so the old tool keeps ownership and nothing is changed by mistake. manage hands full control to Crossplane; deletionPolicy then applies as usual.
+    resourceGroup : str, default is Undefined, optional
+        Azure only — resource group of the storage account being adopted; the account cannot be observed without it. Ignored by the other backends.
+    source : str, default is Undefined, optional
+        Tool that created the bucket; recorded as an annotation on the composed resources for audit.
+    """
+    address?: str
+    existingName: str
+
+    mode?: "observe" | "manage" = "observe"
+    resourceGroup?: str
+    source?: "terraform" | "pulumi" | "other"
+
+    check:
+        len(existingName) >= 1
+
 schema CloudExampleOrgV1alpha1BucketSpecLifecycleRulesItems0:
     r"""
     cloud example org v1alpha1 bucket spec lifecycle rules items0
@@ -265,6 +304,8 @@ schema CloudExampleOrgV1alpha1BucketStatus:
         HTTP(S) host/domain for the bucket.
     id : str, default is Undefined, optional
         Provider-assigned resource id.
+    mode : str, default is Undefined, optional
+        How Crossplane relates to the cloud bucket — created (Crossplane made it), observe (adopted, read-only) or managed (adopted, Crossplane owns writes).
     provider : str, default is Undefined, optional
         Cloud backend that fulfilled the claim (gcp | aws).
     ready : bool, default is Undefined, optional
@@ -283,6 +324,7 @@ schema CloudExampleOrgV1alpha1BucketStatus:
     "cloud-url"?: str
     endpoint?: str
     id?: str
+    mode?: str
     provider?: str
     ready?: bool
     region?: str

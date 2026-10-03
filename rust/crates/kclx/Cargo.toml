@@ -14,10 +14,14 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+kcl-agent = { path = "../kcl-agent" }
+kcl-operator = { path = "../kcl-operator" }
 kcl-render = { path = "../kcl-render" }
+kube.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
+tracing-subscriber.workspace = true
 
 # Crossplane composition function server: vendored, pre-generated protobuf for
 # apiextensions.fn.proto.v1 (no protoc at build time), spec-compliant flags,

@@ -8,7 +8,7 @@
 #   providers.sh check            fail on drift between registry, generated
 #                                 packages and the xrd/providers.yaml manifests
 #
-# `filter`/`target` match a provider name, a cloud (aws|gcp|azure|kubernetes)
+# `filter`/`target` match a provider name, a cloud (aws|gcp|azure|oci|kubernetes)
 # or a module (bucket, redis, …); "all"/empty means everything.
 #
 # Requires: yq v4. `seed` additionally needs node_modules (nx) plus docker for
@@ -29,6 +29,7 @@ rows() {
         .name, .cloud, (.service // ""),
         (.image // ""), (.tag // ""),
         (.repo // ""), (.ref // ""), (.crdPath // ""),
+        (.catalog // ""), ((.kinds // []) | join(",")),
         (.scope // "namespaced"),
         (.install // ""),
         ((.modules // []) | join(","))
@@ -45,9 +46,16 @@ install_ref() { # image tag install
     esac
 }
 
-# Where the CRDs were generated from — image:tag or repo@ref.
-source_ref() { # image tag repo ref
-    if [ -n "$1" ]; then printf '%s:%s' "$1" "$2"; else printf '%s@%s' "$3" "$4"; fi
+# Where the CRDs were generated from — image:tag, repo@ref, or the catalog
+# commit the schemas were rebuilt from (see tools/datree-crd.sh).
+source_ref() { # image tag repo ref catalog
+    if [ -n "$1" ]; then
+        printf '%s:%s' "$1" "$2"
+    elif [ -n "$3" ]; then
+        printf '%s@%s' "$3" "$4"
+    else
+        printf 'datreeio/CRDs-catalog@%s' "$5"
+    fi
 }
 
 matches() { # filter name cloud modules
@@ -61,9 +69,9 @@ cmd_list() {
     local filter=${1:-} src inst
     {
         printf 'NAME\tCLOUD\tSOURCE\tINSTALL\tMODULES\n'
-        while IFS='|' read -r name cloud service image tag repo ref crdPath scope install modules; do
+        while IFS='|' read -r name cloud service image tag repo ref crdPath catalog kinds scope install modules; do
             matches "$filter" "$name" "$cloud" "$modules" || continue
-            src=$(source_ref "$image" "$tag" "$repo" "$ref")
+            src=$(source_ref "$image" "$tag" "$repo" "$ref" "$catalog")
             inst=$(install_ref "$image" "$tag" "$install")
             printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$cloud" "$src" "${inst:--}" "${modules:--}"
         done < <(rows)
@@ -71,19 +79,33 @@ cmd_list() {
 }
 
 cmd_seed() {
-    local target=${1:-all} found=0
-    while IFS='|' read -r name cloud service image tag repo ref crdPath scope install modules; do
+    local target=${1:-all} found=0 src crddir
+    while IFS='|' read -r name cloud service image tag repo ref crdPath catalog kinds scope install modules; do
         matches "$target" "$name" "$cloud" "$modules" || continue
         found=1
-        echo "== $name ($(source_ref "$image" "$tag" "$repo" "$ref"))"
-        local args=("$name" --directory=packages/providers "--apiScope=$scope" --no-interactive)
+        src=$(source_ref "$image" "$tag" "$repo" "$ref" "$catalog")
+        echo "== $name ($src)"
+        local args=("$name" --directory=packages/providers "--apiScope=$scope" --force --no-interactive)
         [ -n "$service" ] && args+=("--service=$service")
         if [ -n "$image" ]; then
             args+=("--image=$image:$tag")
-        else
+        elif [ -n "$repo" ]; then
             args+=("--repo=$repo" "--ref=$ref" "--crdPath=$crdPath")
+        else
+            # Catalog rows carry JSON Schemas, not CRDs. Rebuild the envelope
+            # into a temp dir and import that — with --sourceLabel, so main.k
+            # records the pinned catalog commit rather than the temp path, and
+            # `check` below can still see drift.
+            crddir=$(mktemp -d)
+            # shellcheck disable=SC2086 # `kinds` is a comma-joined list, split on purpose
+            (cd "$root" && IFS=, && tools/datree-crd.sh "$catalog" "$crddir" $kinds)
+            args+=("--from=$crddir" "--sourceLabel=$src (${kinds})")
         fi
         (cd "$root" && "$nx" g nx-kcl:import-crd "${args[@]}")
+        if [ -n "${crddir:-}" ]; then
+            rm -rf "$crddir"
+            crddir=
+        fi
     done < <(rows)
     [ "$found" = 1 ] || { echo "providers.sh: nothing in the registry matches '$target'" >&2; exit 1; }
 }
@@ -94,11 +116,11 @@ cmd_check() {
 
     echo "── registry ↔ packages/providers ──────────────────────────"
     local registered=()
-    while IFS='|' read -r name cloud service image tag repo ref crdPath scope install modules; do
+    while IFS='|' read -r name cloud service image tag repo ref crdPath catalog kinds scope install modules; do
         registered+=("$name")
         local main="$root/packages/providers/$name/main.k"
         local src
-        src=$(source_ref "$image" "$tag" "$repo" "$ref")
+        src=$(source_ref "$image" "$tag" "$repo" "$ref" "$catalog")
         if [ ! -f "$main" ]; then
             err "$name: no schema package — run 'just seed $name'"
             continue
@@ -121,12 +143,15 @@ cmd_check() {
     local module want installed
     for f in "$root"/packages/cloud/*/xrd/providers.yaml; do
         module=$(basename "$(dirname "$(dirname "$f")")")
-        want=$(while IFS='|' read -r name cloud service image tag repo ref crdPath scope install modules; do
+        want=$(while IFS='|' read -r name cloud service image tag repo ref crdPath catalog kinds scope install modules; do
             case ",$modules," in
                 *",$module,"*) install_ref "$image" "$tag" "$install" | grep . || true ;;
             esac
         done < <(rows) | sort -u)
-        installed=$(yq -r 'select(.kind == "Provider") | .spec.package' "$f" | sort -u)
+        # `yq select(...)` still prints a `---` separator for every document it
+        # filters out, and providers.yaml is always multi-document — without
+        # dropping those, every module reports a phantom install named `---`.
+        installed=$(yq -r 'select(.kind == "Provider") | .spec.package' "$f" | grep -v '^---$' | sort -u)
         while read -r missing; do
             [ -n "$missing" ] && err "$module: registry expects $missing, missing from xrd/providers.yaml" || true
         done <<<"$(comm -23 <(printf '%s' "$want") <(printf '%s' "$installed"))"

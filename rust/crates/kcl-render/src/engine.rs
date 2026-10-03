@@ -13,6 +13,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use kcl_lang::{API, Argument, ExecProgramArgs, ExternalPkg};
 use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::deps::{Registries, Resolver};
 use crate::source::{Entry, Source};
@@ -246,11 +247,18 @@ impl Engine {
                 self.pulled.lock().insert(key, entry.clone());
                 Ok(entry)
             }
-            // Per-process so concurrent CLI runs cannot clobber each other's
-            // inline `main.k`; OCI pulls stay in the shared cache.
-            other => {
-                other.materialise(&self.scratch.join(format!("inline-{}", std::process::id())))
+            // Content-addressed, and deliberately not per-process: the
+            // function server and the operator render for several callers
+            // at once, and a shared `inline-<pid>/main.k` meant one render
+            // could execute another's program (the file is written before
+            // the exec lock is taken). Distinct sources now never share a
+            // path, and identical ones are byte-identical anyway.
+            Source::Inline(code) => {
+                let digest = Sha256::digest(code.as_bytes());
+                source.materialise(&self.scratch.join(format!("inline-{digest:x}")))
             }
+            // `Path` ignores the scratch directory entirely.
+            Source::Path(_) => source.materialise(&self.scratch),
         }
     }
 

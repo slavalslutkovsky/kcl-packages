@@ -14,6 +14,11 @@ Same contract as `app`:
 replace, so an overlay can set `chaos: {experiments: []}` or `paused: true`).
 The merged result is validated against the typed `Manager` schema.
 
+`-D catalog=true` renders the Backstage entities of the `catalog:` block —
+the cluster and its game days — instead of the manifests:
+
+  kcl run packages/manager -D values=<file> -D catalog=true -q > catalog-info.yaml
+
 With no values file present (e.g. `nx build manager` from the repo root) this
 renders a built-in demo so the build still smoke-tests the package.
 """
@@ -44,4 +49,9 @@ _values = app.mergeValues(_baseValues, yaml.decode(file.read(_overlayPath))) if 
 
 _manager: lib.Manager = lib.Manager {**_values}
 
-manifests.yaml_stream(lib.render(_manager))
+# `-D catalog=true` switches the output to Backstage entities. Stringified
+# because -D parses an unquoted `true` as a bool.
+_catalog = str(option("catalog", default="")).lower() in ["true", "1", "yes"]
+assert not _catalog or _manager.catalog, "-D catalog=true needs a `catalog:` block in '${_valuesPath}': a Backstage entity needs at least an `owner`."
+
+manifests.yaml_stream(lib.catalogEntities(_manager) if _catalog else lib.render(_manager))

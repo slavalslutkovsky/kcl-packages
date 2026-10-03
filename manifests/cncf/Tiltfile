@@ -1,0 +1,56 @@
+# manifests/cncf/Tiltfile — the local developer loop over packages/cncf.
+# Start it with `just cncf-dev [values] [env]`; the cluster comes from
+# `just cncf-up [kind|k3d|openshift]`.
+#
+# local_resource, not k8s_yaml, on purpose: the render contains custom
+# resources whose CRDs arrive with the charts, so a single `kubectl apply`
+# fails on a bare cluster. `just cncf-apply` owns the two-pass ordering.
+root = os.path.abspath(os.path.join(config.main_dir, '..', '..'))
+values = os.getenv('CNCF_VALUES', 'packages/cncf/examples/values.yaml')
+env = os.getenv('CNCF_ENV', '')
+
+# kind-* and k3d-* are on Tilt's default local-cluster allow list; CRC's
+# crc-admin is not, so it has to be allowed explicitly — and the cluster still
+# has to be the cncf one.
+allow_k8s_contexts('crc-admin')
+ctx = k8s_context()
+if ctx not in ['kind-kcl-cncf', 'k3d-kcl-cncf', 'crc-admin']:
+    fail('kube context is %s; `just cncf-up kind|k3d|openshift` creates and selects kind-kcl-cncf / k3d-kcl-cncf / crc-admin' % ctx)
+
+local_resource(
+    'cncf',
+    cmd='just cncf-apply %s %s' % (values, env),
+    dir=root,
+    deps=[
+        os.path.join(root, 'packages/cncf'),
+        os.path.join(root, 'packages/manager'),
+        os.path.join(root, values),
+    ],
+    ignore=['**/*_test.k', '**/CHANGELOG.md'],
+    labels=['cncf'],
+)
+local_resource(
+    'cncf-ca',
+    cmd='just cncf-ca %s %s' % (values, env),
+    dir=root,
+    resource_deps=['cncf'],
+    labels=['cncf'],
+)
+local_resource(
+    'cncf-check',
+    cmd='just cncf-check %s %s' % (values, env),
+    dir=root,
+    resource_deps=['cncf'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['cncf'],
+)
+local_resource(
+    'cncf-status',
+    cmd='just cncf-status',
+    dir=root,
+    resource_deps=['cncf'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['cncf'],
+)

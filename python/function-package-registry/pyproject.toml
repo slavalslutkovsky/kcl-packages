@@ -1,0 +1,117 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "function-package-registry"
+description = "Composes a PackageRegistry XR into per-backend registry resources"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "Apache-2.0"
+keywords = []
+authors = [{ name = "Yuri Krupnik" }]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.11",
+]
+
+dependencies = [
+  "crossplane-function-sdk-python==0.15.0",
+  "click==8.5.0",
+  "grpcio>=1.73.1",
+  # Direct: function/models/** (generated from the provider CRDs) is pydantic,
+  # and resource.update() serialises those models itself.
+  "pydantic>=2.11",
+]
+
+dynamic = ["version"]
+
+[project.urls]
+Documentation = "https://github.com/yurikrupnik/kcl-packages/tree/main/python/function-package-registry#readme"
+Issues = "https://github.com/yurikrupnik/kcl-packages/issues"
+Source = "https://github.com/yurikrupnik/kcl-packages"
+
+[project.scripts]
+function = "function.main:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["function"]
+
+[tool.hatch.version]
+path = "function/__version__.py"
+validate-bump = false            # Allow going from 0.0.0.dev0+x to 0.0.0.dev0+y.
+
+[tool.hatch.envs.default]
+type = "virtual"
+path = ".venv-default"
+dependencies = ["ipython==9.4.0"]
+
+[tool.hatch.envs.default.scripts]
+development = "python function/main.py --insecure --debug"
+
+# This special environment is used by hatch fmt.
+[tool.hatch.envs.hatch-static-analysis]
+dependencies = ["ruff==0.12.7"]
+config-path = "none"           # Disable Hatch's default Ruff config.
+
+# `just pkgreg-models`: regenerates function/models/** from the pinned provider
+# CRDs. Detached because it builds no wheel — it only reads CRD JSON schemas
+# and writes Python. datamodel-code-generator is pinned for the same reason the
+# provider tags are: a generator bump rewrites every model file.
+[tool.hatch.envs.models]
+detached = true
+dependencies = ["datamodel-code-generator==0.82.0", "ruff==0.12.7"]
+
+[tool.ruff]
+target-version = "py311"
+# function/models/<provider>/ is GENERATED from provider CRDs
+# (`just pkgreg-models`): upstream field docstrings, generator line lengths.
+# function/models/base.py is hand-written and stays linted.
+exclude = ["function/proto/*", "function/models/*/"]
+
+[tool.ruff.lint]
+select = [
+  "A",
+  "ARG",
+  "ASYNC",
+  "B",
+  "C",
+  "D",
+  "DTZ",
+  "E",
+  "EM",
+  "ERA",
+  "F",
+  "FBT",
+  "I",
+  "ICN",
+  "ISC",
+  "N",
+  "PLC",
+  "PLE",
+  "PLR",
+  "PLW",
+  "Q",
+  "RUF",
+  "S",
+  "T",
+  "TID",
+  "UP",
+  "W",
+  "YTT",
+]
+ignore = ["ISC001"] # Ruff warns this is incompatible with ruff format.
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"] # Don't require docstrings for tests.
+
+[tool.ruff.lint.isort]
+known-first-party = ["function"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pep8-naming]
+# gRPC requires this PascalCase function name.
+extend-ignore-names = ["RunFunction"]

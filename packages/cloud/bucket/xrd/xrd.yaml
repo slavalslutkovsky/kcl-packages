@@ -147,6 +147,39 @@ spec:
                         enum: [standard, nearline, cold, archive]
                         description: Abstract tier to transition to; mapped per-provider.
                     required: [id]
+                import:
+                  type: object
+                  description: |
+                    Adopt a bucket that already exists — typically one Terraform or
+                    Pulumi created — instead of creating a new one. existingName is
+                    pinned as crossplane.io/external-name on every composed managed
+                    resource, so the provider observes the real bucket rather than
+                    creating a second one. Start in mode=observe (Crossplane only
+                    reads; the old tool still owns writes), compare status against
+                    the spec, then flip to mode=manage and drop the bucket from the
+                    old tool's state (`terraform state rm` / `pulumi state delete`).
+                    See docs/bucket-import.md.
+                  properties:
+                    existingName:
+                      type: string
+                      minLength: 1
+                      description: Exact cloud name of the bucket to adopt (S3 bucket name, GCS bucket name, Azure storage account name). Terraform/Pulumi usually suffix these, so it rarely equals metadata.name.
+                    mode:
+                      type: string
+                      enum: [observe, manage]
+                      default: observe
+                      description: observe sets managementPolicies=[Observe] — Crossplane never writes, so the old tool keeps ownership and nothing is changed by mistake. manage hands full control to Crossplane; deletionPolicy then applies as usual.
+                    source:
+                      type: string
+                      enum: [terraform, pulumi, other]
+                      description: Tool that created the bucket; recorded as an annotation on the composed resources for audit.
+                    address:
+                      type: string
+                      description: Where the bucket lives in the old tool's state — a Terraform resource address (aws_s3_bucket.assets) or a Pulumi URN — so the state-removal step can be scripted from the XR alone.
+                    resourceGroup:
+                      type: string
+                      description: Azure only — resource group of the storage account being adopted; the account cannot be observed without it. Ignored by the other backends.
+                  required: [existingName]
               required:
                 - region
             status:
@@ -158,6 +191,9 @@ spec:
                 provider:
                   type: string
                   description: Cloud backend that fulfilled the claim (gcp | aws).
+                mode:
+                  type: string
+                  description: How Crossplane relates to the cloud bucket — created (Crossplane made it), observe (adopted, read-only) or managed (adopted, Crossplane owns writes).
                 bucketName:
                   type: string
                   description: Name of the provisioned bucket.
@@ -192,6 +228,9 @@ spec:
         - name: PROVIDER
           type: string
           jsonPath: .status.provider
+        - name: MODE
+          type: string
+          jsonPath: .status.mode
         - name: URL
           type: string
           jsonPath: .status.url

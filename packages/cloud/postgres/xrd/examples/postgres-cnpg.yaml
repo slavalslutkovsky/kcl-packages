@@ -12,6 +12,17 @@ spec:
   username: app                   # initdb owner; password generated into my-pg-app
   replicas: 1                     # one streaming standby (instances = 2)
   highAvailability: true          # keeps at least one standby even at replicas=0
+  snapshotRetentionDays: 14       # -> backup.retentionPolicy 14d (0 = keep forever)
+  backup:                         # in-cluster only: base backups + WAL archiving
+    provider: s3                  # -> destinationPath s3://… and s3Credentials
+    bucket: pg-backups            # must already exist — compose a Bucket XR for it
+    path: prod/my-pg              # -> s3://pg-backups/prod/my-pg
+    endpoint: http://rustfs.rustfs.svc.cluster.local:9000  # -> endpointURL; in-cluster RustFS
+    credentialsSecret:            # omit the whole block to use IRSA/Workload Identity
+      name: rustfs-creds          # Secret in this namespace
+      accessKeyIdKey: ACCESS_KEY_ID          # CNPG's own key names — these are the defaults
+      secretAccessKeyKey: ACCESS_SECRET_KEY
+      regionKey: REGION           # the region is a Secret key here, never a literal
   parameters:                     # postgresql.parameters
     max_connections: "200"
   tags:

@@ -1,0 +1,3 @@
+# Git submodule (personal dotfiles). It ships its own kcl.mod files, which the
+# nx-kcl plugin's `**/kcl.mod` glob would otherwise infer as workspace projects.
+dotconfig/

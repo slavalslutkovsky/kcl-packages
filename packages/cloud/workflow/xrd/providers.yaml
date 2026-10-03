@@ -1,0 +1,40 @@
+# Crossplane providers the Workflow Compositions render against. Install only
+# the ones whose backends you intend to use; each Composition references
+# exactly one cloud's families (aws needs both sfn and iam).
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-workflow-providers`) — keep them in step, or
+# the rendered manifests can reference fields the installed provider does not
+# have.
+#
+# Every backend needs real cloud credentials — add a ProviderConfig of your own
+# with `credentials.source: Secret` (or IRSA / Workload Identity) before use.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-workflows
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-workflows:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-sfn
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-sfn:v2.6.0
+---
+# The aws backend composes the state machine's execution Role unless the XR
+# names an existing one.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-iam
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-logic
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-logic:v2.6.0

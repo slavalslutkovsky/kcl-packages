@@ -1,11 +1,35 @@
 # Crossplane providers the VirtualMachine Compositions render against. Install
-# only the ones whose backends you intend to use; each Composition references
-# exactly one cloud (azure needs both azure providers below — the VM's NIC and
-# public IP live in the network family).
+# only the ones whose backends you intend to use; each CLOUD Composition
+# references exactly one cloud (azure needs both azure providers below — the
+# VM's NIC and public IP live in the network family).
 #
 # The versions here are the ones the schema packages under packages/providers/
 # were generated from (`just seed-vm-providers`) — keep them in step, or the
 # rendered manifests can reference fields the installed provider does not have.
+#
+# The in-cluster (kubevirt) backend composes kubevirt.io/v1 VirtualMachines
+# DIRECTLY — no Crossplane provider is involved, so nothing below serves it.
+# It needs the KubeVirt and CDI operators in the cluster instead. Both BUILD
+# their CRDs in Go inside virt-operator / cdi-operator at install time, so the
+# release manifests are the only supported install — there is no Helm chart to
+# point provider-helm at:
+#
+#   kubectl apply -f https://github.com/kubevirt/kubevirt/releases/download/v1.9.0/kubevirt-operator.yaml
+#   kubectl apply -f https://github.com/kubevirt/kubevirt/releases/download/v1.9.0/kubevirt-cr.yaml
+#   kubectl apply -f https://github.com/kubevirt/containerized-data-importer/releases/download/v1.66.1/cdi-operator.yaml
+#   kubectl apply -f https://github.com/kubevirt/containerized-data-importer/releases/download/v1.66.1/cdi-cr.yaml
+#
+# CDI is not optional: the root disk is a spec.dataVolumeTemplates import and
+# only CDI honours it. A bare containerDisk would boot, but throw away every
+# write on restart.
+#
+# Those two tags are the current stable releases, NOT the source of the
+# schemas: packages/providers/kubevirt is generated from the
+# datreeio/CRDs-catalog commit pinned by `catalog` in
+# packages/providers/registry.yaml, which does not record which cluster
+# version its copies were extracted from. The two pins therefore move
+# independently and can drift — if a rendered VirtualMachine references a
+# field the installed CRD rejects, that drift is why.
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:

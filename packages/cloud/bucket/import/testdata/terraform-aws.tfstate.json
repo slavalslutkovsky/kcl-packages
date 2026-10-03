@@ -1,0 +1,403 @@
+{
+ "version": 4,
+ "terraform_version": "1.9.5",
+ "serial": 17,
+ "lineage": "6b1c8e0e-0000-0000-0000-000000000000",
+ "outputs": {},
+ "resources": [
+  {
+   "mode": "data",
+   "type": "aws_caller_identity",
+   "name": "me",
+   "provider": "provider[\"registry.terraform.io/hashicorp/aws\"]",
+   "instances": [
+    {
+     "attributes": {
+      "account_id": "111122223333",
+      "id": "111122223333"
+     }
+    }
+   ]
+  },
+  {
+   "mode": "managed",
+   "type": "aws_s3_bucket",
+   "name": "assets",
+   "provider": "provider[\"registry.terraform.io/hashicorp/aws\"]",
+   "instances": [
+    {
+     "schema_version": 0,
+     "attributes": {
+      "arn": "arn:aws:s3:::legacy-assets-8f3a1c",
+      "bucket": "legacy-assets-8f3a1c",
+      "id": "legacy-assets-8f3a1c",
+      "region": "us-east-1",
+      "force_destroy": false,
+      "object_lock_enabled": true,
+      "tags": {
+       "team": "platform"
+      },
+      "tags_all": {
+       "team": "platform"
+      },
+      "versioning": [
+       {
+        "enabled": true,
+        "mfa_delete": false
+       }
+      ],
+      "server_side_encryption_configuration": [],
+      "lifecycle_rule": [],
+      "cors_rule": [],
+      "logging": [],
+      "website": [],
+      "request_payer": "BucketOwner"
+     }
+    }
+   ]
+  },
+  {
+   "mode": "managed",
+   "type": "aws_s3_bucket_versioning",
+   "name": "assets",
+   "instances": [
+    {
+     "attributes": {
+      "bucket": "legacy-assets-8f3a1c",
+      "id": "legacy-assets-8f3a1c",
+      "versioning_configuration": [
+       {
+        "status": "Enabled",
+        "mfa_delete": ""
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "mode": "managed",
+   "type": "aws_s3_bucket_public_access_block",
+   "name": "assets",
+   "instances": [
+    {
+     "attributes": {
+      "bucket": "legacy-assets-8f3a1c",
+      "block_public_acls": true,
+      "block_public_policy": true,
+      "ignore_public_acls": true,
+      "restrict_public_buckets": true
+     }
+    }
+   ]
+  },
+  {
+   "mode": "managed",
+   "type": "aws_s3_bucket_ownership_controls",
+   "name": "assets",
+   "instances": [
+    {
+     "attributes": {
+      "bucket": "legacy-assets-8f3a1c",
+      "rule": [
+       {
+        "object_ownership": "BucketOwnerEnforced"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "mode": "managed",
+   "type": "aws_s3_bucket_server_side_encryption_configuration",
+   "name": "assets",
+   "instances": [
+    {
+     "attributes": {
+      "bucket": "legacy-assets-8f3a1c",
+      "rule": [
+       {
+        "apply_server_side_encryption_by_default": [
+         {
+          "kms_master_key_id": "arn:aws:kms:us-east-1:111122223333:key/abcd-ef",
+          "sse_algorithm": "aws:kms"
+         }
+        ],
+        "bucket_key_enabled": true
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "mode": "managed",
+   "type": "aws_s3_bucket_lifecycle_configuration",
+   "name": "assets",
+   "instances": [
+    {
+     "attributes": {
+      "bucket": "legacy-assets-8f3a1c",
+      "rule": [
+       {
+        "id": "expire-tmp",
+        "status": "Enabled",
+        "filter": [
+         {
+          "prefix": "tmp/",
+          "object_size_greater_than": "",
+          "tag": []
+         }
+        ],
+        "expiration": [
+         {
+          "days": 7,
+          "date": "",
+          "expired_object_delete_marker": false
+         }
+        ],
+        "transition": [
+         {
+          "days": 3,
+          "date": "",
+          "storage_class": "GLACIER_IR"
+         }
+        ],
+        "abort_incomplete_multipart_upload": [],
+        "noncurrent_version_expiration": [],
+        "noncurrent_version_transition": []
+       },
+       {
+        "id": "paused",
+        "status": "Disabled",
+        "filter": [
+         {
+          "prefix": ""
+         }
+        ],
+        "expiration": [
+         {
+          "days": 30
+         }
+        ],
+        "transition": []
+       },
+       {
+        "id": "smart",
+        "status": "Enabled",
+        "filter": [
+         {
+          "prefix": "data/"
+         }
+        ],
+        "expiration": [],
+        "transition": [
+         {
+          "days": 60,
+          "storage_class": "INTELLIGENT_TIERING"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "mode": "managed",
+   "type": "aws_s3_bucket_object_lock_configuration",
+   "name": "assets",
+   "instances": [
+    {
+     "attributes": {
+      "bucket": "legacy-assets-8f3a1c",
+      "rule": [
+       {
+        "default_retention": [
+         {
+          "mode": "GOVERNANCE",
+          "days": 30,
+          "years": 0
+         }
+        ]
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "mode": "managed",
+   "type": "aws_s3_bucket_cors_configuration",
+   "name": "assets",
+   "instances": [
+    {
+     "attributes": {
+      "bucket": "legacy-assets-8f3a1c",
+      "cors_rule": [
+       {
+        "allowed_headers": [
+         "*"
+        ],
+        "allowed_methods": [
+         "GET",
+         "HEAD"
+        ],
+        "allowed_origins": [
+         "https://example.com"
+        ],
+        "expose_headers": [],
+        "id": "",
+        "max_age_seconds": 3600
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "mode": "managed",
+   "type": "aws_s3_bucket_logging",
+   "name": "assets",
+   "instances": [
+    {
+     "attributes": {
+      "bucket": "legacy-assets-8f3a1c",
+      "target_bucket": "my-access-logs",
+      "target_prefix": "legacy/",
+      "target_grant": []
+     }
+    }
+   ]
+  },
+  {
+   "mode": "managed",
+   "type": "aws_s3_bucket_website_configuration",
+   "name": "assets",
+   "instances": [
+    {
+     "attributes": {
+      "bucket": "legacy-assets-8f3a1c",
+      "index_document": [
+       {
+        "suffix": "index.html"
+       }
+      ],
+      "error_document": [
+       {
+        "key": "404.html"
+       }
+      ],
+      "redirect_all_requests_to": [],
+      "routing_rule": []
+     }
+    }
+   ]
+  },
+  {
+   "mode": "managed",
+   "type": "aws_s3_bucket_request_payment_configuration",
+   "name": "assets",
+   "instances": [
+    {
+     "attributes": {
+      "bucket": "legacy-assets-8f3a1c",
+      "payer": "Requester"
+     }
+    }
+   ]
+  },
+  {
+   "mode": "managed",
+   "type": "aws_s3_bucket_policy",
+   "name": "assets",
+   "instances": [
+    {
+     "attributes": {
+      "bucket": "legacy-assets-8f3a1c",
+      "policy": "{}"
+     }
+    }
+   ]
+  },
+  {
+   "module": "module.logs",
+   "mode": "managed",
+   "type": "aws_s3_bucket",
+   "name": "this",
+   "provider": "module.logs:provider[\"registry.terraform.io/hashicorp/aws\"]",
+   "instances": [
+    {
+     "index_key": "logs",
+     "schema_version": 0,
+     "attributes": {
+      "bucket": "my-access-logs",
+      "id": "my-access-logs",
+      "region": "us-east-1",
+      "force_destroy": true,
+      "object_lock_enabled": false,
+      "tags": {},
+      "tags_all": {},
+      "versioning": [
+       {
+        "enabled": false,
+        "mfa_delete": false
+       }
+      ],
+      "server_side_encryption_configuration": [
+       {
+        "rule": [
+         {
+          "apply_server_side_encryption_by_default": [
+           {
+            "kms_master_key_id": "",
+            "sse_algorithm": "AES256"
+           }
+          ],
+          "bucket_key_enabled": false
+         }
+        ]
+       }
+      ],
+      "lifecycle_rule": [
+       {
+        "id": "legacy-expire",
+        "enabled": true,
+        "prefix": "",
+        "tags": {},
+        "expiration": [
+         {
+          "days": 365,
+          "date": "",
+          "expired_object_delete_marker": false
+         }
+        ],
+        "transition": [
+         {
+          "days": 30,
+          "date": "",
+          "storage_class": "STANDARD_IA"
+         }
+        ],
+        "noncurrent_version_expiration": [],
+        "noncurrent_version_transition": []
+       }
+      ],
+      "cors_rule": [],
+      "logging": [],
+      "website": [
+       {
+        "index_document": "home.html",
+        "error_document": "oops.html",
+        "redirect_all_requests_to": "",
+        "routing_rules": ""
+       }
+      ],
+      "request_payer": "BucketOwner"
+     }
+    }
+   ]
+  }
+ ]
+}

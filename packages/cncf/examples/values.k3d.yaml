@@ -1,0 +1,5 @@
+# The k3d overlay for values.yaml: `just cncf packages/cncf/examples/values.yaml k3d`.
+# Only the runner changes — ingress-nginx becomes a LoadBalancer Service, which
+# k3s' servicelb publishes on node ports 80/443 and the k3d serverlb container
+# maps to the host (`just cncf-up k3d` creates the cluster with those ports).
+runner: k3d

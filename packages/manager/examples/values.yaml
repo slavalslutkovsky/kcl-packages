@@ -1,8 +1,9 @@
 # Cluster manager values → manager.Manager. Render with
 #   kcl run /abs/path/to/packages/manager -D values=<this file> -q | kubectl apply -f -
-# Four concerns in one file: the platform charts Flux should keep installed,
+# Five concerns in one file: the platform charts Flux should keep installed,
 # the cert-manager issuers that sign the cluster's certificates, cluster-scope
-# chaos experiments, and orchestrated chaos runs (Workflows).
+# chaos experiments, orchestrated chaos runs (Workflows), and the Backstage
+# entities that make all of it findable in the developer portal.
 #
 # Flux must already be on the cluster (devkit.toml installs it on the e2e
 # cluster). A chart must have one owner: on the e2e Kind cluster devkit.toml
@@ -59,7 +60,7 @@ dependencies:
         socketPath: /run/containerd/containerd.sock
       dashboard:
         create: false
-  # The operator behind `app`'s `scaler:` (ScaledObject).
+  # The operator behind `app`'s `scaler:` (ScaledObject / ScaledJob).
   - name: keda
     type: application
     repo: https://kedacore.github.io/charts
@@ -79,6 +80,24 @@ dependencies:
     dependsOn: [keda]
     install: {crds: CreateReplace}
     upgrade: {crds: CreateReplace}
+    values:                       # app's monitors carry release=kube-prometheus-stack = this HelmRelease's name, so selectors stay at chart defaults
+      grafana:
+        sidecar:
+          dashboards:             # pick up app's dashboard ConfigMaps (grafana_dashboard=1) from every namespace, foldered by annotation
+            searchNamespace: ALL
+            folderAnnotation: grafana_folder
+            provider:
+              foldersFromFilesStructure: true
+  # The developer portal itself: an `application` chart, because it is an app
+  # like any other. What it *shows* comes from the entities rendered by
+  # `-D catalog=true` here and in `packages/app` — see docs/backstage.md for
+  # the app-config that turns the kubernetes-id annotation into a component's
+  # Kubernetes tab and its Chaos Mesh objects.
+  - name: backstage
+    type: application
+    repo: https://backstage.github.io/charts
+    version: 2.10.1
+    namespace: backstage
 
 # What signs the certificates: cert-manager ClusterIssuers (cluster-scoped, so
 # an Ingress in any namespace can name one in
@@ -196,3 +215,27 @@ chaos:
           type: memory
           size: 256MB
           duration: 5m
+
+# The Backstage entities for this cluster. NOT Kubernetes objects, so they are
+# a separate render:
+#   kcl run /abs/path/to/packages/manager -D values=<this file> -D catalog=true -q
+# One Resource for the cluster (type kubernetes-cluster, annotated with the
+# charts above and the experiments below) and one per Workflow (type
+# chaos-workflow), so `game-day` is something a developer can find, own and
+# watch instead of a CR someone applied. Every experiment and Workflow rendered
+# above carries `backstage.io/kubernetes-id`, which is what puts the live run on
+# the entity's Kubernetes tab.
+catalog:
+  owner: platform-team
+  name: platform-manager
+  title: Platform manager cluster
+  description: "Crossplane, the platform charts, and the chaos that runs against them."
+  system: platform
+  tags: [kubernetes, chaos]
+  # `kubectl -n chaos-mesh port-forward svc/chaos-dashboard 2333:2333` — needs
+  # dashboard.create=true, which devkit.toml leaves off (docs/chaos.md).
+  dashboardUrl: http://localhost:2333
+  links:
+    - url: https://github.com/yurikrupnik/kcl-packages/blob/main/docs/chaos.md
+      title: Chaos runbook
+      icon: docs

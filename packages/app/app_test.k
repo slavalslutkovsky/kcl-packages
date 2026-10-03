@@ -2,6 +2,8 @@
 # Run: kcl test   (asserts logical contracts of the rendered manifests)
 import yaml
 import file
+import json
+import crypto
 
 # ── Backend Workload (zerg-api template) ─────────────────────────────────────
 test_backend = lambda {
@@ -215,10 +217,11 @@ schedule: "0 3 * * *"
 test_examples_valid = lambda {
     be = Release {**yaml.decode(file.read("examples/values-backend.yaml"))}
     beOut = renderRelease(be)
-    assert [m.kind for m in beOut] == ["Deployment", "Service", "HorizontalPodAutoscaler", "ConfigMap", "ExternalSecret"], "backend example → Deployment + Service + HPA + ConfigMap + ExternalSecret"
+    assert [m.kind for m in beOut] == ["ServiceAccount", "Deployment", "Service", "PodDisruptionBudget", "HorizontalPodAutoscaler", "ServiceMonitor", "PrometheusRule", "ConfigMap", "ConfigMap", "ExternalSecret"], "backend example: ${[m.kind for m in beOut]}"
     assert be.workload.name == "zerg-api" and be.workload.prometheus == True
-    assert beOut[3].metadata.name == "zerg-api-config", "config → <name>-config ConfigMap"
-    assert beOut[4].metadata.name == "zerg-api-secrets", "externalSecret → <name>-secrets"
+    assert beOut[7].metadata.name == "zerg-api-dashboard-overview", "dashboards before the Release-level ConfigMap"
+    assert beOut[8].metadata.name == "zerg-api-config", "config → <name>-config ConfigMap"
+    assert beOut[9].metadata.name == "zerg-api-secrets", "externalSecret → <name>-secrets"
 
     fe = Release {**yaml.decode(file.read("examples/values-frontend.yaml"))}
     assert [m.kind for m in renderRelease(fe)] == ["Deployment", "Service"], "frontend example → Deployment + Service"
@@ -229,13 +232,17 @@ test_examples_valid = lambda {
     assert cli.task.command == ["/app/migrate"]
 
     ch = Release {**yaml.decode(file.read("examples/values-chaos.yaml"))}
-    assert [m.kind for m in renderRelease(ch)] == ["Deployment", "Service", "HorizontalPodAutoscaler", "Schedule", "NetworkChaos", "NetworkChaos", "NetworkChaos", "Schedule", "StressChaos"], "chaos example → core + one Chaos Mesh object per fault"
+    assert [m.kind for m in renderRelease(ch)] == ["Deployment", "Service", "HorizontalPodAutoscaler", "Schedule", "NetworkChaos", "NetworkChaos", "NetworkChaos", "Schedule", "StressChaos", "HTTPChaos", "IOChaos", "DNSChaos", "TimeChaos"], "chaos example → core + one Chaos Mesh object per fault"
 
     wk = Release {**yaml.decode(file.read("examples/values-worker.yaml"))}
     wkOut = renderRelease(wk)
     assert [m.kind for m in wkOut] == ["Deployment", "ScaledObject", "ConfigMap"], "worker example → Deployment (no Service) + KEDA ScaledObject + ConfigMap"
     assert wkOut[0].spec?.replicas == Undefined, "worker Deployment leaves replicas to KEDA"
     assert wkOut[1].spec.minReplicaCount == 0 and wkOut[1].spec.triggers[0].$type == "nats-jetstream"
+    assert wkOut[1].spec.fallback.replicas == 2
+
+    qj = Release {**yaml.decode(file.read("examples/values-queue-job.yaml"))}
+    assert [m.kind for m in renderRelease(qj)] == ["ServiceAccount", "TriggerAuthentication", "ScaledJob"], "queue-job example → identity, then KEDA's auth before the ScaledJob that uses it"
 }
 
 # ── Release: whole-app values.yaml → workload + config + externalSecret ───────
@@ -534,8 +541,356 @@ config:
     assert kinds == ["Deployment", "Service", "ScaledObject", "PodChaos", "ConfigMap"], "release with chaos: ${kinds}"
 }
 
+# ── Backstage catalog ────────────────────────────────────────────────────────
+# The contract that makes the portal useful: the entity's kubernetes-id
+# annotation and the label on every rendered object are the same string, so the
+# Kubernetes tab resolves this release — chaos experiments included.
+test_catalog_component = lambda {
+    r = Release {**yaml.decode(file.read("examples/values-chaos.yaml"))}
+    out = catalogEntities(r)
+    assert [e.kind for e in out] == ["Component"], "one Component, no APIs declared: ${[e.kind for e in out]}"
+    c = out[0]
+    assert c.apiVersion == "backstage.io/v1alpha1", "entities are catalog objects, not Kubernetes ones"
+    assert c.metadata.name == "zerg-api", "the entity name defaults to the workload's"
+    assert c.spec.$type == "service", "a workload is a service unless it says otherwise"
+    assert c.spec.system == "zerg", "system defaults to the workload's partOf"
+    assert c.spec.lifecycle == "production" and c.spec.owner == "team-zerg"
+
+    _id = c.metadata.annotations["backstage.io/kubernetes-id"]
+    assert _id == "zerg-api" and c.metadata.annotations["backstage.io/kubernetes-namespace"] == "zerg"
+    assert c.metadata.annotations["platform.example.org/chaos-faults"] == "kill-one=pod-kill,slow-net=delay,lossy=loss,cut-db=partition,hot-cpu=cpu,memory-pressure=memory,slow-responses=http-delay,slow-disk=io-latency,no-db-dns=dns-error,clock-skew=time-skew", "every declared fault must be readable without the cluster"
+
+    # The other half of the link: nothing the release renders may be invisible
+    # to the entity, chaos objects least of all.
+    assert all_true([o.metadata.labels["backstage.io/kubernetes-id"] == _id for o in renderRelease(r) if o.metadata?.labels]), "every labelled object must carry the entity's id"
+    _chaos = [o for o in renderRelease(r) if o.apiVersion == "chaos-mesh.org/v1alpha1"]
+    assert len(_chaos) == 10 and all_true([o.metadata.labels["backstage.io/kubernetes-id"] == _id for o in _chaos]), "the experiments are what the component page shows"
+
+    # The Deployment's selector is immutable — the id must never leak into it.
+    _dep = renderRelease(r)[0]
+    assert _dep.spec.selector.matchLabels == {app = "zerg-api"}, "selector must stay `app` alone: ${_dep.spec.selector.matchLabels}"
+    assert _dep.spec.template.metadata.labels["backstage.io/kubernetes-id"] == _id, "pods carry it, so the plugin finds them too"
+}
+
+# A task is a different archetype, and Backstage should say so.
+test_catalog_task_type = lambda {
+    _cron = Release {**yaml.decode("""\
+task:
+  name: nightly-reindex
+  namespace: zerg
+  image: yurikrupnik/zerg-cli:latest
+  schedule: "0 3 * * *"
+catalog:
+  owner: team-zerg
+""")}
+    assert catalogEntities(_cron)[0].spec.$type == "cronjob", "a scheduled task is a cronjob"
+    _job = Release {**yaml.decode("""\
+task:
+  name: migrate
+  image: yurikrupnik/zerg-cli:latest
+catalog:
+  owner: team-zerg
+  type: library
+""")}
+    _e = catalogEntities(_job)[0]
+    assert _e.spec.$type == "library", "an explicit type wins over the archetype default"
+    assert _e.metadata.annotations?["backstage.io/kubernetes-namespace"] == Undefined, "no namespace, no namespace annotation"
+}
+
+# APIs: emitted as their own entities and wired to the Component without the
+# ref being written twice.
+test_catalog_apis = lambda {
+    r = Release {**yaml.decode("""\
+workload:
+  name: zerg-api
+  image: yurikrupnik/zerg-api:latest
+catalog:
+  owner: team-zerg
+  system: zerg
+  consumesApis: [api:billing]
+  providesApis: [zerg-api-grpc]
+  apis:
+    - name: zerg-api-openapi
+      definitionUrl: https://api.example.com/openapi.yaml
+    - name: zerg-api-asyncapi
+      type: asyncapi
+      lifecycle: experimental
+      owner: team-events
+      definition: "asyncapi: 3.0.0"
+""")}
+    out = catalogEntities(r)
+    assert [e.kind for e in out] == ["Component", "API", "API"], "one entity per api, component first: ${[e.kind for e in out]}"
+    assert out[0].spec.providesApis == ["zerg-api-grpc", "zerg-api-openapi", "zerg-api-asyncapi"], "declared apis join the explicit refs: ${out[0].spec.providesApis}"
+    assert out[0].spec.consumesApis == ["api:billing"]
+
+    _open = out[1]
+    assert _open.spec.$type == "openapi" and _open.spec.owner == "team-zerg" and _open.spec.lifecycle == "production", "api owner/lifecycle default to the component's"
+    assert _open.spec.definition == {"$text" = "https://api.example.com/openapi.yaml"}, "a URL becomes the catalog's \\$text placeholder: ${_open.spec.definition}"
+    assert _open.spec.system == "zerg", "apis belong to the component's system"
+    _async = out[2]
+    assert _async.spec.definition == "asyncapi: 3.0.0", "an inline definition is passed through as written"
+    assert _async.spec.owner == "team-events" and _async.spec.lifecycle == "experimental", "an api may own itself"
+}
+
+test_catalog_absent = lambda {
+    r = Release {**yaml.decode("""\
+workload:
+  name: zerg-api
+  image: yurikrupnik/zerg-api:latest
+""")}
+    assert catalogEntities(r) == [], "no catalog block → no entities"
+    assert all_true([o.apiVersion != "backstage.io/v1alpha1" for o in renderRelease(r)]), "entities must never reach the manifest stream"
+    assert renderRelease(r)[0].metadata.labels["backstage.io/kubernetes-id"] == "zerg-api", "the plugin label does not wait for a catalog block"
+}
+
+# Typed CRD/k8s sub-objects never compare equal to dict literals; compare
+# their plain JSON shape instead.
+_plain = lambda x -> any {
+    json.decode(json.encode(x))
+}
+
+# ── ServiceAccount: identity, token, workload identity, namespaced RBAC ──────
+test_service_account = lambda {
+    w = Workload {**yaml.decode("""\
+name: zerg-api
+namespace: zerg
+image: yurikrupnik/zerg-api:latest
+serviceAccount:
+  cloud: azure
+  identity: 11111111-2222-3333-4444-555555555555
+  imagePullSecrets: [regcred]
+  annotations: {team: zerg}
+  rules:
+    - resources: [configmaps]
+      verbs: [get, watch]
+      resourceNames: [zerg-flags]
+""")}
+    out = render(w)
+    assert [m.kind for m in out][:4:] == ["ServiceAccount", "Role", "RoleBinding", "Deployment"], "identity before the pods that use it: ${[m.kind for m in out]}"
+    sa = out[0]
+    assert sa.metadata.name == "zerg-api" and sa.metadata.namespace == "zerg"
+    assert sa.metadata.annotations == {"azure.workload.identity/client-id" = "11111111-2222-3333-4444-555555555555", team = "zerg"}, "cloud annotation merged with explicit ones"
+    assert sa.automountServiceAccountToken == False and _plain(sa.imagePullSecrets) == [{name = "regcred"}]
+    assert _plain(out[1].rules) == [{apiGroups = [""], resources = ["configmaps"], verbs = ["get", "watch"], resourceNames = ["zerg-flags"]}]
+    rb = out[2]
+    assert rb.roleRef.name == "zerg-api" and _plain(rb.subjects) == [{kind = "ServiceAccount", name = "zerg-api", namespace = "zerg"}], "bound to this ServiceAccount only"
+    pod = out[3].spec.template
+    assert pod.spec.serviceAccountName == "zerg-api" and pod.spec.automountServiceAccountToken == False
+    assert pod.metadata.labels["azure.workload.identity/use"] == "true", "Azure's webhook only injects labelled pods"
+    assert out[3].spec.selector.matchLabels == {app = "zerg-api"}, "the identity label never enters the immutable selector"
+
+    # An existing ServiceAccount is referenced, never rendered
+    ext = render(Workload {name = "web", image = "nginx", serviceAccount = {create = False, name = "shared", automountToken = True}})
+    assert [m.kind for m in ext] == ["Deployment", "Service"]
+    assert ext[0].spec.template.spec.serviceAccountName == "shared" and ext[0].spec.template.spec.automountServiceAccountToken == True
+    assert ext[0].spec.template.metadata.labels?["azure.workload.identity/use"] == Undefined
+
+    gke = render(Workload {name = "api", image = "i", serviceAccount = {cloud = "gcp", identity = "api@p.iam.gserviceaccount.com"}})[0]
+    assert gke.metadata.annotations == {"iam.gke.io/gcp-service-account" = "api@p.iam.gserviceaccount.com"}
+    eks = render(Workload {name = "api", image = "i", serviceAccount = {cloud = "aws", identity = "arn:aws:iam::123456789012:role/api"}})[0]
+    assert eks.metadata.annotations == {"eks.amazonaws.com/role-arn" = "arn:aws:iam::123456789012:role/api"}
+
+    # no serviceAccount → pods keep the namespace default, nothing is rendered
+    plain = render(Workload {name = "api", image = "i"})[0]
+    assert plain.spec.template.spec?.serviceAccountName == Undefined and plain.spec.template.spec?.automountServiceAccountToken == Undefined
+
+    job = renderTask(Task {name = "migrate", image = "i", serviceAccount = {name = "migrator"}})
+    assert [m.kind for m in job] == ["ServiceAccount", "Job"]
+    assert job[1].spec.template.spec.serviceAccountName == "migrator"
+}
+
+# ── PodDisruptionBudget ──────────────────────────────────────────────────────
+test_disruption_budget = lambda {
+    out = render(Workload {name = "api", namespace = "zerg", image = "i", disruptionBudget = {maxUnavailable = "25%"}, hpa = {}})
+    assert [m.kind for m in out] == ["Deployment", "Service", "PodDisruptionBudget", "HorizontalPodAutoscaler"]
+    pdb = out[2]
+    assert pdb.spec.maxUnavailable == "25%" and pdb.spec?.minAvailable == Undefined
+    assert pdb.spec.selector.matchLabels == {app = "api"}, "the same pods the Deployment selects"
+}
+
+# ── KEDA: TriggerAuthentication, auth refs, fallback, pause ──────────────────
+test_scaler_auth = lambda {
+    w = Workload {**yaml.decode("""\
+name: zerg-api
+namespace: zerg
+image: yurikrupnik/zerg-api:latest
+scaler:
+  paused: true
+  fallback: {replicas: 3}
+  authentications:
+    - name: prom
+      secrets: [{parameter: bearerToken, name: prom-token, key: token}]
+    - name: sqs
+      podIdentity: aws
+      identityId: arn:aws:iam::123456789012:role/keda
+  triggers:
+    - type: prometheus
+      auth: prom
+      metadata: {serverAddress: "http://prometheus:9090", query: up, threshold: "1", authModes: bearer}
+    - type: aws-sqs-queue
+      auth: sqs
+      metadata: {queueURL: "https://sqs.eu-west-1.amazonaws.com/123456789012/q", queueLength: "5"}
+    - type: kafka
+      authenticationRef: {name: kafka-shared, kind: ClusterTriggerAuthentication}
+      metadata: {topic: t, bootstrapServers: "kafka:9092", consumerGroup: g}
+""")}
+    out = render(w)
+    assert [m.kind for m in out] == ["Deployment", "Service", "TriggerAuthentication", "TriggerAuthentication", "ScaledObject"], "auths before the ScaledObject that uses them"
+    promAuth = out[2]
+    assert promAuth.metadata.name == "zerg-api-prom" and promAuth.metadata.namespace == "zerg"
+    assert _plain(promAuth.spec.secretTargetRef) == [{parameter = "bearerToken", name = "prom-token", key = "token"}]
+    assert _plain(out[3].spec.podIdentity) == {provider = "aws", identityId = "arn:aws:iam::123456789012:role/keda"}
+    so = out[4]
+    assert so.metadata.annotations["autoscaling.keda.sh/paused"] == "true"
+    assert so.spec.fallback.failureThreshold == 3 and so.spec.fallback.replicas == 3
+    ts = so.spec.triggers
+    assert ts[0].authenticationRef.name == "zerg-api-prom" and ts[1].authenticationRef.name == "zerg-api-sqs", "`auth` resolves to the rendered TriggerAuthentication"
+    assert ts[2].authenticationRef.name == "kafka-shared" and ts[2].authenticationRef.kind == "ClusterTriggerAuthentication", "an existing auth passes through"
+    assert all_true(["auth" not in t for t in ts]), "`auth` is this package's shorthand, never a KEDA field"
+}
+
+# ── KEDA ScaledJob: a Task driven by pending work ────────────────────────────
+test_scaled_job = lambda {
+    t = Task {**yaml.decode("""\
+name: thumbnailer
+namespace: media
+image: i
+backoffLimit: 2
+successfulJobsHistoryLimit: 5
+scaler:
+  maxReplicas: 20
+  strategy: accurate
+  triggers:
+    - type: rabbitmq
+      metadata: {queueName: thumbs, mode: QueueLength, value: "10", hostFromEnv: AMQP_URL}
+""")}
+    out = renderTask(t)
+    assert [m.kind for m in out] == ["ScaledJob"], "a scaler replaces the Job"
+    sj = out[0]
+    assert sj.apiVersion == "keda.sh/v1alpha1" and sj.metadata.name == "thumbnailer"
+    assert sj.spec.minReplicaCount == 0 and sj.spec.maxReplicaCount == 20
+    assert sj.spec.scalingStrategy.strategy == "accurate"
+    assert sj.spec.successfulJobsHistoryLimit == 5 and sj.spec.failedJobsHistoryLimit == 1
+    assert sj.spec.jobTargetRef.backoffLimit == 2
+    job = renderTask(Task {**t, scaler = Undefined})[0]
+    assert sj.spec.jobTargetRef.template.spec.containers[0].image == job.spec.template.spec.containers[0].image, "the ScaledJob runs the Job's own template"
+    assert sj.spec.triggers[0].$type == "rabbitmq" and sj.spec.triggers[0].metadata.queueName == "thumbs"
+}
+
+# ── Monitoring: Prometheus Operator objects + Grafana dashboards ─────────────
+test_monitoring = lambda {
+    w = Workload {**yaml.decode("""\
+name: zerg-api
+namespace: zerg
+image: yurikrupnik/zerg-api:latest
+portName: web
+metricsPath: /internal/metrics
+monitoring:
+  interval: 15s
+  defaultRules: true
+  rules:
+    - alert: ZergApiErrors
+      expr: sum(rate(http_requests_total{status=~"5.."}[5m])) > 1
+      severity: critical
+      runbookUrl: https://runbooks.example.com/errors
+      labels: {team: zerg}
+  dashboards:
+    - name: overview
+      folder: Zerg
+      panels:
+        - {title: RPS, expr: "sum(rate(http_requests_total[1m]))", unit: reqps}
+    - name: imported
+      json: '{"title": "hand-made"}'
+""")}
+    out = render(w)
+    assert [m.kind for m in out] == ["Deployment", "Service", "ServiceMonitor", "PrometheusRule", "ConfigMap", "ConfigMap"], "${[m.kind for m in out]}"
+    sm = out[2]
+    assert sm.metadata.labels.release == "kube-prometheus-stack", "what kube-prometheus-stack's selectors match"
+    assert sm.spec.selector.matchLabels == {app = "zerg-api"} and sm.spec.namespaceSelector.matchNames == ["zerg"]
+    assert _plain(sm.spec.endpoints) == [{port = "web", path = "/internal/metrics", interval = "15s"}], "scrapes the named port + metricsPath"
+
+    rules = out[3].spec.groups[0].rules
+    assert [r.alert for r in rules] == ["AppTargetDown", "AppRestarting", "AppReplicasUnavailable", "ZergApiErrors"], "defaults first, then the workload's own"
+    assert rules[0].expr == 'sum(up{namespace="zerg", job="zerg-api"}) == 0', "a ServiceMonitor's job is the Service name"
+    assert rules[0].labels.severity == "critical" and rules[0].labels.app == "zerg-api"
+    assert rules[3]["for"] == "5m" and rules[3].labels == {severity = "critical", app = "zerg-api", team = "zerg"}
+    assert rules[3].annotations == {runbook_url = "https://runbooks.example.com/errors"}
+
+    gen = out[4]
+    assert gen.metadata.name == "zerg-api-dashboard-overview" and gen.metadata.namespace == "zerg"
+    assert gen.metadata.labels.grafana_dashboard == "1" and gen.metadata.annotations == {grafana_folder = "Zerg"}
+    d = json.decode(gen.data["zerg-api-overview.json"])
+    assert d.uid == crypto.md5("zerg/zerg-api/overview"), "stable uid: a re-render updates the same dashboard"
+    assert [p.title for p in d.panels] == ["Available replicas", "CPU (cores)", "Memory (working set)", "Container restarts", "Scrape targets up", "RPS"], "standard panels, then the workload's"
+    assert d.panels[5].gridPos == {h = 8, w = 12, x = 12, y = 16} and d.panels[5].fieldConfig.defaults.unit == "reqps"
+    assert all_true([p.datasource.uid == "\${datasource}" for p in d.panels]), "every panel follows the datasource variable"
+    assert out[5].data["zerg-api-imported.json"] == '{"title": "hand-made"}', "json is shipped verbatim"
+
+    # PodMonitor: no Service needed, and Prometheus names the job <ns>/<name>
+    pm = render(Workload {name = "worker", namespace = "q", image = "i", service = False, monitoring = {kind = "PodMonitor", defaultRules = True}})
+    assert [m.kind for m in pm] == ["Deployment", "PodMonitor", "PrometheusRule"]
+    assert pm[1].spec.podMetricsEndpoints[0].port == "http"
+    assert pm[2].spec.groups[0].rules[0].expr == 'sum(up{namespace="q", job="q/worker"}) == 0'
+
+    # rules without a scrape: no monitor, and no alert on a scrape that does not exist
+    ns = render(Workload {name = "w", namespace = "q", image = "i", monitoring = {scrape = False, defaultRules = True}})
+    assert [m.kind for m in ns] == ["Deployment", "Service", "PrometheusRule"]
+    assert [r.alert for r in ns[2].spec.groups[0].rules] == ["AppRestarting", "AppReplicasUnavailable"]
+}
+
+# ── Chaos Mesh: HTTP / IO / DNS / Time and the extra network actions ─────────
+test_chaos_more_types = lambda {
+    w = Workload {**yaml.decode("""\
+name: zerg-api
+namespace: zerg
+image: yurikrupnik/zerg-api:latest
+port: 3000
+chaos:
+  - {name: abort, type: http-abort, path: /api/*, method: POST}
+  - {name: slow-http, type: http-delay, latency: 2s, httpTarget: Response, port: 9090}
+  - {name: disk, type: io-latency, volumePath: /data, latency: 50ms, percent: 25, methods: [read]}
+  - {name: eio, type: io-fault, volumePath: /data, errno: 28}
+  - {name: dns, type: dns-random, patterns: ["*.svc"]}
+  - {name: clock, type: time-skew, timeOffset: "2h", clockIds: [CLOCK_MONOTONIC]}
+  - {name: narrow, type: bandwidth, rate: 10kbps}
+  - {name: bits, type: corrupt, corrupt: "5", correlation: "25"}
+  - {name: dup, type: duplicate}
+""")}
+    faults = render(w)[2::]
+    assert [f.kind for f in faults] == ["HTTPChaos", "HTTPChaos", "IOChaos", "IOChaos", "DNSChaos", "TimeChaos", "NetworkChaos", "NetworkChaos", "NetworkChaos"]
+    assert all_true([_plain(f.spec.selector) == {namespaces = ["zerg"], labelSelectors = {app = "zerg-api"}} for f in faults]), "every new kind is pinned to the workload too"
+
+    abort = faults[0].spec
+    assert abort.abort == True and abort.target == "Request" and abort.port == 3000, "an HTTP fault defaults to the workload's port"
+    assert abort.path == "/api/*" and abort.method == "POST" and abort?.delay == Undefined
+    slow = faults[1].spec
+    assert slow.delay == "2s" and slow.target == "Response" and slow.port == 9090 and slow?.abort == Undefined
+    disk = faults[2].spec
+    assert disk.action == "latency" and disk.delay == "50ms" and disk.volumePath == "/data" and disk.percent == 25 and disk.methods == ["read"]
+    eio = faults[3].spec
+    assert eio.action == "fault" and eio.errno == 28 and eio?.delay == Undefined
+    assert faults[4].spec.action == "random" and faults[4].spec.patterns == ["*.svc"]
+    assert faults[5].spec.timeOffset == "2h" and faults[5].spec.clockIds == ["CLOCK_MONOTONIC"]
+    assert faults[6].spec.action == "bandwidth" and _plain(faults[6].spec.bandwidth) == {rate = "10kbps", buffer = 10000, limit = 20971520}
+    assert _plain(faults[7].spec.corrupt) == {corrupt = "5", correlation = "25"}
+    assert _plain(faults[8].spec.duplicate) == {duplicate = "10"}
+
+    # A Schedule embeds each kind under its own field
+    sched = render(Workload {name = "a", namespace = "n", image = "i", chaos = [
+        {name = "h", $type = "http-delay", schedule = "0 * * * *"}
+        {name = "io", $type = "io-fault", volumePath = "/tmp", schedule = "0 * * * *"}
+        {name = "t", $type = "time-skew", schedule = "0 * * * *"}
+    ]})[2::]
+    assert [[s.spec.$type] + [k for k in ["httpChaos", "ioChaos", "timeChaos"] if k in _plain(s.spec)] for s in sched] == [["HTTPChaos", "httpChaos"], ["IOChaos", "ioChaos"], ["TimeChaos", "timeChaos"]]
+    assert sched[0].spec.httpChaos.port == 8080
+}
+
 # invalid faults (no namespace, fixed mode without value, delay with direction
-# from, duplicate names) are rejected by the schema `check` blocks.
+# from, duplicate names, io-* without volumePath) and the other invalid shapes
+# (monitoring without namespace, ServiceMonitor with service: false, RBAC rules
+# without namespace, fallback next to cpu/memory, an `auth` naming no
+# authentication, a Task with both schedule and scaler) are rejected by the
+# schema `check` blocks.
 test_backend()
 test_frontend()
 test_task_job()
@@ -552,3 +907,13 @@ test_replicas_ownership()
 test_chaos_one_shot()
 test_chaos_schedule()
 test_chaos_release_order()
+test_catalog_component()
+test_catalog_task_type()
+test_catalog_apis()
+test_catalog_absent()
+test_service_account()
+test_disruption_budget()
+test_scaler_auth()
+test_scaled_job()
+test_monitoring()
+test_chaos_more_types()

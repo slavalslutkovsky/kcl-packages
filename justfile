@@ -14,9 +14,16 @@
 nx := "node_modules/.bin/nx"
 tsc := "node_modules/.bin/tsc"
 
+# Bundles docs/ into one HTML/PDF (`just docs`). Pinned, and fetched on demand
+# by `pnpm dlx` rather than installed: see the Docs section below.
+monodocs := "pnpm dlx monodocs@0.11.0"
+
 # List available commands
 default:
     @just --list
+
+task-1:
+    task --taskfile https://raw.githubusercontent.com/go-task/task/main/website/src/public/Taskfile.yml hello -y
 uop:
     kind create cluster --config kind.yaml --image kindest/node:v1.31.4
 lol:
@@ -39,15 +46,71 @@ gets:
 #   just manager-phase <type> [values.yaml] [env]
 #                                       split one render by chart type via the
 #                                       label platform.example.org/type
+#   just cncf [values.yaml] [env]       the local developer cluster
+#                                       (packages/cncf): ingress-nginx,
+#                                       cert-manager, a self-signed → local CA
+#                                       chain and the wildcard certificate
+#                                       ingress-nginx serves by default. `env`
+#                                       k3d / openshift picks the
+#                                       values.<env>.yaml overlay
+#   just gitops [values.yaml] [env]     the self-hosted forge and the repo the
+#                                       cluster reconciles from
+#                                       (packages/gitops): tenant Entitlement,
+#                                       Forge, its Repositories, and the Flux
+#                                       GitRepository + Kustomization (or, with
+#                                       env argocd, an Argo CD AppProject +
+#                                       Application). `env` forge picks the
+#                                       values.forge.yaml overlay, which
+#                                       repoints the engine at the forge's own
+#                                       copy of the repo
+#   just fleet [values.yaml] [env]      the app of apps (packages/fleet): one
+#                                       Component XR per app, a platform layer
+#                                       every team app waits for, and one
+#                                       Namespace per team. Split a render by
+#                                       layer with
+#                                       `kubectl apply -l platform.example.org/layer=platform`
 #   just entitlements [values.yaml]     who has paid for what
 #                                       (packages/platform/entitlement)
-# All print a manifest stream: pipe into `kubectl apply -f -`. `env` picks the
-# <stem>.<env>.yaml overlay next to the values file.
+#   just bucket-import <state> [ns] [mode]
+#                                       Bucket XRs that ADOPT the buckets a
+#                                       Terraform or Pulumi state already
+#                                       manages (packages/cloud/bucket/import);
+#                                       docs/bucket-import.md
+#   just catalog <values.yaml> [env]    the Backstage entities of one app
+#                                       release (packages/app): a Component and
+#                                       its APIs
+#   just manager-catalog [values.yaml] [env]
+#                                       the Backstage entities of one cluster
+#                                       (packages/manager): the cluster itself
+#                                       and one per chaos Workflow
+# All but the last two print a manifest stream: pipe into `kubectl apply -f -`.
+# The two catalog recipes print Backstage entities, which are NOT Kubernetes
+# objects — redirect them to a catalog-info.yaml the portal reads, never into
+# kubectl (docs/backstage.md). `env` picks the <stem>.<env>.yaml overlay next
+# to the values file.
 app values env="":
     kcl run packages/app -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
 
 manager values="packages/manager/examples/values.yaml" env="":
     kcl run packages/manager -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+cncf values="packages/cncf/examples/values.yaml" env="":
+    kcl run packages/cncf -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+gitops values="packages/gitops/examples/values.yaml" env="":
+    kcl run packages/gitops -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+fleet values="packages/fleet/examples/values.yaml" env="":
+    kcl run packages/fleet -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+# The portal side of the same values files: entities, not manifests. Piping
+# either of these into `kubectl apply` is a mistake — backstage.io/v1alpha1 is
+# not a Kubernetes API. See docs/backstage.md.
+catalog values env="":
+    kcl run packages/app -D values={{ values }} -D catalog=true {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+manager-catalog values="packages/manager/examples/values.yaml" env="":
+    kcl run packages/manager -D values={{ values }} -D catalog=true {{ if env != "" { "-D env=" + env } else { "" } }} -q
 
 # One type of the manager's charts out of a render, by the label the `type`
 # field becomes. `role` in the values is the normal way to pick what a cluster
@@ -66,6 +129,59 @@ manager-phase type values="packages/manager/examples/values.yaml" env="":
 # Render the paid-feature records the gated Compositions read.
 entitlements values="":
     kcl run packages/platform/entitlement {{ if values != "" { "-D values=" + values } else { "" } }} -q
+
+# ─── Move buckets out of Terraform / Pulumi ───────────────────────────────────
+#   just bucket-import terraform.tfstate                 one XR per bucket, observe mode
+#   just bucket-import <(terraform show -json) prod      remote backends: no state file on disk
+#   just bucket-import <(pulumi stack export) prod manage
+#   just bucket-import-report state.json                 what was found, dropped, skipped
+#
+# `state` is a raw terraform.tfstate, a `terraform show -json`, or a `pulumi
+# stack export` — told apart by shape. Every XR pins the real cloud name under
+# spec.import.existingName and defaults to mode=observe + deletionPolicy=Orphan,
+# so applying the output changes nothing in the cloud and can delete nothing:
+# Crossplane only starts reading. Flip to `manage` (here, or by editing the
+# XR) once status agrees with the spec, then `terraform state rm` / `pulumi
+# state delete` the address the XR carries. docs/bucket-import.md is the walk.
+# Process substitution (`<(...)`) works: the path is read once, up front.
+bucket-import state namespace="default" mode="observe":
+    kcl run packages/cloud/bucket/import -D state="$(realpath {{ state }})" -D namespace={{ namespace }} -D mode={{ mode }} -q
+
+# A REPORT, not a manifest — no apiVersion, never pipe it into kubectl.
+bucket-import-report state:
+    kcl run packages/cloud/bucket/import -D state="$(realpath {{ state }})" -D report=true -q
+
+# ─── Price the portable size ladders ──────────────────────────────────────────
+#   just price [values.yaml] [env]   what an estate costs on aws / gcp / azure
+#   just price-refresh [cloud...]    re-fetch the rate card from the vendor APIs
+#   just price-check                 fail if the committed card has drifted
+#
+# `size: medium` is one word that means m5.large, e2-standard-2 or
+# Standard_D2s_v5 depending on a compositionSelector label, and those are not
+# the same monthly bill. `price` reads the ladders out of the backend packages
+# themselves (packages/platform/pricing takes them as path dependencies), so a
+# ladder change cannot silently desync from its price — it fails the build.
+#
+# The output is a REPORT, not a manifest: no apiVersion, never pipe it into
+# kubectl. docs/pricing.md says what the card covers and what it does not.
+price values="packages/platform/pricing/examples/values.yaml" env="":
+    kcl run packages/platform/pricing -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+# Rewrite packages/platform/pricing/rates.k from the public pricing APIs, one
+# block per cloud. azure needs no credentials; aws needs AWS_ACCESS_KEY_ID +
+# AWS_SECRET_ACCESS_KEY (GetProducts is free); gcp needs GOOGLE_API_KEY, which
+# this repo deliberately does not hold — it fails naming the variable rather
+# than writing a guess. With no argument it tries all three.
+#   just price-refresh azure          GOOGLE_API_KEY=... just price-refresh gcp
+price-refresh *clouds:
+    node tools/pricing/src/refresh-rates.ts {{ clouds }}
+
+# Fail if a committed rate no longer matches the vendor, or if a block is past
+# its 90-day as_of contract. Not a pre-commit hook: it is a network call to
+# three vendors, and a rate card going stale is a Monday problem, not a
+# reason to block a commit.
+price-check *clouds:
+    node tools/pricing/src/refresh-rates.ts {{ clouds }} --check
 
 # ─── Local platform (devkit) ──────────────────────────────────────────────────
 #
@@ -169,17 +285,17 @@ status:
 #   e.g. just provider gcp-storage ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0 storage
 # Generate a provider schema package from a Crossplane provider OCI image (docker + yq).
 provider name image service="" scope="namespaced":
-    {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --image={{ image }} --apiScope={{ scope }} {{ if service != "" { "--service=" + service } else { "" } }} --no-interactive
+    {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --image={{ image }} --apiScope={{ scope }} {{ if service != "" { "--service=" + service } else { "" } }} --force --no-interactive
 
 #   just provider-repo <name> <owner/repo> [ref=main] [service] [crdPath=package/crds]
 # Generate a provider schema package from a Crossplane provider GitHub repo (pinned ref).
 provider-repo name repo ref="main" service="" crdPath="package/crds":
-    {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --repo={{ repo }} --ref={{ ref }} --crdPath={{ crdPath }} {{ if service != "" { "--service=" + service } else { "" } }} --no-interactive
+    {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --repo={{ repo }} --ref={{ ref }} --crdPath={{ crdPath }} {{ if service != "" { "--service=" + service } else { "" } }} --force --no-interactive
 
 #   just provider-local <name> <dir> [service]
 # Generate a provider schema package from a local directory of CRD YAMLs.
 provider-local name dir service="":
-    {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --from={{ dir }} {{ if service != "" { "--service=" + service } else { "" } }} --no-interactive
+    {{ nx }} g nx-kcl:import-crd {{ name }} --directory=packages/providers --from={{ dir }} {{ if service != "" { "--service=" + service } else { "" } }} --force --no-interactive
 
 # ─── XRD schema packages (typed child XRs) ────────────────────────────────────
 #
@@ -242,6 +358,18 @@ seed-providers:
     just provider gcp-storage   ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0   storage
     just provider azure-storage ghcr.io/crossplane-contrib/provider-azure-storage:v2.6.0 storage
 
+# A static page on a custom domain is three services per cloud, not one: the
+# object store, the CDN that is the only place TLS can terminate, and (on AWS)
+# the certificate authority CloudFront will accept. The storage families come
+# from `just seed-providers`; these are the edge ones.
+# Bootstrap/refresh the edge providers used by the landing Composition.
+seed-landing-providers:
+    just provider aws-cloudfront ghcr.io/crossplane-contrib/provider-aws-cloudfront:v2.6.0 cloudfront
+    just provider aws-acm        ghcr.io/crossplane-contrib/provider-aws-acm:v2.6.0        acm
+    just provider gcp-compute    ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0    compute
+    just provider azure-cdn      ghcr.io/crossplane-contrib/provider-azure-cdn:v2.6.0      cdn
+    just provider helm           ghcr.io/crossplane-contrib/provider-helm:v1.3.0           helm
+
 # `helm` backs the in-cluster (valkey) backend; its CRDs live under
 # helm.m.crossplane.io, so the version must be v1.x — v0.21 ships
 # cluster-scoped CRDs only.
@@ -272,6 +400,23 @@ seed-iam-providers:
     just provider azure-managedidentity ghcr.io/crossplane-contrib/provider-azure-managedidentity:v2.6.0 managedidentity
     just provider azure-authorization   ghcr.io/crossplane-contrib/provider-azure-authorization:v2.6.0   authorization
 
+# One family per cloud per concern. GCP: Folder/Project/ProjectService and the
+# org- and folder-level IAM kinds are cloudplatform (shared with
+# `seed-iam-providers`), Org Policy v2 has a family of its own. AWS: the whole
+# hierarchy — OU, Account, SCP, attachment — is one Organizations family.
+# Azure: management groups come from `management`, while the policy assignment
+# and the role assignment come from `authorization` (also shared with
+# `seed-iam-providers`). Azure subscriptions are NOT here: azurerm_subscription
+# lives in the upstream `azure` family, which crossplane-contrib does not
+# publish at v2.x.
+# Bootstrap/refresh the hierarchy providers used by the organization Compositions.
+seed-organization-providers:
+    just provider gcp-cloudplatform    ghcr.io/crossplane-contrib/provider-gcp-cloudplatform:v2.6.0    cloudplatform
+    just provider gcp-orgpolicy        ghcr.io/crossplane-contrib/provider-gcp-orgpolicy:v2.6.0        orgpolicy
+    just provider aws-organizations    ghcr.io/crossplane-contrib/provider-aws-organizations:v2.6.0    organizations
+    just provider azure-management     ghcr.io/crossplane-contrib/provider-azure-management:v2.6.0     management
+    just provider azure-authorization  ghcr.io/crossplane-contrib/provider-azure-authorization:v2.6.0  authorization
+
 # The cluster Composition also composes IAM roles on AWS (EKS cannot exist
 # without them), so it shares the aws-iam schema package with `seed-iam-providers`.
 # The onprem backend adopts an existing cluster and installs Flux/Crossplane
@@ -286,13 +431,41 @@ seed-cluster-providers:
     just provider helm                   ghcr.io/crossplane-contrib/provider-helm:v1.3.0                   helm
 
 # Azure splits the VM (compute) from its NIC and public IP (network), so the
-# vm Composition needs both azure providers.
+# vm Composition needs both azure providers. The self-hosted (kubevirt)
+# backend needs no Crossplane provider at all — it composes kubevirt.io/v1
+# VirtualMachines directly — but it does need their schemas, and those are
+# catalog-sourced: KubeVirt and CDI build their CRDs in Go inside their
+# operators, so no repo path or release asset holds the YAML. Only
+# registry.yaml knows which catalog schemas to rebuild, hence the
+# registry-driven line (see packages/providers/registry.yaml, `kubevirt`).
 # Bootstrap/refresh the machine providers used by the vm Composition.
 seed-vm-providers:
     just provider aws-ec2       ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0       ec2
     just provider gcp-compute   ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0   compute
     just provider azure-compute ghcr.io/crossplane-contrib/provider-azure-compute:v2.6.0 compute
     just provider azure-network ghcr.io/crossplane-contrib/provider-azure-network:v2.6.0 network
+    tools/providers.sh seed kubevirt
+
+# Velero is an operator, like cnpg: the backup Composition composes
+# velero.io/v1 Schedule / BackupStorageLocation directly and provider-helm
+# (seeded with the redis providers) installs the chart. Keep the ref in step
+# with the chart version pinned in backup/xrd/providerconfigs.yaml.
+# Bootstrap/refresh the schema package used by the backup Composition.
+seed-backup-providers:
+    just provider-repo velero vmware-tanzu/velero v1.18.2 velero config/crd/v1/bases
+
+# Neither of these is a Crossplane provider: the application Composition
+# composes gateway.networking.k8s.io/v1 HTTPRoute and networking.istio.io/v1
+# VirtualService / DestinationRule directly, so only their schemas are needed.
+# Gateway API is generated from the standard channel alone (the experimental
+# kinds are not composed). Istio generates every CRD into ONE multi-doc file,
+# so `crdPath` is the directory that holds it and `service: crd-all` selects
+# crd-all.gen.yaml over the profile-*.yaml siblings. Keep both refs in step
+# with packages/providers/registry.yaml.
+# Bootstrap/refresh the routing schema packages used by the application Composition.
+seed-application-providers:
+    just provider-repo gateway-api kubernetes-sigs/gateway-api v1.4.0 gateway config/crd/standard
+    just provider-repo istio       istio/istio                 1.28.1 crd-all manifests/charts/base/files
 
 # The network Composition is the odd one out: it also publishes the RDS and
 # ElastiCache subnet groups its private subnets exist for (a PostgresInstance or
@@ -306,6 +479,18 @@ seed-network-providers:
     just provider aws-rds         ghcr.io/crossplane-contrib/provider-aws-rds:v2.6.0         rds
     just provider aws-elasticache ghcr.io/crossplane-contrib/provider-aws-elasticache:v2.6.0 elasticache
     just provider gcp-compute     ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0     compute
+
+# Each cloud files its hub under a different service, so there is no shared
+# family here: the Transit Gateway is ec2 (shared with `seed-network-providers`
+# and `seed-vm-providers`), Virtual WAN is azure network (shared with
+# `seed-vm-providers`), and GCP has a service of its own. Network Connectivity
+# Center is the only GCP fabric that makes spoke-to-spoke traffic transitive,
+# which is why gcp-compute's VPC peering is NOT what the hubspoke backend uses.
+# Bootstrap/refresh the transit providers used by the hubspoke Composition.
+seed-hubspoke-providers:
+    just provider aws-ec2                   ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0                   ec2
+    just provider azure-network             ghcr.io/crossplane-contrib/provider-azure-network:v2.6.0             network
+    just provider gcp-networkconnectivity   ghcr.io/crossplane-contrib/provider-gcp-networkconnectivity:v2.6.0   networkconnectivity
 
 # Lambda needs an execution role, so the serverless Composition shares the
 # aws-iam schema package with `seed-iam-providers`. The knative schema package
@@ -378,12 +563,30 @@ seed-registry-providers:
 # namespaced *.vault.m.upbound.io CRDs. Its `vault`+`transit` families give the
 # Mount and SecretBackendKey the Composition renders; `kcl import` buckets
 # their v1alpha1 schemas under models/unknown/.
+# The oci backend's provider-oci-kms comes from Oracle (ghcr.io/oracle), and
+# like every OCI sub-provider it authenticates through provider-family-oci,
+# which must be installed first and owns the (Cluster)ProviderConfig — so the
+# family's schemas are seeded alongside it.
 # Bootstrap/refresh the key-management providers used by the kms Composition.
 seed-kms-providers:
     just provider aws-kms        ghcr.io/crossplane-contrib/provider-aws-kms:v2.6.0        kms
     just provider gcp-kms        ghcr.io/crossplane-contrib/provider-gcp-kms:v2.6.0        kms
     just provider azure-keyvault ghcr.io/crossplane-contrib/provider-azure-keyvault:v2.6.0 keyvault
     just provider vault          xpkg.upbound.io/upbound/provider-vault:v4.0.3             vault,transit
+    just provider oci-family     ghcr.io/oracle/provider-family-oci:v2.0.0
+    just provider oci-kms        ghcr.io/oracle/provider-oci-kms:v2.0.0                     kms
+
+# One orchestration service per cloud, each taking the workflow source in its
+# own language: GCP Workflows (YAML/JSON syntax), Step Functions (Amazon States
+# Language) and Logic Apps (Workflow Definition Language). A state machine
+# needs an execution role, so the aws backend shares aws-iam with
+# `seed-iam-providers`.
+# Bootstrap/refresh the orchestration providers used by the workflow Composition.
+seed-workflow-providers:
+    just provider gcp-workflows ghcr.io/crossplane-contrib/provider-gcp-workflows:v2.6.0 workflows
+    just provider aws-sfn       ghcr.io/crossplane-contrib/provider-aws-sfn:v2.6.0       sfn
+    -just provider aws-iam      ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0       iam
+    just provider azure-logic   ghcr.io/crossplane-contrib/provider-azure-logic:v2.6.0   logic
 
 # ─── Generate compositions (XRD + per-provider function-kcl modules) ──────────
 
@@ -436,6 +639,7 @@ hooks-run hook="pre-commit":
 # Format the given KCL files in place; the pre-commit hook re-stages what it rewrites.
 fmt-files +files:
     kcl fmt {{ files }}
+    nx affected -t fmt,test,build,lint
 
 # `find`, not `git ls-files`: a package generated but not yet added counts too.
 # Report hand-written KCL that needs formatting, without rewriting it.
@@ -508,6 +712,8 @@ mod-check:
     done < <(find packages -name kcl.mod -not -path '*/node_modules/*')
     while IFS= read -r comp; do
         dir=$(dirname "$comp")
+        # Compositions rendered by a non-KCL function ship no package.
+        [ -f "$dir/kcl.mod" ] || continue
         name=$(sed -n 's/^name = "\(.*\)"/\1/p' "$dir/kcl.mod")
         src=$(yq -r '.spec.pipeline[].input.spec.source // ""' "$comp" | grep -v '^$' | head -1)
         [ -z "$src" ] && continue
@@ -544,11 +750,14 @@ secrets-check *files:
     done
     exit $fail
 
-# Type-check the TypeScript in tools/ (the nx-kcl plugin, the bench harness, the install graph).
+# Type-check the TypeScript in tools/ (the nx-kcl plugin, the bench harness, the
+# install graph, the rate-card refresher, the Backstage catalog emitter).
 typecheck:
     {{ tsc }} --noEmit -p tools/nx-kcl/tsconfig.json
     {{ tsc }} --noEmit -p tools/bench/tsconfig.json
+    {{ tsc }} --noEmit -p tools/catalog/tsconfig.json
     {{ tsc }} --noEmit -p tools/graph/tsconfig.json
+    {{ tsc }} --noEmit -p tools/pricing/tsconfig.json
 
 # Redraw docs/install-graph.md from devkit.toml [[deps]] and the manager values:
 # the wave ladder `devkit cluster deps` runs, and the HelmRelease dependsOn DAG
@@ -572,11 +781,11 @@ nu-docs:
 nu-docs-check:
     monodocs nu devkit --prefix devkit | diff -u docs/devkit-commands.md - || { echo 'docs/devkit-commands.md is stale: run `just nu-docs`' >&2; exit 1; }
 
-# Regenerate every generated doc under docs/.
-docs: graph nu-docs
+# Regenerate every generated doc under docs/ (`just docs` builds the site out of them).
+gen-docs: graph nu-docs crossplane-catalog
 
 # Fail if any generated doc under docs/ is stale.
-docs-check: graph-check nu-docs-check
+gen-docs-check: graph-check nu-docs-check crossplane-catalog-check
 
 # Regenerate lefthook.yml, tools/authorship/ from butler's templates, merged
 # with their `<name>.local.<ext>` overlays (lefthook.local.yml, …).
@@ -586,6 +795,26 @@ repo-init:
 # Fail if a repo file is missing or stale.
 repo-check:
     butler repo init --check
+
+# catalog/crossplane.yaml gets an entity per XRD, Composition, example XR and
+# generated provider schema package; docs/crossplane-graph.md gets who composes
+# whom, how often each XR kind is used, and the refactor findings that fall out
+# of it. The entities are consumed by an EXTERNAL Backstage — nothing in this
+# repo runs one, so catalog/crossplane.yaml is the whole integration surface.
+# Rebuild the Backstage view of the Crossplane estate from packages/**.
+crossplane-catalog:
+    node tools/catalog/src/catalog.ts
+
+# Fail if catalog/crossplane.yaml or docs/crossplane-graph.md drifted from packages/** (pre-commit).
+crossplane-catalog-check:
+    node tools/catalog/src/catalog.ts --check
+
+# Speaks MCP over stdio: it is launched BY an MCP client, which owns both ends
+# of the pipe — a bare `just mcp` just sits there waiting for a JSON-RPC frame
+# on stdin.
+# Serve the same scan over MCP, so an agent can query the estate instead of grepping it.
+mcp:
+    node tools/catalog/src/mcp.ts
 
 # Merge, revert and fixup!/squash! subjects are git's own wording, so they pass
 # through untouched.
@@ -605,6 +834,48 @@ commit-msg file:
         echo "example:  feat(bucket): add azure backend"
         exit 1
     fi
+
+# ─── Docs (monodocs) ──────────────────────────────────────────────────────────
+#
+# docs/*.md is a set of files to read in a repo; `just docs` is the same set as
+# ONE file to hand to someone — dist/docs.html carries the sidebar, the search
+# index, the Shiki highlighting and the mermaid runtime inline, so it opens off
+# a USB stick with no server. monodocs.config.yml at the root is the whole
+# configuration; the sidebar is derived from the tree, so a new docs/<topic>.md
+# needs no edit anywhere.
+#
+# monodocs runs through `pnpm dlx` on a pinned version rather than as a root
+# devDependency: the lockfile currently trips pnpm 12's supply-chain policy, so
+# `pnpm add` and `pnpm install` both fail before any binary is reached (the same
+# reason `nx` is called by path at the top of this file).
+
+# One self-contained dist/docs.html out of docs/*.md.
+docs:
+    {{ monodocs }} build
+
+# Needs a real Chromium — monodocs finds one on Linux and Windows, and macOS has
+# to be told where it is (PUPPETEER_EXECUTABLE_PATH, defaulted here to Chrome).
+# The same document as dist/docs.pdf: bookmarks, and mermaid rasterised.
+docs-pdf:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$OSTYPE" == darwin* && -z "${PUPPETEER_EXECUTABLE_PATH:-}" ]]; then
+        chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        if [[ ! -x "$chrome" ]]; then
+            echo "no Chromium found: install Google Chrome, or set PUPPETEER_EXECUTABLE_PATH" >&2
+            exit 1
+        fi
+        export PUPPETEER_EXECUTABLE_PATH="$chrome"
+    fi
+    {{ monodocs }} build --format pdf -o ./dist/docs.pdf
+
+# Live preview on http://127.0.0.1:4173 while editing docs/.
+docs-serve port="4173":
+    {{ monodocs }} serve --port {{ port }} --open
+
+# Fail on a broken cross-file link, a missing image or a page with no title.
+docs-check:
+    {{ monodocs }} validate
 
 # ─── Render locally (no cluster) ──────────────────────────────────────────────
 #
@@ -643,9 +914,11 @@ kclx source *args:
 kclx-serve *args:
     cargo run --manifest-path rust/Cargo.toml --release -q -p kclx -- function --insecure {{ args }}
 
-# Build + test the Rust workspace.
+# --locked: kcl-lang/lib depends on kcl-lang/kcl by *branch*, so an unlocked
+# resolve silently follows upstream main (see rust/Dockerfile).
+# Lint + test the Rust workspace: what CI and the pre-push hook run.
 kclx-test:
-    cd rust && cargo clippy --all-targets -- -D warnings && cargo test
+    cd rust && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked
 
 # Build the function runtime image. The tag is the one the local cluster's
 # DeploymentRuntimeConfig expects (manifests/crossplane/functions.yaml);
@@ -678,6 +951,207 @@ kclx-install version="v0.1.0": kclx-image registry
         -l pkg.crossplane.io/function=function-kcl --ignore-not-found
     echo "function-kclx {{ version }} installed"
 
+# ─── function-package-registry (Python composition function) ──────────────────
+#
+# `python/function-package-registry/` is the only Python in this repo: a
+# crossplane function-sdk-python function that renders the PackageRegistry XRD
+# (packages/cloud/package-registry) onto one of five backends. It ships no KCL
+# package, so nx knows nothing about it and these recipes are the whole gate.
+
+# The Python counterpart of `just provider`: pydantic models for every managed
+# resource the function composes, generated from the CRDs of the SAME pinned
+# provider images the KCL schema packages come from
+# (packages/providers/registry.yaml). Extraction mirrors nx-kcl's import-crd
+# generator — `docker create` + `docker export` + yq — so the two toolchains
+# can never read different CRDs for the same tag.
+#
+# The models inherit function/models/base.py's `extra="forbid"`, which is why
+# they exist: a field typo is then a ValidationError in `just pkgreg-test`
+# rather than a key the API server prunes at apply time.
+# Regenerate python/function-package-registry/function/models/** (docker + yq).
+pkgreg-models:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root=python/function-package-registry
+    out="$root/function/models"
+    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+    # image|package dir|group|version|Kind:module[,Kind:module…]
+    specs=(
+        "ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0|aws_ecr|ecr.aws.m.upbound.io|v1beta1|Repository:repository,LifecyclePolicy:lifecycle_policy,RepositoryPolicy:repository_policy"
+        "ghcr.io/crossplane-contrib/provider-aws-codeartifact:v2.6.0|aws_codeartifact|codeartifact.aws.m.upbound.io|v1beta1|Domain:domain,Repository:repository"
+        "ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0|gcp_artifact|artifact.gcp.m.upbound.io|v1beta1|RegistryRepository:registry_repository,RegistryRepositoryIAMMember:registry_repository_iam_member"
+        "ghcr.io/crossplane-contrib/provider-azure-containerregistry:v2.6.0|azure_containerregistry|containerregistry.azure.m.upbound.io|v1beta1|Registry:registry"
+        "ghcr.io/crossplane-contrib/provider-helm:v1.3.0|helm|helm.m.crossplane.io|v1beta1|Release:release"
+    )
+    for spec in "${specs[@]}"; do
+        IFS='|' read -r image pkg group version kinds <<< "$spec"
+        echo "── $pkg ← $image"
+        # The xpkg image carries every CRD in one /package.yaml stream.
+        cid=$(docker create "$image")
+        docker export "$cid" | tar -xf - -C "$tmp" package.yaml
+        docker rm "$cid" >/dev/null
+        mv "$tmp/package.yaml" "$tmp/$pkg.yaml"
+        mkdir -p "$out/$pkg"
+        cat > "$out/$pkg/__init__.py" <<PY
+    """Generated models for $group (from $image)."""
+    PY
+        IFS=',' read -ra entries <<< "$kinds"
+        for entry in "${entries[@]}"; do
+            kind=${entry%%:*}; module=${entry##*:}
+            # One JSON Schema per CRD version: the CRD document itself is not
+            # one, but .spec.versions[].schema.openAPIV3Schema is.
+            yq -o=json "select(.kind == \"CustomResourceDefinition\" and .spec.group == \"$group\" and .spec.names.kind == \"$kind\") | .spec.versions[] | select(.name == \"$version\") | .schema.openAPIV3Schema" \
+                "$tmp/$pkg.yaml" > "$tmp/$module.json"
+            [ -s "$tmp/$module.json" ] || { echo "no $group/$version $kind in $image"; exit 1; }
+            (cd "$root" && hatch run models:datamodel-codegen \
+                --input "$tmp/$module.json" \
+                --input-file-type jsonschema \
+                --output-model-type pydantic_v2.BaseModel \
+                --base-class function.models.base.Resource \
+                --class-name "$kind" \
+                --enum-field-as-literal all \
+                --use-annotated \
+                --target-python-version 3.11 \
+                --formatters ruff-format \
+                --disable-timestamp \
+                --custom-file-header "# Generated by \`just pkgreg-models\` from $image ($group/$version $kind). Do not edit." \
+                --output "function/models/$pkg/$module.py")
+            echo "   $group/$version $kind -> $out/$pkg/$module.py"
+        done
+    done
+
+# Lint + test the Python function: what CI and the pre-push hook run.
+pkgreg-test:
+    cd python/function-package-registry && hatch fmt --check && hatch test
+
+# The Function it backs needs the annotation
+# render.crossplane.io/runtime: Development, which pkgreg-render adds.
+# Serve the composition function on :9443 for `crossplane render`.
+pkgreg-serve:
+    cd python/function-package-registry && hatch run development
+
+#   just pkgreg-render forgejo --include-context
+# The nx `render` target is bound to function-kcl and to a KCL `source:` line,
+# so it cannot render these Compositions — hence a recipe of its own.
+# Render one example against a locally served function (needs `just pkgreg-serve`).
+pkgreg-render backend="gcp" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p tmp/pkgreg
+    yq '(select(.metadata.name == "function-package-registry") | .metadata.annotations["render.crossplane.io/runtime"]) = "Development"' \
+        packages/cloud/package-registry/xrd/functions.yaml > tmp/pkgreg/functions.yaml
+    crossplane render \
+        packages/cloud/package-registry/xrd/examples/package-registry-{{ backend }}.yaml \
+        packages/cloud/package-registry/{{ backend }}/composition.yaml \
+        tmp/pkgreg/functions.yaml --include-function-results {{ args }}
+
+# Build the function runtime image. The tag is the one the local cluster's
+# DeploymentRuntimeConfig expects (manifests/crossplane/functions.yaml);
+# --provenance=false keeps buildx from producing an index containerd refuses
+# to run after `kind load`.
+pkgreg-image tag="function-package-registry-runtime:dev":
+    docker build --provenance=false -t {{ tag }} python/function-package-registry
+
+# Install the Python composition function into the Kind cluster: runtime image
+# side-loaded onto the nodes, and the (metadata-only) package pushed to the
+# local registry, from where Crossplane fetches it as
+# 172.18.0.100:80/function-package-registry:v0.1.0 — see
+# manifests/crossplane/functions.yaml for why that reference is an RFC1918
+# IP:port. `devkit cluster deps` applies the Function object itself (wave 2).
+pkgreg-install version="v0.1.0": pkgreg-image registry
+    #!/usr/bin/env bash
+    set -euo pipefail
+    kind load docker-image --name {{ cluster }} function-package-registry-runtime:dev
+    mkdir -p tmp/xpkg && rm -f tmp/xpkg/function-package-registry.xpkg
+    crossplane xpkg build --package-root=python/function-package-registry/package \
+        --package-file=tmp/xpkg/function-package-registry.xpkg
+    # Pushed through localhost:5001: the CLI reaches the registry on the host,
+    # and go-containerregistry speaks plain HTTP to `localhost:`.
+    crossplane xpkg push -f tmp/xpkg/function-package-registry.xpkg \
+        {{ registry_push }}/function-package-registry:{{ version }}
+    # The pod keeps the image it started with (imagePullPolicy: IfNotPresent on
+    # a fixed tag), so a rebuild only reaches Crossplane after a restart. A
+    # no-op before wave 2 has ever run.
+    kubectl -n crossplane-system delete pod \
+        -l pkg.crossplane.io/function=function-package-registry --ignore-not-found
+    echo "function-package-registry {{ version }} installed"
+
+# ─── KclModule operator (kube-rs) ─────────────────────────────────────────────
+#
+# The same `kclx` binary and the same `kcl_render::Engine`, wearing four more
+# hats: a controller that renders a KclModule and applies what it produced, a
+# REST API over those modules, a CLI for them, and an LLM agent that drives
+# the same service layer. rust/README.md ("Operator") has the reconcile
+# contract.
+
+#   just kclx-operator --namespace default
+# Run the controller against the current kubecontext.
+kclx-operator *args:
+    cargo run --manifest-path rust/Cargo.toml --release -q -p kclx -- operator run {{ args }}
+
+#   just kclx-api --addr 127.0.0.1:8099
+# Serve the KclModule REST API against the current kubecontext.
+kclx-api *args:
+    cargo run --manifest-path rust/Cargo.toml --release -q -p kclx -- api {{ args }}
+
+#   just kclx-agent ask "which buckets are not ready, and why"
+#   just kclx-agent ask --yes "create a KclModule hello2 in default rendering a ConfigMap"
+#   just kclx-agent serve --addr 127.0.0.1:8090
+# Needs KCLX_LLM_MODEL, and KCLX_LLM_API_KEY for hosted endpoints (`.env`
+# carries OPENAI after `devkit secrets fetch`). A local Ollama needs neither a
+# key nor a default: KCLX_LLM_BASE_URL=http://localhost:11434/v1.
+#
+# Without --yes the agent has no write tools at all: it reads, dry-runs and
+# proposes.
+# Ask the LLM agent about (or change) this cluster's KclModules and composites.
+kclx-agent *args:
+    cargo run --manifest-path rust/Cargo.toml --release -q -p kclx -- agent {{ args }}
+
+#   just kclx-agent-secret gpt-4o-mini
+#   just kclx-agent-secret qwen2.5:7b http://host.docker.internal:11434/v1
+# The Deployment reads its model endpoint from this Secret, which is
+# deliberately not committed. apiKey comes from $KCLX_LLM_API_KEY, else
+# $OPENAI from .env; empty is fine for a local endpoint. The justfile has no
+# dotenv-load, hence the explicit source.
+# Create or refresh the Secret the in-cluster kclx-agent reads.
+kclx-agent-secret model base_url="https://api.openai.com/v1":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -f .env ]]; then set -a; source .env; set +a; fi
+    kubectl create namespace kclx-system --dry-run=client -o yaml | kubectl apply -f -
+    kubectl -n kclx-system create secret generic kclx-agent-llm \
+        --from-literal=model="{{ model }}" \
+        --from-literal=baseUrl="{{ base_url }}" \
+        --from-literal=apiKey="${KCLX_LLM_API_KEY:-${OPENAI:-}}" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+# The CRD is derived, never hand-edited: `kube-derive` builds it from
+# KclModuleSpec, so a field added in Rust and not regenerated here is a schema
+# the API server prunes on write.
+# Regenerate manifests/kclx-operator/crd.yaml from the Rust types.
+kclx-crd:
+    cargo run --manifest-path rust/Cargo.toml --release -q -p kclx -- operator crd \
+        > manifests/kclx-operator/crd.yaml
+    @echo "wrote manifests/kclx-operator/crd.yaml"
+
+# The image is the one the composition function uses; the rollout restart is
+# explicit for the same reason as kclx-install (a pod keeps the image it
+# started with).
+# Install the operator, the REST API and the agent into the Kind cluster.
+kclx-operator-install: kclx-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    kind load docker-image --name {{ cluster }} function-kclx-runtime:dev
+    kubectl apply -f manifests/kclx-operator/crd.yaml
+    kubectl apply -f manifests/kclx-operator/rbac.yaml
+    kubectl apply -f manifests/kclx-operator/deployment.yaml
+    kubectl -n kclx-system rollout restart deploy/kclx-operator deploy/kclx-api deploy/kclx-agent
+    kubectl -n kclx-system rollout status deploy/kclx-operator --timeout=120s
+    kubectl -n kclx-system rollout status deploy/kclx-api --timeout=120s
+    # The agent needs `just kclx-agent-secret` first; without it this is where
+    # the missing Secret shows up, as CreateContainerConfigError.
+    kubectl -n kclx-system rollout status deploy/kclx-agent --timeout=120s
+
 # ─── Benchmark: function-kcl vs kclx vs function-python ───────────────────────
 #
 # The three composition-function runtimes render the SAME Compositions
@@ -697,6 +1171,12 @@ bench *args: kclx-image
 # Assert the benchmark report's tables against the measured data in Chromium.
 bench-verify *args:
     node tools/bench/src/verify.ts {{ args }}
+
+# Time `bun`, `pnpm`, and `nub` installing this repo's tree (cold store / warm
+# store / no-op) with hyperfine in throwaway sandboxes; writes tools/bench/out/pm.md.
+#   just bench-pm            RUNS=10 PMS="pnpm nub" just bench-pm
+bench-pm:
+    tools/bench-pm.sh
 
 # ─── End-to-end on a real cluster ─────────────────────────────────────────────
 #
@@ -1025,6 +1505,182 @@ e2e-manager-status:
 e2e-manager-down:
     -devkit cluster delete {{ manager_cluster }}
 
+# ─── CNCF: local developer cluster (kind, k3d or openshift) ───────────────────
+#
+#   just cncf-e2e [kind|k3d|openshift]  # cluster + Flux + the render + the checks
+#   just cncf-dev                       # the Tilt loop: re-render and re-apply on change
+#   just cncf-ca                        # export the local CA so the host can trust it
+#
+# Its own cluster (`kcl-cncf`), never kcl-e2e / kcl-manager: this one binds host
+# ports 80/443, and so does the e2e cluster — `just e2e-down` first if it is up.
+# kind goes through manifests/cncf/devkit.toml (which shadows the root file when
+# devkit runs from that directory, docs/devkit.md); k3d goes through the k3d CLI
+# with traefik disabled, plus the same flux2 chart by helm.
+#
+# openshift goes through OpenShift Local: `crc start`, then the same flux2
+# chart by helm with distro.openshift=true (no runAsUser/fsGroup, SCC nonroot).
+# Ports 80/443 belong to CRC's own port-forward, not to kind — still one runner
+# at a time.
+#
+# The render is applied twice, as the package documents: the ClusterIssuers and
+# the Certificates are instances of CRDs the cert-manager chart installs, so the
+# first pass takes only what Flux understands and the second lands once
+# helm-controller reports both HelmReleases Ready.
+cncf_values := "packages/cncf/examples/values.yaml"
+cncf_cluster := "kcl-cncf" # keep in step with manifests/cncf/devkit.toml
+
+# k3d 5.8.3 defaults to k3s v1.31, and the flux2 2.19.0 chart's pre-install
+# check refuses anything below 1.33 — pin the same minor kind v0.33 brings.
+k3s_image := "rancher/k3s:v1.33.13-k3s1"
+
+# Cluster + Flux, the render, the checks. `runner` is kind, k3d or openshift;
+# k3d and openshift use the values.<runner>.yaml overlay.
+# `(cncf_values)` is grouped because `ident (` parses as a function call in just.
+cncf-e2e runner="kind": (cncf-up runner) (cncf-apply (cncf_values) (if runner == "kind" { "" } else { runner })) (cncf-check (cncf_values) (if runner == "kind" { "" } else { runner }))
+    @just cncf-status
+
+# kind: devkit from manifests/cncf (shadows the root devkit.toml). k3d: the CLI,
+# traefik off, host 80/443 through the serverlb, then flux2 by helm.
+cncf-up runner="kind":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{ runner }}" in
+        kind) cd manifests/cncf && devkit cluster create && devkit cluster deps ;;
+        k3d)
+            k3d cluster create {{ cncf_cluster }} --image {{ k3s_image }} -p "80:80@loadbalancer" -p "443:443@loadbalancer" --k3s-arg "--disable=traefik@server:*" --wait
+            kubectl config use-context k3d-{{ cncf_cluster }} >/dev/null
+            # `--repo <url>` makes helm walk every configured repository's index
+            # cache first, so one stale entry in ~/.config/helm fails the install;
+            # add the repo by name instead, the way devkit does for kind.
+            helm repo add flux2 https://fluxcd-community.github.io/helm-charts --force-update >/dev/null
+            helm repo update flux2 >/dev/null
+            helm upgrade --install flux2 flux2/flux2 --version 2.19.0 \
+                -n flux-system --create-namespace --wait --timeout 10m \
+                --set imageAutomationController.create=false --set imageReflectionController.create=false --set notificationController.create=false
+            ;;
+        openshift)
+            # Needs `crc setup` once and a pull secret (`crc config set pull-secret-file <path>`).
+            # `crc start` is a no-op on a running instance.
+            crc start
+            kubectl config use-context crc-admin >/dev/null
+            helm repo add flux2 https://fluxcd-community.github.io/helm-charts --force-update >/dev/null
+            helm repo update flux2 >/dev/null
+            # distro.openshift drops the controllers' runAsUser 65534 / pod
+            # fsGroup 1337 (rejected by restricted-v2) and grants SCC nonroot.
+            helm upgrade --install flux2 flux2/flux2 --version 2.19.0 \
+                -n flux-system --create-namespace --wait --timeout 10m \
+                --set distro.openshift=true \
+                --set imageAutomationController.create=false --set imageReflectionController.create=false --set notificationController.create=false
+            ;;
+        *) echo "runner must be kind, k3d or openshift, got '{{ runner }}'" >&2; exit 2 ;;
+    esac
+
+# Two passes, like e2e-manager-apply: the Flux objects, wait for every
+# HelmRelease, then everything (the issuers and certificates need the
+# cert-manager CRDs).
+cncf-apply values=cncf_values env="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just cncf-context
+    just cncf {{ values }} {{ env }} | yq 'select(.kind == "HelmRepository" or .kind == "HelmRelease")' | kubectl apply -f -
+    kubectl -n flux-system wait helmrelease --all --for=condition=Ready --timeout=20m
+    # Pass 2 also applies the openshift IngressController partial; kubectl warns
+    # that the pre-existing singleton has no last-applied-configuration
+    # annotation, which is expected — client-side apply patches only our fields.
+    just cncf {{ values }} {{ env }} | kubectl apply -f -
+    # openshift: the router's default certificate is now our wildcard; make the
+    # cluster trust the CA that signed it (RH docs, "Replacing the default
+    # ingress certificate"): CA → ConfigMap in openshift-config → proxy/cluster
+    # trustedCA. The CA bytes only exist once cert-manager issued them, hence not
+    # in the render. Nodes may flap NotReady while kubelet/CRI-O restart.
+    render=$(just cncf {{ values }} {{ env }})
+    if [ -n "$(echo "$render" | yq -N 'select(.kind == "IngressController") | .metadata.name')" ]; then
+        ca=$(echo "$render" | yq 'select(.kind == "Certificate" and .spec.isCA == true) | .metadata.namespace + "/" + .metadata.name')
+        kubectl -n ${ca%/*} wait certificate/${ca#*/} --for=condition=Ready --timeout=5m
+        just cncf-ca {{ values }} {{ env }} >/dev/null
+        kubectl -n openshift-config create configmap ${ca#*/} --from-file=ca-bundle.crt=tmp/cncf/ca.crt --dry-run=client -o yaml | kubectl apply -f -
+        kubectl patch proxy/cluster --type=merge -p "{\"spec\":{\"trustedCA\":{\"name\":\"${ca#*/}\"}}}"
+        kubectl wait node --all --for=condition=Ready --timeout=10m
+    fi
+
+# Refuse to touch anything but the cncf cluster (kind, k3d or CRC context).
+cncf-context:
+    #!/usr/bin/env bash
+    ctx=$(kubectl config current-context 2>/dev/null || true)
+    case "$ctx" in kind-{{ cncf_cluster }}|k3d-{{ cncf_cluster }}|crc-admin) ;; *) echo "current context '$ctx' is not kind-{{ cncf_cluster }} / k3d-{{ cncf_cluster }} / crc-admin; run 'just cncf-up [kind|k3d|openshift]' first" >&2; exit 2 ;; esac
+
+# Export the local CA (the self-signed certificate in the CA secret) so the host
+# can trust every dev certificate below it.
+cncf-ca values=cncf_values env="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just cncf-context
+    ref=$(just cncf {{ values }} {{ env }} | yq 'select(.kind == "Certificate" and .spec.isCA == true) | .metadata.namespace + " " + .spec.secretName')
+    mkdir -p tmp/cncf
+    kubectl -n ${ref% *} get secret ${ref#* } -o jsonpath='{.data.tls\.crt}' | base64 -d > tmp/cncf/ca.crt
+    echo "CA written to tmp/cncf/ca.crt"
+    echo "trust it on macOS: sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain tmp/cncf/ca.crt"
+
+# What the package promises: both charts Ready, the CA chain Ready, and the
+# ingress (ingress-nginx, or the OpenShift router) serving the wildcard for the
+# dev domain.
+cncf-check values=cncf_values env="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just cncf-context
+    fail=0; ok() { echo "  ✓ $1"; }; bad() { echo "  ✗ $1"; fail=1; }
+    render=$(just cncf {{ values }} {{ env }})
+    domain=$(echo "$render" | yq 'select(.kind == "Certificate" and .metadata.name == "wildcard") | .spec.dnsNames[1]')
+    ingress_ns=$(echo "$render" | yq 'select(.kind == "Certificate" and .metadata.name == "wildcard") | .metadata.namespace')
+    ca=$(echo "$render" | yq 'select(.kind == "Certificate" and .spec.isCA == true) | .metadata.namespace + "/" + .metadata.name')
+    for hr in $(echo "$render" | yq -N 'select(.kind == "HelmRelease") | .metadata.name'); do
+        [ "$(kubectl -n flux-system get helmrelease $hr -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" = True ] && ok "$hr Ready" || bad "$hr not Ready"
+    done
+    # -N: a multi-document selection would otherwise interleave `---` separators.
+    for ci in $(echo "$render" | yq -N 'select(.kind == "ClusterIssuer") | .metadata.name'); do
+        kubectl wait clusterissuer/$ci --for=condition=Ready --timeout=2m >/dev/null && ok "clusterissuer $ci Ready" || bad "clusterissuer $ci not Ready"
+    done
+    kubectl -n ${ca%/*} wait certificate/${ca#*/} --for=condition=Ready --timeout=2m >/dev/null && ok "CA certificate Ready" || bad "CA certificate not Ready"
+    kubectl -n $ingress_ns wait certificate/wildcard --for=condition=Ready --timeout=2m >/dev/null && ok "wildcard certificate Ready" || bad "wildcard certificate not Ready"
+    if [ -n "$(echo "$render" | yq -N 'select(.kind == "IngressController") | .metadata.name')" ]; then
+        [ "$(kubectl -n openshift-ingress-operator get ingresscontroller default -o jsonpath='{.spec.defaultCertificate.name}')" = wildcard-tls ] && ok "router defaultCertificate is wildcard-tls" || bad "router defaultCertificate is not wildcard-tls"
+        [ "$(kubectl get proxy/cluster -o jsonpath='{.spec.trustedCA.name}')" = "${ca#*/}" ] && ok "proxy/cluster trusts ${ca#*/}" || bad "proxy/cluster does not trust ${ca#*/}"
+        addr=$(crc ip); expect=503; who="the OpenShift router (503: no Route for that host)"
+    else
+        addr=127.0.0.1; expect=404; who="ingress-nginx (404: default backend)"
+    fi
+    just cncf-ca {{ values }} {{ env }} >/dev/null
+    code=$(curl -s -o /dev/null -w '%{http_code}' --cacert tmp/cncf/ca.crt --resolve "hello.$domain:443:$addr" "https://hello.$domain/" || true)
+    [ "$code" = $expect ] && ok "https://hello.$domain/ → $expect from $who with a chain the local CA signs" || bad "https://hello.$domain/ → '$code' (expected $expect: $who behind the wildcard cert)"
+    exit $fail
+
+# HelmReleases, issuers and certificates on the developer cluster.
+cncf-status:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    just cncf-context
+    echo "── helmreleases ───────────────────────────────────────────"
+    kubectl -n flux-system get helmrelease -L platform.example.org/type
+    echo "── issuers ────────────────────────────────────────────────"
+    kubectl get clusterissuer
+    echo "── certificates ───────────────────────────────────────────"
+    kubectl get certificate -A
+
+# The developer loop: Tilt re-renders and re-applies on every change under
+# packages/cncf, packages/manager or the values file.
+cncf-dev values=cncf_values env="":
+    CNCF_VALUES={{ values }} CNCF_ENV={{ env }} tilt up -f manifests/cncf/Tiltfile
+
+# Delete the developer cluster.
+cncf-down runner="kind":
+    #!/usr/bin/env bash
+    case "{{ runner }}" in
+        kind) devkit cluster delete {{ cncf_cluster }} ;;
+        k3d) k3d cluster delete {{ cncf_cluster }} ;;
+        openshift) crc delete -f ;;
+        *) echo "runner must be kind, k3d or openshift, got '{{ runner }}'" >&2; exit 2 ;;
+    esac
+
 # ─── Release ──────────────────────────────────────────────────────────────────
 
 # The Release workflow refuses to run off main (it versions, tags and pushes
@@ -1049,6 +1705,58 @@ release-first version:
 release-publish:
     {{ nx }} release publish
 
+# ─── Zellij viewpoints ────────────────────────────────────────────────────────
+#
+#   just zj [ctx]           the workspace for a kube context: one tab per thing
+#                           the cluster actually runs (Crossplane, Flux, Argo,
+#                           chaos-mesh, KubeBlocks, the kclx operator, metrics),
+#                           a viewpoints monitor and a repo shell. The tab set
+#                           is derived from `kubectl api-versions`, so the same
+#                           command gives a different workspace per cluster.
+#   just zj-ls              every viewpoint on this machine: panes, RSS, CPU and
+#                           whether it is over budget
+#   just zj-ls-all          the same, plus the viewpoints on the hosts in
+#                           tools/zellij/hosts.json
+#   just zj-advise [name]   the numbers behind a verdict, the host with the most
+#                           free capacity, and the command to relocate
+#   just zj-move name host  push the script + layout to a host and print (or
+#                           take, with --attach) the ssh attach command
+#   just zj-layout [ctx]    the generated KDL, for inspection
+#
+# docs/zellij.md is the long form, including why the CPU numbers are what they
+# are (zellij's own server is the biggest line item).
+
+# Open (or attach to) the viewpoint for a kube context.
+zj ctx="":
+    tools/zellij/zj.sh up {{ ctx }}
+
+# Every viewpoint on this machine, with its cost and a verdict.
+zj-ls:
+    tools/zellij/zj.sh ls
+
+# The same, plus the viewpoints on every host in the inventory.
+zj-ls-all:
+    tools/zellij/zj.sh ls --all
+
+# Why a viewpoint is over budget, and where it should go.
+zj-advise name="":
+    tools/zellij/zj.sh advise {{ name }}
+
+# The remote hosts a viewpoint can be moved to, and their free capacity.
+zj-hosts:
+    tools/zellij/zj.sh hosts
+
+# Provision a viewpoint on a remote host; --attach takes it now.
+zj-move name host *flags:
+    tools/zellij/zj.sh move {{ name }} {{ host }} {{ flags }}
+
+# The generated KDL for a context, without touching zellij.
+zj-layout ctx="":
+    tools/zellij/zj.sh layout {{ ctx }}
+
+zj-clean:
+    zellij kill-all-sessions -y
+    zellij delete-all-sessions -y
 # ─── Inspect ──────────────────────────────────────────────────────────────────
 
 # List all KCL projects.

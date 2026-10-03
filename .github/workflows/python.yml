@@ -1,0 +1,55 @@
+name: Python
+
+# Gate for the `python/` workspace: the function-package-registry Crossplane
+# composition function.
+#
+# Deliberately not a job in ci.yml. That workflow is the nx/KCL gate, and
+# `nx affected -t build test lint` is unfiltered — this function ships no
+# kcl.mod, so nx infers no project for it and would never run anything. Hence a
+# separate, path-filtered workflow: `python/**` changes get checked, nothing
+# else pays for it (the same rationale as rust.yml).
+#
+# Reproduce locally with `just pkgreg-test`.
+
+on:
+  pull_request:
+    paths:
+      - 'python/**'
+      - '.github/workflows/python.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'python/**'
+      - '.github/workflows/python.yml'
+
+permissions:
+  contents: read
+
+# Superseded PR pushes are worth cancelling; main is not (its runs are the
+# record of what the branch actually passes).
+concurrency:
+  group: python-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 3.11 is the floor `requires-python` declares and the version the
+      # distroless runtime image ships (Debian 12).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install hatch
+        run: pip install hatch
+
+      - name: Lint
+        working-directory: python/function-package-registry
+        run: hatch fmt --check
+
+      - name: Test
+        working-directory: python/function-package-registry
+        run: hatch test

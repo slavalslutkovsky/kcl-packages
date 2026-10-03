@@ -4,9 +4,10 @@
 # NetworkInterface (and a PublicIP when network.publicIp is set). Azure needs
 # spec.resourceGroup and a full network.subnetId (the NIC cannot exist without
 # one), and Linux VMs disable password logins, so spec.sshKey is REQUIRED.
-# The provider schema exposes customData only as a Kubernetes secret ref, so
-# spec.userData is delivered base64-encoded through the VM's userData field
-# (readable from the Azure Instance Metadata Service) instead.
+# spec.userData becomes customData — the payload cloud-init actually runs at
+# boot. Azure's separate userData field is only readable from the Instance
+# Metadata Service and is never executed. The provider schema takes customData
+# solely as a Secret reference, so the composition also emits that Secret.
 # network.securityGroupIds is AWS-only and fails the render instead of
 # silently launching a machine with different reachability than asked for.
 import base64
@@ -16,6 +17,13 @@ import azure_network.models.v1beta1.network_azurem_upbound_io_v1beta1_public_ip 
 
 # Crossplane management policy set for the Orphan deletion policy (everything but Delete).
 _orphan_policies = ["Observe", "Create", "Update", "LateInitialize"]
+
+# Where the customData payload is handed to the provider. The Secret lives in
+# the XR's namespace, which is also the namespaced MR's.
+custom_data_key = "customData"
+custom_data_secret = lambda name: str -> str {
+    "${name}-custom-data"
+}
 
 # Abstract size -> Azure VM size. spec.machineType overrides.
 machine_for = lambda size: str -> str {
@@ -77,7 +85,7 @@ render = lambda oxr, ocds {
         else:
             spec.forProvider.sourceImageReference = image_ref(_spec?.image or "ubuntu-24-04")
         if _spec?.userData:
-            spec.forProvider.userData = base64.encode(_spec.userData)
+            spec.forProvider.customDataSecretRef = {name = custom_data_secret(_name), key = custom_data_key}
         if _spec?.spot:
             spec.forProvider.priority = "Spot"
             spec.forProvider.evictionPolicy = "Deallocate"
@@ -117,6 +125,24 @@ render = lambda oxr, ocds {
             spec.forProvider.location = _spec.region
             spec.forProvider.resourceGroupName = _spec.resourceGroup
             spec.forProvider.allocationMethod = "Static"
+        }]
+
+    # 4) The customData payload. Upjet reads the decoded Secret value as the
+    # field itself, and the field is base64 — hence the double encoding. A
+    # Secret has no Ready condition, so it is declared ready outright.
+    if _spec?.userData:
+        _items += [{
+            apiVersion = "v1"
+            kind = "Secret"
+            metadata = {
+                name = custom_data_secret(_name)
+                annotations = {
+                    "krm.kcl.dev/composition-resource-name" = "custom-data"
+                    "krm.kcl.dev/ready" = "True"
+                }
+            }
+            type = "Opaque"
+            data = {"${custom_data_key}" = base64.encode(base64.encode(_spec.userData))}
         }]
 
     _items

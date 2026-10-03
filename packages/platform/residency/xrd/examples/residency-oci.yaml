@@ -1,0 +1,21 @@
+apiVersion: platform.example.org/v1alpha1
+kind: Residency
+metadata:
+  namespace: default
+  name: shl
+spec:
+  provider: oci                    # each key binds ClusterProviderConfig oci-<region>
+  locations:
+    - name: il                     # -> il-jerusalem-1 (Jerusalem)
+    - name: nl                     # -> eu-amsterdam-1
+  keys:
+    - name: audit                  # org audit-log bucket CMEK: Israel only
+      locations: [il]
+    - name: app-data               # application CMEK in every location
+    - name: signing                # release signing, Israel only
+      locations: [il]
+      purpose: sign-verify
+      algorithm: ec-p256           # asymmetric: rotationDays is dropped by aws/gcp
+  compartmentId: ocid1.compartment.oc1..aaaaaaaaexampleexampleexampleexampleexample
+  tags:
+    team: platform

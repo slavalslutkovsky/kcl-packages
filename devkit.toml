@@ -147,7 +147,7 @@ namespace = "flagger"
 
 # Chaos Mesh — the operator behind the app package's `chaos:` faults
 # (packages/app renders chaos-mesh.org PodChaos / NetworkChaos / StressChaos /
-# Schedule). Chart 2.8.4 is Chaos Mesh v2.8.4, the ref the
+# HTTPChaos / IOChaos / DNSChaos / TimeChaos / Schedule). Chart 2.8.4 is Chaos Mesh v2.8.4, the ref the
 # packages/providers/chaos-mesh schema package was generated from; keep them in
 # step. Kind nodes run containerd, and chaos-daemon must talk to that socket
 # to kill containers / shape their network. The dashboard is off: nothing here
@@ -243,6 +243,170 @@ name = "bucket-examples"
 manifest = "packages/cloud/bucket/xrd/examples/"
 wave = 5
 
+# The `package-registry` module: one polyglot registry (OCI containers plus
+# npm/pypi/maven/go/cargo/nuget/generic) on five backends, rendered by the
+# PYTHON composition function in python/function-package-registry rather than
+# by function-kcl — `just pkgreg-install` puts it in the local registry and
+# the wave-2 crossplane-functions row above installs the Function object. The
+# zot and forgejo examples reconcile on a kind cluster; the cloud three stay
+# pending without credentials, exactly like the bucket ones.
+[[deps]]
+name = "package-registry-xrd"
+manifest = "packages/cloud/package-registry/xrd/xrd.yaml"
+wave = 2
+
+[[deps]]
+name = "package-registry-providers"
+manifest = "packages/cloud/package-registry/xrd/providers.yaml"
+wave = 3
+
+[[deps]]
+name = "package-registry-providerconfigs"
+manifest = "packages/cloud/package-registry/xrd/providerconfigs.yaml"
+wave = 4
+
+[[deps]]
+name = "package-registry-composition-aws"
+manifest = "packages/cloud/package-registry/aws/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "package-registry-composition-azure"
+manifest = "packages/cloud/package-registry/azure/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "package-registry-composition-gcp"
+manifest = "packages/cloud/package-registry/gcp/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "package-registry-composition-zot"
+manifest = "packages/cloud/package-registry/zot/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "package-registry-composition-forgejo"
+manifest = "packages/cloud/package-registry/forgejo/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "package-registry-examples"
+manifest = "packages/cloud/package-registry/xrd/examples/"
+wave = 5
+
+# The `landing` module: a static landing page served from an edge, with its
+# HTML inside the XR. Four backends, and the cloud three each need their own
+# provider family (S3+CloudFront+ACM, GCS+Compute, Storage+Front Door), so
+# wave 3 here is the heaviest provider row in the file. The onprem backend
+# needs only provider-helm and is the one that actually reconciles on a kind
+# cluster; the cloud examples stay pending without credentials, exactly like
+# the bucket ones.
+[[deps]]
+name = "landing-xrd"
+manifest = "packages/cloud/landing/xrd/xrd.yaml"
+wave = 2
+
+[[deps]]
+name = "landing-providers"
+manifest = "packages/cloud/landing/xrd/providers.yaml"
+wave = 3
+
+[[deps]]
+name = "landing-composition-aws"
+manifest = "packages/cloud/landing/aws/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "landing-composition-azure"
+manifest = "packages/cloud/landing/azure/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "landing-composition-gcp"
+manifest = "packages/cloud/landing/gcp/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "landing-composition-onprem"
+manifest = "packages/cloud/landing/onprem/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "landing-examples"
+manifest = "packages/cloud/landing/xrd/examples/"
+wave = 5
+
+# The `hubspoke` module: hub-and-spoke connectivity for networks that already
+# exist. Nothing here reconciles on a kind cluster — a Transit Gateway, an NCC
+# hub and a Virtual WAN all need a cloud account — so the examples exist to be
+# rendered and diffed, exactly like the bucket and landing cloud examples.
+[[deps]]
+name = "hubspoke-xrd"
+manifest = "packages/cloud/hubspoke/xrd/xrd.yaml"
+wave = 2
+
+[[deps]]
+name = "hubspoke-providers"
+manifest = "packages/cloud/hubspoke/xrd/providers.yaml"
+wave = 3
+
+[[deps]]
+name = "hubspoke-composition-aws"
+manifest = "packages/cloud/hubspoke/aws/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "hubspoke-composition-azure"
+manifest = "packages/cloud/hubspoke/azure/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "hubspoke-composition-gcp"
+manifest = "packages/cloud/hubspoke/gcp/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "hubspoke-examples"
+manifest = "packages/cloud/hubspoke/xrd/examples/"
+wave = 5
+
+# The `organization` module: the cloud resource hierarchy — folders/OUs/
+# management groups, the accounts inside them, the policies that constrain
+# them and the grants at the top. Nothing here reconciles on a kind cluster
+# (every object needs an organization-level credential), so the examples exist
+# to be rendered and diffed, like the other cloud examples. One XR owns a
+# whole organization, so there is exactly one example per backend.
+[[deps]]
+name = "organization-xrd"
+manifest = "packages/cloud/organization/xrd/xrd.yaml"
+wave = 2
+
+[[deps]]
+name = "organization-providers"
+manifest = "packages/cloud/organization/xrd/providers.yaml"
+wave = 3
+
+[[deps]]
+name = "organization-composition-gcp"
+manifest = "packages/cloud/organization/gcp/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "organization-composition-aws"
+manifest = "packages/cloud/organization/aws/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "organization-composition-azure"
+manifest = "packages/cloud/organization/azure/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "organization-examples"
+manifest = "packages/cloud/organization/xrd/examples/"
+wave = 5
+
 # The `component` module: one namespaced XR per deployable component, composed
 # into a Flux source + Kustomization/HelmRelease pair. providers.yaml here is
 # not a Provider — it is the aggregated ClusterRole that lets Crossplane compose
@@ -266,6 +430,40 @@ wave = 4
 [[deps]]
 name = "component-examples"
 manifest = "packages/platform/component/xrd/examples/"
+wave = 5
+
+# The `application` module: one namespaced XR wrapping `packages/app`, so a
+# team ships a Deployment + Service + ConfigMap (plus an optional route,
+# ScaledObject and ExternalSecret) from one object instead of a rendered
+# bundle. providers.yaml here is not a Provider — it is the aggregated
+# ClusterRole that lets Crossplane compose those kinds at all. The Gateway API
+# standard CRDs go in wave 1 so `route.type: gateway-api` has kinds to compose
+# against before the XRD/Composition waves; istiod and KEDA are cluster add-ons
+# this repo does not install, so `route.type: istio` and `scaling` only work on
+# a cluster that already has them.
+[[deps]]
+name = "gateway-api-crds"
+manifest = "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml"
+wave = 1
+
+[[deps]]
+name = "application-xrd"
+manifest = "packages/platform/application/xrd/xrd.yaml"
+wave = 2
+
+[[deps]]
+name = "application-providers"
+manifest = "packages/platform/application/xrd/providers.yaml"
+wave = 3
+
+[[deps]]
+name = "application-composition-k8s"
+manifest = "packages/platform/application/k8s/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "application-examples"
+manifest = "packages/platform/application/xrd/examples/"
 wave = 5
 
 # ─── Paid capabilities ────────────────────────────────────────────────────────

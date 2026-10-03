@@ -1,0 +1,32 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: LandingPage
+metadata:
+  namespace: default
+  name: acmelanding
+spec:
+  # The Storage Account name is the XR name: 3-24 lowercase alphanumerics, no
+  # dashes. Azure rejects anything else, so the XR is named accordingly.
+  region: westeurope
+  resourceGroup: platform-rg     # required by this backend; the group must already exist
+  domain: www.acme.example       # Front Door custom domain: one TXT (_dnsauth) + one CNAME from status
+  content:
+    html: |
+      <!doctype html>
+      <html lang="en"><head><meta charset="utf-8"><title>ACME</title></head>
+        <body><main><h1>ACME</h1></main></body>
+      </html>
+    files:
+      - path: 404.html
+        content: <!doctype html><html><body>Not found</body></html>
+  cdn:
+    enabled: true                # Front Door Standard profile + endpoint + origin + route
+    ttlSeconds: 3600
+  tls:
+    enabled: true                # Front Door managed certificate on the custom domain
+  deletionPolicy: Delete
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure

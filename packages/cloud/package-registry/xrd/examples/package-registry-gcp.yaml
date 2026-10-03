@@ -1,0 +1,27 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: PackageRegistry
+metadata:
+  namespace: default
+  name: my-packages
+spec:
+  region: us-central1            # Artifact Registry location
+  formats:                       # one repository per format: my-packages-oci, my-packages-npm, …
+    - oci
+    - npm
+    - pypi
+    - maven
+  immutableTags: true            # dockerConfig.immutableTags (the DOCKER repository only)
+  scanOnPush: true               # vulnerabilityScanningConfig INHERITED (follows the project setting)
+  publicAccess: false            # true binds allUsers to roles/artifactregistry.reader on every repository
+  untaggedRetentionDays: 14      # cleanup policy: DELETE untagged versions older than 14 days (DOCKER only)
+  keepLastImages: 30             # cleanup policy: KEEP the 30 most recent versions (every format)
+  encryptionKeyId: projects/my-project/locations/us-central1/keyRings/kr/cryptoKeys/artifacts  # optional CMEK
+  deletionPolicy: Delete         # Delete | Orphan — Orphan keeps the repositories
+  tags:                          # rendered as Artifact Registry labels
+    team: platform
+  # `cargo` and `nuget` are not Artifact Registry formats — use the aws or
+  # forgejo backend for those.
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp            # the flag: picks the backend (aws | gcp | azure | zot | forgejo)

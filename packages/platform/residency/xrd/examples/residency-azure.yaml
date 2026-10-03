@@ -1,0 +1,22 @@
+apiVersion: platform.example.org/v1alpha1
+kind: Residency
+metadata:
+  namespace: default
+  name: shl                        # Key Vault names: shl-<location>-<key> must stay <= 24 chars
+spec:
+  provider: azure
+  locations:
+    - name: il                     # -> israelcentral
+    - name: nl                     # -> westeurope (Amsterdam)
+  keys:
+    - name: audit                  # org audit-log bucket CMEK: Israel only
+      locations: [il]
+    - name: app-data               # application CMEK in every location
+    - name: signing                # release signing, Israel only
+      locations: [il]
+      purpose: sign-verify
+      algorithm: ec-p256           # asymmetric: rotationDays is dropped by aws/gcp
+  resourceGroup: shl-security       # Azure-only: where every Key Vault is created
+  tenantId: 00000000-0000-0000-0000-000000000000
+  tags:
+    team: platform

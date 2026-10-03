@@ -1,0 +1,225 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: landingpages.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: LandingPage
+    plural: landingpages
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                A static landing page served over HTTP(S) from an edge, with its
+                content held in the XR itself. Every field below is a COMMON
+                parameter mapped onto each backend's native resources:
+
+                  aws    S3 Bucket + Objects, CloudFront Distribution with an
+                         Origin Access Control, ACM certificate (us-east-1)
+                  gcp    Cloud Storage Bucket + BucketObjects, Cloud CDN through
+                         a BackendBucket behind a global HTTP(S) load balancer,
+                         Google-managed SSL certificate
+                  azure  Storage Account static website + Blobs in $web, Front
+                         Door Standard profile/endpoint/origin/route, Front Door
+                         managed certificate on the custom domain
+                  onprem nginx chart Release (provider-helm) serving a ConfigMap,
+                         exposed by an Ingress, certificate from cert-manager
+
+                DNS is NOT part of this XR: every backend reports
+                status.dnsTarget and status.dnsRecordType, which is the record a
+                DnsZone (cloud.example.org/v1alpha1) must carry for the custom
+                domain to resolve. AWS and Azure additionally report
+                status.validationRecords, the records that prove domain
+                ownership before the managed certificate is issued.
+
+                Fields a backend cannot express are documented as ignored rather
+                than silently dropped.
+              properties:
+                region:
+                  type: string
+                  description: Cloud region holding the content (S3 bucket region / GCS location / Storage Account location). CloudFront, Cloud CDN and Front Door are global; the ACM certificate is always created in us-east-1 regardless of this value, because CloudFront accepts certificates from no other region. Ignored by the onprem backend, which serves from the cluster the XR lives in.
+                domain:
+                  type: string
+                  description: Custom FQDN the page answers on (www.example.com). Unset means the backend's own endpoint is the only address — CloudFront *.cloudfront.net, the load balancer IP, the Front Door *.azurefd.net endpoint, or the in-cluster Service; TLS is then the provider's own certificate, and the onprem backend publishes no Ingress at all.
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the existing resource group the Storage Account and the Front Door profile are created in. Required by the azure backend, ignored elsewhere.
+                content:
+                  type: object
+                  description: |
+                    The page itself. Content lives in the XR, not in a build
+                    pipeline: one HTML document plus any small companion files,
+                    each written as one object/blob/ConfigMap key. This is a
+                    landing page, not an asset host — put large or binary
+                    assets behind a Bucket XR and reference them by URL.
+                  properties:
+                    html:
+                      type: string
+                      minLength: 1
+                      description: The index document, verbatim. Written to content.index in the bucket (aws/gcp), to $web (azure), or into the served ConfigMap (onprem).
+                    index:
+                      type: string
+                      default: index.html
+                      description: Object key of the index document, also the document served for a directory request (S3 website index / GCS mainPageSuffix / Azure indexDocument / nginx index).
+                    errorDocument:
+                      type: string
+                      default: 404.html
+                      description: Object key served for a 404. Only served when content.files carries a file with this path; the key is otherwise just recorded on the backend (CloudFront customErrorResponse / GCS notFoundPage / Azure error404Document / nginx error_page).
+                    files:
+                      type: array
+                      description: Companion files (stylesheet, script, favicon, the 404 page). Each becomes one object keyed by its path.
+                      items:
+                        type: object
+                        properties:
+                          path:
+                            type: string
+                            minLength: 1
+                            description: Object key relative to the site root (styles.css, assets/logo.svg). No leading slash. The onprem backend serves the content from a ConfigMap and a ConfigMap key cannot hold a path separator, so it REJECTS a path containing "/" — flatten it (assets-logo.svg) for a page that must render on every backend.
+                          content:
+                            type: string
+                            description: File body, verbatim. Text only — the XR is stored as YAML.
+                          contentType:
+                            type: string
+                            description: MIME type served for this file. Defaults to the type derived from the path extension, identically on every cloud backend; unknown extensions become application/octet-stream. Ignored by the onprem backend, where nginx answers from its own mime.types on the same extension.
+                        required: [path, content]
+                  required: [html]
+                cdn:
+                  type: object
+                  description: Edge cache in front of the content. Disabling it costs the custom domain and TLS on the cloud backends, which have no way to serve either straight off a bucket.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                      description: Put a CDN in front of the origin. aws CloudFront Distribution / gcp BackendBucket enableCdn behind a global load balancer / azure Front Door profile. When false the cloud backends expose the raw bucket website endpoint (HTTP only, no custom domain) and spec.domain is rejected. Ignored by the onprem backend, whose Ingress is the only edge.
+                    ttlSeconds:
+                      type: integer
+                      default: 3600
+                      minimum: 0
+                      description: Default time an object stays cached at the edge. CloudFront defaultTtl / BackendBucket cdnPolicy defaultTtl; the onprem backend maps it to a Cache-Control max-age on the served location. The azure backend sends it as the Cache-Control of every blob instead, because Front Door Standard takes a cache duration only from a rule set, which this XR does not compose.
+                    priceClass:
+                      type: string
+                      enum: [cheapest, most, all]
+                      default: cheapest
+                      description: How much of the edge footprint to pay for. AWS PriceClass_100 / PriceClass_200 / PriceClass_All. Ignored by gcp (Cloud CDN has no tiers), by azure (Front Door Standard is one global tier) and by onprem.
+                tls:
+                  type: object
+                  description: HTTPS for spec.domain. Ignored entirely when no domain is set.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                      description: |
+                        Serve the custom domain over HTTPS with a managed
+                        certificate and send HTTP visitors to it. Turning it
+                        off means something different on each backend, because
+                        the clouds differ in what they will even accept:
+                        aws REJECTS domain + tls.enabled=false (CloudFront
+                        refuses an alternate domain name that no ACM
+                        certificate covers); gcp drops the managed certificate
+                        and serves the load balancer on port 80; azure keeps
+                        the Front Door managed certificate — only the
+                        HTTP-to-HTTPS redirect goes away; onprem publishes the
+                        Ingress without a TLS block and without the
+                        cert-manager annotation.
+                    issuer:
+                      type: string
+                      default: letsencrypt-prod
+                      description: onprem-only — name of the cert-manager ClusterIssuer that signs the Ingress certificate. Ignored by the cloud backends, whose certificates are issued by the cloud.
+                ingressClassName:
+                  type: string
+                  default: nginx
+                  description: onprem-only — IngressClass that exposes the page. Ignored by the cloud backends.
+                replicas:
+                  type: integer
+                  default: 2
+                  minimum: 1
+                  description: onprem-only — nginx replicas serving the content. Ignored by the cloud backends, which serve from object storage and have nothing to scale.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the backing cloud resources when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them). Ignored by the onprem backend, whose Release lives and dies with the XR.
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata. AWS/Azure tags, GCP labels, onprem pod labels.
+              required:
+                - region
+                - content
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the page is being served — the edge reports deployed (aws/gcp/azure) or the Release is deployed (onprem).
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp | azure | onprem).
+                url:
+                  type: string
+                  description: Address the page is served on — the custom domain when one is set, otherwise the backend's own endpoint.
+                host:
+                  type: string
+                  description: Hostname part of status.url.
+                dnsTarget:
+                  type: string
+                  description: What a DNS record for spec.domain must point at — the CloudFront domain, the load balancer IP, the Front Door endpoint host, or the Ingress address. Empty until the edge exists.
+                dnsRecordType:
+                  type: string
+                  description: Record type to create for spec.domain (CNAME for the aws/azure/onprem hostnames, A for the gcp global address).
+                validationRecords:
+                  type: array
+                  description: Records that must exist before the managed certificate is issued — ACM DNS validation (aws) or the Front Door _dnsauth TXT record (azure). Empty on backends that need none.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: Record name, fully qualified.
+                      type:
+                        type: string
+                        description: Record type (CNAME or TXT).
+                      value:
+                        type: string
+                        description: Record value.
+                certificateStatus:
+                  type: string
+                  description: State of the managed certificate (ACM PENDING_VALIDATION/ISSUED, Front Door domain validation state, Google-managed PROVISIONING/ACTIVE, cert-manager not reported).
+                bucketName:
+                  type: string
+                  description: Name of the store holding the content (S3 bucket, GCS bucket, Storage Account) — the ConfigMap name on the onprem backend.
+                cdn:
+                  type: boolean
+                  description: Whether an edge cache is actually in front of the content.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the edge (or the in-cluster reference for onprem).
+                arn:
+                  type: string
+                  description: CloudFront distribution ARN (AWS only).
+                id:
+                  type: string
+                  description: Provider-assigned id of the edge resource.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: URL
+          type: string
+          jsonPath: .status.url
+        - name: DNS-TARGET
+          type: string
+          jsonPath: .status.dnsTarget

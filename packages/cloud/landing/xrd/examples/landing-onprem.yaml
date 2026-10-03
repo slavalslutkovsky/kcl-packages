@@ -1,0 +1,32 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: LandingPage
+metadata:
+  namespace: default
+  name: acme-landing-onprem
+spec:
+  # No cloud account: the page is served by an nginx Release in this namespace.
+  # region only satisfies the XRD's required field and is ignored here.
+  region: onprem
+  domain: acme.internal          # Ingress host; status.dnsTarget is the Ingress address
+  content:
+    html: |
+      <!doctype html>
+      <html lang="en"><head><meta charset="utf-8"><title>ACME</title></head>
+        <body><main><h1>ACME</h1></main></body>
+      </html>
+    files:
+      - path: 404.html
+        content: <!doctype html><html><body>Not found</body></html>
+  cdn:
+    ttlSeconds: 300              # Cache-Control max-age on the served location; cdn.enabled is ignored
+  tls:
+    enabled: true
+    issuer: letsencrypt-prod     # cert-manager ClusterIssuer that signs the Ingress certificate
+  ingressClassName: nginx
+  replicas: 2
+  tags:
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: onprem

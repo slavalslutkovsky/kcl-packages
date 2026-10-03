@@ -1,0 +1,26 @@
+[package]
+name = "kcl-agent"
+description = "LLM agent over the kclx service layer and Crossplane XRs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+k8s-openapi.workspace = true
+kcl-operator = { path = "../kcl-operator" }
+kube.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# `signal` for the API server's graceful shutdown; `rt-multi-thread` because a
+# run interleaves model calls with cluster reads.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -1,24 +1,51 @@
-# kclx — one KCL renderer, two front ends
+# kclx — one KCL renderer, five front ends
 
 ```
-                 ┌──────────────────────────────┐
- kclx render ───▶│  kcl-render                  │
- (CLI, JSON/YAML)│    engine.rs  embedded KCL   │──▶ items
-                 │    deps.rs    kcl.mod + OCI  │
- kclx function ─▶│    compose.rs desired state  │──▶ RunFunctionResponse.desired
- (gRPC :9443)    └──────────────────────────────┘
+                  ┌──────────────────────────────┐
+ kclx render ────▶│  kcl-render                  │──▶ items
+ (CLI, JSON/YAML) │    engine.rs  embedded KCL   │
+                  │    deps.rs    kcl.mod + OCI  │
+ kclx function ──▶│    compose.rs desired state  │──▶ RunFunctionResponse.desired
+ (gRPC :9443)     └──────────────────────────────┘
+                                 ▲
+ kclx operator ──▶┌──────────────┴───────────────┐──▶ server-side apply
+ (KclModule CRD)  │  kcl-operator                │    + prune + status
+                  │    controller.rs  reconcile  │
+ kclx api ───────▶│    apply.rs       discovery  │
+ (HTTP :8080)     │    service.rs     CLI ∩ API  │
+ kclx module ────▶└──────────────────────────────┘
+                                 ▲
+ kclx agent ─────▶┌──────────────┴───────────────┐──▶ read, dry run, and —
+ (CLI, HTTP :8090)│  kcl-agent                   │    only with --yes —
+                  │    llm.rs     chat + tools   │    apply / delete
+                  │    agent.rs   the loop       │
+                  └──────────────────────────────┘
 ```
 
 `kcl-render` is the only place KCL is executed and the only place rendered
-items are turned into Crossplane desired state. The CLI and the composition
-function are thin adapters over it, which is what makes
-`kclx render --view desired` an honest rehearsal of what the cluster composes
-— verified byte-for-byte against `crossplane-contrib/function-kcl` v0.12.2
-(see *Parity* below).
+items are turned into Crossplane desired state. Every front end is a thin
+adapter over it, which is what makes `kclx render --view desired` an honest
+rehearsal of what the cluster composes — verified byte-for-byte against
+`crossplane-contrib/function-kcl` v0.12.2 (see *Parity* below) — and what
+makes `POST /v1/render` an honest rehearsal of what the operator will apply.
 
 The KCL runtime is **embedded** (`kcl-lang`, the KCL Rust SDK): no `kcl`
 binary in the image, no process spawn per reconcile, no LLVM (KCL 0.10+ uses a
 pure-Rust evaluator).
+
+## Checks
+
+`just kclx-test` — `cargo clippy --all-targets --locked -- -D warnings` then
+`cargo test --locked`, which is exactly what `.github/workflows/rust.yml` runs
+on any PR or main push touching `rust/**`, and what the `rust` pre-push hook
+runs when the push contains a `rust/**` file. `--locked` everywhere because
+`kcl-lang/lib` depends on `kcl-lang/kcl` by branch.
+
+One test is `#[ignore]`d (`deps::tests::a_gzipped_package_pulls_and_resolves`):
+it pulls a real package from docker.io. `cargo test -- --ignored` runs it.
+
+`cargo fmt` is deliberately not a gate: this tree is not default-rustfmt
+clean, and reformatting it would rewrite every hand-wrapped signature here.
 
 ## CLI
 
@@ -127,6 +154,172 @@ crossplane xpkg build --package-root=rust/package \
   --embed-runtime-image=ghcr.io/yurikrupnik/function-kclx-runtime:v0.1.0
 crossplane xpkg push ghcr.io/yurikrupnik/function-kclx:v0.1.0
 ```
+
+## Operator
+
+`kclx operator run` reconciles `KclModule` (`kclx.example.org/v1alpha1`,
+namespaced, short name `kclm`): render `spec.source`, apply every item, prune
+what the previous render owned and this one does not.
+
+```yaml
+apiVersion: kclx.example.org/v1alpha1
+kind: KclModule
+metadata: {name: hello, namespace: default}
+spec:
+  source: oci://docker.io/yurikrupnik/app?tag=0.1.4   # or a path, or inline KCL
+  params: {greeting: hi}        # → option("params")
+  interval: 5m                  # re-render + re-apply, i.e. drift correction
+  targetNamespace: apps         # default: the module's own namespace
+  prune: true
+  suspend: false
+  options: {arguments: [], disableNone: true, sortKeys: false}
+```
+
+The reconcile contract, and why each part is the way it is:
+
+* **The inventory is the truth.** `status.inventory` lists every applied
+  object; pruning is `previous − current`, and deleting the module deletes
+  the inventory through the `kclx.example.org/inventory` finalizer. Owner
+  references are *not* used: a namespaced `KclModule` may not own a
+  cluster-scoped object (the garbage collector would delete the dependent as
+  an invalid reference) nor one in another namespace, and running two cleanup
+  mechanisms for the two halves of what a package renders is worse than
+  running one for all of it.
+* **Every apply is a forced server-side apply** under the `kclx` field
+  manager. Without `force`, one `kubectl edit` takes a field and every later
+  reconcile fails with a conflict instead of correcting the drift.
+* **Rendered objects are validated before anything is written**: no
+  `apiVersion`, no `kind`, no `metadata.name` (a `generateName` has no stable
+  identity to re-apply or prune by), or the same object twice — all rejected
+  as `InvalidRender`, with nothing applied.
+* **Namespaces are settled against discovery**, not guessed: a namespaced
+  object without one gets `targetNamespace`, and a cluster-scoped object that
+  carries one has it stripped.
+* **Drift is corrected on `spec.interval`**, not by watching the applied
+  objects. A dynamic watch per kind a render happens to emit, started and
+  stopped as renders change, buys latency on a correction the next re-apply
+  already performs.
+* **A status write that changes nothing is skipped.** The controller watches
+  its own objects, so each status write schedules another reconcile; a status
+  that differs every time — a fresh timestamp is enough — is a hot loop.
+  `lastAppliedTime` therefore moves with `lastAppliedHash`, not with the
+  reconcile.
+* **A failed render never clears the inventory**: the module keeps owning
+  what it applied, and `Ready=False` carries the reason
+  (`RenderFailed`, `InvalidRender`, `UnknownKind`, `ApplyFailed`).
+
+### REST API
+
+`kclx api --addr 0.0.0.0:8080` serves the same modules over HTTP. Both it and
+`kclx module …` call one service layer, so neither can grow behaviour the
+other lacks.
+
+```
+GET    /healthz                        process is up
+GET    /readyz                         the API server answers (returns its version)
+GET    /v1/modules[?namespace=ns]      list
+GET    /v1/modules/{namespace}/{name}  read
+PUT    /v1/modules/{namespace}/{name}  create or update; body is a KclModule spec
+DELETE /v1/modules/{namespace}/{name}  delete; the controller prunes what it applied
+POST   /v1/render                      render a spec without applying it
+```
+
+`POST /v1/render` is the dry run: it renders and resolves kinds against the
+cluster, returning the items, the inventory that *would* be recorded, and the
+digest — the same three the reconcile computes. Errors answer with the
+condition vocabulary, `{"reason": "InvalidRender", "error": "item 0: …"}`,
+so a client switches on one set of names whether it read a status or a
+response.
+
+```shell
+curl -s localhost:8080/v1/modules | jq '.items[].metadata.name'
+curl -s -X POST localhost:8080/v1/render -d '{"source": "items = [{apiVersion = \"v1\", kind = \"ConfigMap\", metadata.name = \"c\"}]"}'
+curl -s -X PUT localhost:8080/v1/modules/default/hello -d '{"source": "oci://docker.io/yurikrupnik/app?tag=0.1.4", "params": {"name": "web"}}'
+```
+
+### CLI
+
+```shell
+kclx operator crd | kubectl apply -f -   # or: just kclx-crd && kubectl apply -f manifests/kclx-operator/crd.yaml
+kclx module apply -f manifests/kclx-operator/example.yaml
+kclx module ls -A
+kclx module render hello                 # what the controller would apply, now
+kclx module get hello -o json
+kclx module rm hello                     # deletes the module and its inventory
+```
+
+### Install
+
+`just kclx-operator-install` builds the image `just kclx-image` already
+builds — one binary, one image, five front ends — side-loads it onto the Kind
+nodes and applies `manifests/kclx-operator/`. The controller runs with a
+single replica by design: there is no leader election, and two controllers
+force-applying the same objects under the same field manager would overwrite
+each other forever.
+
+Its ClusterRole is deliberately broad (`apiGroups: ['*']`), because what a
+module renders is not knowable in advance; `manifests/kclx-operator/rbac.yaml`
+says how to scope it down for a fixed set of kinds.
+
+## Agent
+
+`kclx agent` puts a model in front of that same service layer. It is the one
+component in this repo that calls an LLM.
+
+```shell
+export KCLX_LLM_MODEL=gpt-4o-mini KCLX_LLM_API_KEY=$OPENAI   # or, local:
+export KCLX_LLM_BASE_URL=http://localhost:11434/v1 KCLX_LLM_MODEL=qwen2.5:7b
+
+kclx agent ask "which Buckets in default are not Ready, and what is failing?"
+kclx agent ask --yes "create a KclModule hello2 in default rendering a ConfigMap greeting=hi"
+kclx agent ask -o json "how many KclModules exist?" | jq '.steps[].tool'
+kclx agent serve --addr 0.0.0.0:8090     # POST /v1/agent
+```
+
+The endpoint is the OpenAI-compatible `POST {base}/chat/completions` with
+tool calling, so OpenAI, Ollama, vLLM, llama.cpp and gateways all work; the
+model must support tool calls. No streaming and no memory between runs — one
+task per invocation, the whole transcript returned at the end.
+
+**Propose by default.** Without `--yes` (`"approve": true` over HTTP) the
+model is not *offered* write tools and `Toolbox::call` refuses them anyway;
+the run ends with the YAML it would have applied. The ten tools:
+
+| | tool | |
+| --- | --- | --- |
+| read | `list_kinds` | the kinds under `kclx.example.org`, `cloud.example.org`, `platform.example.org` |
+| | `describe_kind` | the CRD schema, so a proposed spec cannot be invented |
+| | `list_resources` | objects plus their conditions |
+| | `get_resource` | one object in full |
+| | `composed_resources` | a composite's composed objects and their Synced/Ready conditions — the triage call |
+| | `events` | recent events for one object |
+| dry run | `preview_module` | render a `KclModule` source without applying it (`Service::preview`) |
+| | `validate_resource` | server-side apply with `dryRun=All`: the API server validates, nothing is written |
+| write | `apply_resource` | server-side apply; a `KclModule` goes through `Service::apply` |
+| | `delete_resource` | delete one object |
+
+The system prompt requires a dry run before any proposal or write, and the
+tools enforce what a prompt cannot: `v1/Secret` is refused in code, results
+over 48 KiB are truncated with a hint to narrow the query, and a cluster
+refusal comes back to the model as `{"reason", "error"}` — the same
+vocabulary a `Ready` condition uses — so it can correct itself. A model,
+transport or configuration failure is not recoverable that way and ends the
+run (`ModelFailed` → HTTP 502, `StepLimitReached` → 422).
+
+```
+GET  /healthz   process is up
+GET  /readyz    the API server answers
+POST /v1/agent  {"task": "…", "namespace"?: "default", "approve"?: false, "maxSteps"?: 20}
+                → {"answer", "approved", "steps": [{tool, arguments, result, ok}], "writes": []}
+```
+
+In-cluster it is a third Deployment with its own ServiceAccount, because it
+holds model credentials the module API has no business carrying. Its model
+endpoint comes from the `kclx-agent-llm` Secret, which is not committed:
+`just kclx-agent-secret <model> [base-url]` creates it, and without it the
+pod stays in `CreateContainerConfigError` rather than falling back to some
+default model. Whoever can `POST /v1/agent` can set `"approve": true`, so
+that Service does not belong on the public side of anything.
 
 ## Local cluster
 

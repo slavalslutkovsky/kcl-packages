@@ -25,6 +25,11 @@ workload:
     maxReplicas: 10
     pollingInterval: 5
     cooldownPeriod: 60
+    # Hold 2 replicas if the NATS monitoring endpoint stops answering, rather
+    # than freezing at whatever count KEDA last computed.
+    fallback:
+      failureThreshold: 3
+      replicas: 2
     triggers:
       - type: nats-jetstream
         metadata:

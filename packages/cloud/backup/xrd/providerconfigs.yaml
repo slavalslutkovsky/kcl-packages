@@ -1,0 +1,85 @@
+# ProviderConfigs and cluster prerequisites for the BackupPlan backends.
+#
+# Kept out of providers.yaml on purpose: these are instances of CRDs that a
+# Provider installs, so a single `kubectl apply` of both files fails with
+# `no matches for kind "ClusterProviderConfig"`. Apply this only once the
+# Providers report Healthy (`just e2e-providerconfigs` does that ordering).
+#
+# The velero backend needs the Velero operator, installed here as a pinned Helm
+# Release through provider-helm. The operator is a cluster-wide singleton
+# watching one namespace, so it lives with the platform prerequisites rather
+# than inside a per-XR Composition — and that namespace is where BackupPlan
+# XRs belong (see xrd.yaml: Velero reads Schedules and locations only from its
+# own namespace, and a namespaced XR composes only into its own namespace).
+#
+# There is no cloud ProviderConfig here because no Crossplane provider talks to
+# a cloud for a backup: the object-store plugin inside the Velero pod does,
+# authenticated per location by spec.destination.credentialsSecret.
+apiVersion: helm.m.crossplane.io/v1beta1
+kind: ClusterProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: InjectedIdentity
+---
+# Chart 12.2.0 installs Velero 1.18.2 — the version the velero schema package
+# (packages/providers/velero) was generated from. Keep them in step.
+apiVersion: helm.m.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: velero
+  namespace: crossplane-system
+spec:
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    namespace: velero
+    chart:
+      repository: https://vmware-tanzu.github.io/helm-charts
+      name: velero
+      version: 12.2.0
+    values:
+      # An object-store plugin is a binary copied into the server pod at
+      # startup; without one Velero can parse a BackupStorageLocation and then
+      # fail to reach any bucket. Plugin v1.14.x is the line that pairs with
+      # Velero v1.18.x. Drop the ones whose `destination.provider` you never
+      # use — each is one init container and ~50 MiB of image.
+      initContainers:
+        - name: velero-plugin-for-aws
+          image: velero/velero-plugin-for-aws:v1.14.2
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - mountPath: /target
+              name: plugins
+        - name: velero-plugin-for-gcp
+          image: velero/velero-plugin-for-gcp:v1.14.2
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - mountPath: /target
+              name: plugins
+        - name: velero-plugin-for-microsoft-azure
+          image: velero/velero-plugin-for-microsoft-azure:v1.14.2
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - mountPath: /target
+              name: plugins
+      # The node-agent DaemonSet is what reads volume contents through the pod,
+      # so it is the thing `defaultVolumesToFsBackup` runs on. The chart leaves
+      # it off; a self-hosted cluster on local-path storage has no CSI
+      # snapshots and no backup at all without it.
+      deployNodeAgent: true
+      # Locations are composed per BackupPlan, so the chart must not create one
+      # of its own — two owners of the same name fight, and a chart-owned
+      # default location would quietly absorb plans that lost their own.
+      configuration:
+        backupStorageLocation: []
+        volumeSnapshotLocation: []
+      # Credentials are per location (spec.destination.credentialsSecret), not
+      # per server. Leaving the chart Secret off keeps the server on its
+      # ambient identity (IRSA / Workload Identity) for anything that omits it.
+      credentials:
+        useSecret: false
+    wait: true
+    waitTimeout: 10m

@@ -1,0 +1,29 @@
+[package]
+name = "kcl-operator"
+description = "Kubernetes operator that renders KCL packages into cluster objects, and the service layer its CLI and REST front ends share"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+futures.workspace = true
+k8s-openapi.workspace = true
+kcl-render = { path = "../kcl-render" }
+kube.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+# `signal` for the controller's graceful shutdown, `rt-multi-thread` because
+# rendering runs on a blocking thread while watches keep streaming.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

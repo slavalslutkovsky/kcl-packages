@@ -93,3 +93,49 @@ metadata:
   name: function-auto-ready
 spec:
   package: ghcr.io/crossplane-contrib/function-auto-ready:v0.7.0
+---
+# The Python composition function built from python/function-package-registry
+# and packaged by `just pkgreg-install`. Only the PackageRegistry Compositions
+# (packages/cloud/package-registry/**) reference it, by this name.
+#
+# Same IP:port rationale as the function-kcl block above: Crossplane fetches
+# `spec.package` with go-containerregistry, which speaks plain HTTP only to
+# hosts it recognises as local, and a CEL rule on `spec.package` demands a dot
+# in the registry authority — so the pinned `172.18.0.100` from
+# `just registry` (docker `kind` network, registry on :80) it is.
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-package-registry
+spec:
+  package: 172.18.0.100:80/function-package-registry:v0.1.0
+  # Left at the default `IfNotPresent` for the same reason as function-kcl:
+  # `Always` makes kubelet try to pull the side-loaded runtime image from
+  # Docker Hub and fail. Bump the tag (`just pkgreg-install v0.1.1`) when the
+  # package metadata itself changes.
+  packagePullPolicy: IfNotPresent
+  runtimeConfigRef:
+    apiVersion: pkg.crossplane.io/v1beta1
+    kind: DeploymentRuntimeConfig
+    name: function-package-registry
+---
+# The xpkg carries only `package.yaml` metadata; the interpreter and the
+# function wheel come from the image side-loaded with `kind load docker-image`.
+# The function has no configuration surface — the backend is chosen by each
+# Composition's function input — so there is no env block here.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: function-package-registry
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            # Must be `package-runtime`; any other name adds a sidecar
+            # instead of configuring the function container.
+            - name: package-runtime
+              image: function-package-registry-runtime:dev
+              imagePullPolicy: IfNotPresent

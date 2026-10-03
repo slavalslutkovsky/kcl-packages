@@ -1,0 +1,22 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: package-registry-gcp
+  labels:
+    provider: gcp
+spec:
+  compositeTypeRef:
+    apiVersion: cloud.example.org/v1alpha1
+    kind: PackageRegistry
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-package-registry
+      input:
+        apiVersion: packageregistry.fn.example.org/v1beta1
+        kind: Input
+        backend: gcp
+    - step: ready
+      functionRef:
+        name: function-auto-ready

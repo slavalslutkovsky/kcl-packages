@@ -38,27 +38,32 @@ operators:
     used:
       - kind: CompositeResourceDefinition
         group: apiextensions.crossplane.io
-        by: [cloud/<module>/xrd/xrd.yaml (16 modules), platform/appstack/xrd, platform/component/xrd]
+        by: [cloud/<module>/xrd/xrd.yaml (23 modules), platform/application/xrd, platform/appstack/xrd,
+             platform/component/xrd]
       - kind: Composition
         group: apiextensions.crossplane.io
-        by: [cloud/<module>/<backend>/composition.yaml (48), platform/appstack/stack, platform/component/flux]
+        by: [cloud/<module>/<backend>/composition.yaml (67), platform/application/k8s,
+             platform/appstack/stack, platform/component/flux]
       - kind: Function
         group: pkg.crossplane.io
         by: [cloud/apigateway/xrd, cloud/bucket/xrd, cloud/cluster/xrd, cloud/dns/xrd,
              cloud/email/xrd, cloud/iam/xrd, cloud/kms/xrd, cloud/name/xrd, cloud/network/xrd,
-             cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd, cloud/registry/xrd,
-             cloud/serverless/xrd, cloud/vm/xrd, cloud/workload-identity/xrd, manifests/crossplane,
-             platform/appstack/xrd, platform/component/xrd]
+             cloud/package-registry/xrd, cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd,
+             cloud/registry/xrd, cloud/serverless/xrd, cloud/vm/xrd, cloud/workflow/xrd,
+             cloud/workload-identity/xrd,
+             manifests/crossplane, platform/application/xrd, platform/appstack/xrd,
+             platform/component/xrd]
       - kind: Provider
         group: pkg.crossplane.io
         by: [cloud/apigateway/xrd, cloud/bucket/xrd, cloud/cluster/xrd, cloud/dns/xrd,
-             cloud/email/xrd, cloud/iam/xrd, cloud/kms/xrd, cloud/network/xrd, cloud/postgres/xrd,
-             cloud/queue/xrd, cloud/redis/xrd, cloud/registry/xrd, cloud/serverless/xrd,
-             cloud/vm/xrd, cloud/workload-identity/xrd]
+             cloud/email/xrd, cloud/iam/xrd, cloud/kms/xrd, cloud/network/xrd,
+             cloud/package-registry/xrd, cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd,
+             cloud/registry/xrd, cloud/serverless/xrd, cloud/vm/xrd, cloud/workflow/xrd,
+             cloud/workload-identity/xrd]
       - kind: DeploymentRuntimeConfig
         group: pkg.crossplane.io
-        by: [cloud/email/xrd, cloud/kms/xrd, cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd,
-             cloud/registry/xrd, manifests/crossplane]
+        by: [cloud/email/xrd, cloud/kms/xrd, cloud/package-registry/xrd, cloud/postgres/xrd,
+             cloud/queue/xrd, cloud/redis/xrd, cloud/registry/xrd, manifests/crossplane]
     unused: [CompositionRevision, EnvironmentConfig, ManagedResourceActivationPolicy,
              ManagedResourceDefinition, Usage (apiextensions), CronOperation, Operation, WatchOperation,
              Configuration, ConfigurationRevision, FunctionRevision, ImageConfig, Lock, ProviderRevision,
@@ -88,9 +93,19 @@ operators:
       free selector, plus Workflows for orchestrated runs. The Pod*Chaos kinds
       are the per-pod records Chaos Mesh derives from those; WorkflowNode is
       what a Workflow expands into; StatusCheck is the workflow engine's probe.
-      The *Chaos kinds not listed under `used` are fault types neither package
-      has a `type` for yet.
+      The *Chaos kinds not listed under `used` (JVMChaos, KernelChaos,
+      BlockChaos) are fault types neither package has a `type` for yet; the
+      cloud / physical-machine kinds target things that are not pods.
     used:
+      - kind: DNSChaos
+        group: chaos-mesh.org
+        by: [app, manager (through app.experiment)]
+      - kind: HTTPChaos
+        group: chaos-mesh.org
+        by: [app, manager (through app.experiment)]
+      - kind: IOChaos
+        group: chaos-mesh.org
+        by: [app, manager (through app.experiment)]
       - kind: NetworkChaos
         group: chaos-mesh.org
         by: [app, manager (through app.experiment)]
@@ -103,12 +118,15 @@ operators:
       - kind: StressChaos
         group: chaos-mesh.org
         by: [app, manager (through app.experiment)]
+      - kind: TimeChaos
+        group: chaos-mesh.org
+        by: [app, manager (through app.experiment)]
       - kind: Workflow
         group: chaos-mesh.org
         by: [manager]
-    unused: [AWSChaos, AzureChaos, BlockChaos, DNSChaos, GCPChaos, HTTPChaos, IOChaos, JVMChaos,
-             KernelChaos, PhysicalMachine, PhysicalMachineChaos, PodHttpChaos, PodIOChaos,
-             PodNetworkChaos, RemoteCluster, StatusCheck, TimeChaos, WorkflowNode]
+    unused: [AWSChaos, AzureChaos, BlockChaos, GCPChaos, JVMChaos, KernelChaos, PhysicalMachine,
+             PhysicalMachineChaos, PodHttpChaos, PodIOChaos, PodNetworkChaos, RemoteCluster,
+             StatusCheck, WorkflowNode]
 
   - name: litmus
     source: litmuschaos/chaos-operator@3.31.0 (deploy/crds)
@@ -132,7 +150,7 @@ operators:
     used:
       - kind: GitRepository
         group: source.toolkit.fluxcd.io
-        by: [platform/component/flux]
+        by: [gitops, platform/component/flux]
       - kind: HelmRepository
         group: source.toolkit.fluxcd.io
         by: [manager, platform/component/flux]
@@ -149,7 +167,7 @@ operators:
     used:
       - kind: Kustomization
         group: kustomize.toolkit.fluxcd.io
-        by: [platform/component/flux]
+        by: [gitops, platform/component/flux]
     unused: []
 
   - name: flux-helm
@@ -162,6 +180,20 @@ operators:
         group: helm.toolkit.fluxcd.io
         by: [manager, platform/component/flux]
     unused: []
+
+  - name: argocd
+    source: argoproj/argo-cd@v3.5.3 (manifests/crds)
+    installedBy: not installed — gitops with engine argocd needs an Argo CD already running
+    schemas: packages/providers/argocd/models
+    groups: [argoproj.io]
+    used:
+      - kind: AppProject
+        group: argoproj.io
+        by: [gitops]
+      - kind: Application
+        group: argoproj.io
+        by: [gitops]
+    unused: [ApplicationSet]
 
   - name: cnpg
     source: cloudnative-pg/cloudnative-pg@v1.27.1
@@ -186,16 +218,82 @@ operators:
         by: [cloud/serverless/knative]
     unused: [Configuration, Revision, Route, DomainMapping]
 
+  - name: kubevirt
+    source: datreeio/CRDs-catalog@ad3b08c5045129d7bb1eeffd8e61719b2c8dd1e2 (KubeVirt and CDI build their CRDs in Go, so no upstream YAML exists to pin — see registry.yaml)
+    installedBy: not installed by this repo — the vm/kubevirt backend assumes KubeVirt and CDI are present (cloud/vm/xrd/providers.yaml has the commands)
+    schemas: packages/providers/kubevirt/models
+    groups: [kubevirt.io, cdi.kubevirt.io]
+    used:
+      - kind: VirtualMachine
+        group: kubevirt.io
+        by: [cloud/vm/kubevirt]
+    unused: [DataVolume]
+    notes: >-
+      DataVolume is generated but never composed as its own object: the boot
+      disk is a spec.dataVolumeTemplates entry inside the VirtualMachine, so
+      the schema is here to document what CDI must be installed to honour,
+      not to be rendered.
+
+  - name: velero
+    source: vmware-tanzu/velero@v1.18.2
+    installedBy: provider-helm Release in cloud/backup/xrd/providerconfigs.yaml (velero chart)
+    schemas: packages/providers/velero/models
+    groups: [velero.io]
+    used:
+      - kind: Schedule
+        group: velero.io
+        by: [cloud/backup/velero]
+      - kind: BackupStorageLocation
+        group: velero.io
+        by: [cloud/backup/velero]
+      - kind: VolumeSnapshotLocation
+        group: velero.io
+        by: [cloud/backup/velero]
+    unused: [Backup, BackupRepository, DeleteBackupRequest, DownloadRequest, PodVolumeBackup,
+             PodVolumeRestore, Restore, ServerStatusRequest]
+    notes: >-
+      Backup and Restore are the objects Velero's own controller creates from
+      a Schedule and from `velero restore create`; authoring them here would
+      fight the controller. There is no Restore XR by design — see docs/backup.md.
+
   - name: keda
     source: ghcr.io/kcl-lang/keda:0.1.3 (kcl-lang module; keda.sh/v1alpha1)
-    installedBy: not installed by this repo — the app package's `scaler:` assumes KEDA is present
+    installedBy: the keda chart (2.17.2, keda) as a `manager` dependency (packages/manager/examples/values.yaml); not in devkit.toml — the app package's `scaler:` assumes KEDA is present
     schemas: kcl.mod dependency `keda` of packages/app
     groups: [keda.sh]
     used:
+      - kind: ScaledJob
+        group: keda.sh
+        by: [app]
       - kind: ScaledObject
         group: keda.sh
         by: [app]
-    unused: [ScaledJob, TriggerAuthentication, ClusterTriggerAuthentication]
+      - kind: TriggerAuthentication
+        group: keda.sh
+        by: [app]
+    unused: [ClusterTriggerAuthentication]
+
+  - name: prometheus-operator
+    source: prometheus-operator/prometheus-operator@v0.85.0 (example/prometheus-operator-crd, three CRD files only)
+    installedBy: the kube-prometheus-stack chart (77.5.0, monitoring) as a `manager` dependency (packages/manager/examples/values.yaml)
+    schemas: packages/providers/prometheus-operator/models/unknown
+    groups: [monitoring.coreos.com]
+    notes: >-
+      The app package renders a ServiceMonitor or PodMonitor and a
+      PrometheusRule per Workload `monitoring:`. The unused kinds are not
+      generated at all: the registry `service` names only the three CRD files
+      (ScrapeConfig also breaks kcl import).
+    used:
+      - kind: PodMonitor
+        group: monitoring.coreos.com
+        by: [app]
+      - kind: PrometheusRule
+        group: monitoring.coreos.com
+        by: [app]
+      - kind: ServiceMonitor
+        group: monitoring.coreos.com
+        by: [app]
+    unused: [Alertmanager, AlertmanagerConfig, Probe, Prometheus, PrometheusAgent, ScrapeConfig, ThanosRuler]
 
   - name: external-secrets
     source: ghcr.io/kcl-lang/external-secrets:0.18.2 (kcl-lang module; external-secrets.io/v1)
@@ -211,6 +309,44 @@ operators:
              ClusterGenerator, ECRAuthorizationToken, Fake, GCRAccessToken, GeneratorState,
              GithubAccessToken, Grafana, MFA, Password, QuayAccessToken, STSSessionToken, UUID,
              VaultDynamicSecret, Webhook]
+
+  - name: gateway-api
+    source: kubernetes-sigs/gateway-api@v1.4.0 (config/crd/standard)
+    installedBy: devkit.toml deps.gateway-api-crds (wave 1, the upstream standard-install.yaml)
+    schemas: packages/providers/gateway-api/models
+    groups: [gateway.networking.k8s.io]
+    used:
+      - kind: HTTPRoute
+        group: gateway.networking.k8s.io
+        by: [platform/application/k8s]
+    unused: [BackendTLSPolicy, Gateway, GatewayClass, GRPCRoute, ReferenceGrant]
+    notes: >-
+      The CRDs alone route nothing: an HTTPRoute needs a Gateway API
+      implementation (Istio, Envoy Gateway) watching them, and that is a
+      cluster add-on this repo does not install. Both the CRDs and the schema
+      package come from the standard channel only, so the experimental kinds
+      have no schemas here.
+
+  - name: istio
+    source: istio/istio@1.28.1 (manifests/charts/base/files/crd-all.gen.yaml)
+    installedBy: not installed by this repo — istiod is a cluster add-on (`devkit up --istio`)
+    schemas: packages/providers/istio/models
+    groups: [networking.istio.io, security.istio.io, telemetry.istio.io, extensions.istio.io]
+    used:
+      - kind: VirtualService
+        group: networking.istio.io
+        by: [platform/application/k8s]
+      - kind: DestinationRule
+        group: networking.istio.io
+        by: [platform/application/k8s]
+    unused: [EnvoyFilter, Gateway (networking), ProxyConfig, ServiceEntry, Sidecar, WorkloadEntry,
+             WorkloadGroup, AuthorizationPolicy, PeerAuthentication, RequestAuthentication (security),
+             Telemetry, WasmPlugin]
+    notes: >-
+      Istio serves the networking kinds under three versions
+      (v1alpha3/v1beta1/v1) and the security/telemetry kinds under two, and
+      models/ holds one file per version — so the kinds are listed once here.
+      The Composition renders the v1 pair only.
 
   - name: cert-manager
     source: cert-manager/cert-manager@v1.21.1 (deploy/crds)
@@ -289,6 +425,20 @@ providers:
         by: [cloud/apigateway/aws]
     unused: [APIMapping, Authorizer, Deployment, DomainName, Integration, IntegrationResponse,
              Model, Route, RouteResponse, Stage, VPCLink]
+
+  - name: aws-codeartifact
+    source: ghcr.io/crossplane-contrib/provider-aws-codeartifact:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-codeartifact:v2.6.0 in cloud/package-registry/xrd/providers.yaml
+    schemas: python/function-package-registry/function/models/aws_codeartifact (pydantic, `just pkgreg-models`); no KCL package — nothing in packages/** imports one
+    groups: [codeartifact.aws.m.upbound.io]
+    used:
+      - kind: Domain
+        group: codeartifact.aws.m.upbound.io
+        by: [cloud/package-registry/aws]
+      - kind: Repository
+        group: codeartifact.aws.m.upbound.io
+        by: [cloud/package-registry/aws]
+    unused: [DomainPermissionsPolicy, RepositoryPermissionsPolicy]
 
   - name: aws-codebuild
     source: ghcr.io/crossplane-contrib/provider-aws-codebuild:v2.6.0
@@ -374,19 +524,19 @@ providers:
 
   - name: aws-ecr
     source: ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0 in cloud/registry/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0 in cloud/registry/xrd/providers.yaml, cloud/package-registry/xrd/providers.yaml
     schemas: packages/providers/aws-ecr/models
     groups: [ecr.aws.m.upbound.io]
     used:
       - kind: LifecyclePolicy
         group: ecr.aws.m.upbound.io
-        by: [cloud/registry/aws]
+        by: [cloud/registry/aws, cloud/package-registry/aws]
       - kind: Repository
         group: ecr.aws.m.upbound.io
-        by: [cloud/registry/aws]
+        by: [cloud/registry/aws, cloud/package-registry/aws]
       - kind: RepositoryPolicy
         group: ecr.aws.m.upbound.io
-        by: [cloud/registry/aws]
+        by: [cloud/registry/aws, cloud/package-registry/aws]
     unused: [PullThroughCacheRule, RegistryPolicy, RegistryScanningConfiguration,
              ReplicationConfiguration, RepositoryCreationTemplate]
 
@@ -427,13 +577,13 @@ providers:
 
   - name: aws-iam
     source: ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0 in cloud/cluster/xrd/providers.yaml, cloud/iam/xrd/providers.yaml, cloud/serverless/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0 in cloud/cluster/xrd/providers.yaml, cloud/iam/xrd/providers.yaml, cloud/serverless/xrd/providers.yaml, cloud/workflow/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
     schemas: packages/providers/aws-iam/models
     groups: [iam.aws.m.upbound.io]
     used:
       - kind: Role
         group: iam.aws.m.upbound.io
-        by: [cloud/cluster/aws, cloud/iam/aws, cloud/serverless/aws, cloud/workload-identity/aws]
+        by: [cloud/cluster/aws, cloud/iam/aws, cloud/serverless/aws, cloud/workflow/aws, cloud/workload-identity/aws]
       - kind: RolePolicy
         group: iam.aws.m.upbound.io
         by: [cloud/iam/aws]
@@ -575,6 +725,17 @@ providers:
         by: [cloud/email/aws]
     unused: [ConfigurationSetEventDestination, DedicatedIPPool, EmailIdentityFeedbackAttributes]
 
+  - name: aws-sfn
+    source: ghcr.io/crossplane-contrib/provider-aws-sfn:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-sfn:v2.6.0 in cloud/workflow/xrd/providers.yaml
+    schemas: packages/providers/aws-sfn/models
+    groups: [sfn.aws.m.upbound.io]
+    used:
+      - kind: StateMachine
+        group: sfn.aws.m.upbound.io
+        by: [cloud/workflow/aws]
+    unused: [Activity]
+
   - name: aws-sqs
     source: ghcr.io/crossplane-contrib/provider-aws-sqs:v2.6.0
     installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-sqs:v2.6.0 in cloud/queue/xrd/providers.yaml
@@ -663,13 +824,13 @@ providers:
 
   - name: azure-containerregistry
     source: ghcr.io/crossplane-contrib/provider-azure-containerregistry:v2.6.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-containerregistry:v2.6.0 in cloud/registry/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-containerregistry:v2.6.0 in cloud/registry/xrd/providers.yaml, cloud/package-registry/xrd/providers.yaml
     schemas: packages/providers/azure-containerregistry/models
     groups: [containerregistry.azure.m.upbound.io]
     used:
       - kind: Registry
         group: containerregistry.azure.m.upbound.io
-        by: [cloud/registry/azure]
+        by: [cloud/registry/azure, cloud/package-registry/azure]
     unused: [AgentPool, CacheRule, ContainerConnectedRegistry, CredentialSet, ScopeMap, Token,
              TokenPassword, Webhook]
 
@@ -721,6 +882,25 @@ providers:
     unused: [AccessPolicy, Certificate, CertificateContacts, CertificateIssuer,
              ManagedHardwareSecurityModule, ManagedStorageAccount,
              ManagedStorageAccountSASTokenDefinition, Secret]
+
+  - name: azure-logic
+    source: ghcr.io/crossplane-contrib/provider-azure-logic:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-logic:v2.6.0 in cloud/workflow/xrd/providers.yaml
+    schemas: packages/providers/azure-logic/models
+    groups: [logic.azure.m.upbound.io]
+    used:
+      - kind: AppActionCustom
+        group: logic.azure.m.upbound.io
+        by: [cloud/workflow/azure]
+      - kind: AppTriggerCustom
+        group: logic.azure.m.upbound.io
+        by: [cloud/workflow/azure]
+      - kind: AppWorkflow
+        group: logic.azure.m.upbound.io
+        by: [cloud/workflow/azure]
+    unused: [AppActionHTTP, AppIntegrationAccount, AppIntegrationAccountBatchConfiguration,
+             AppIntegrationAccountPartner, AppIntegrationAccountSchema,
+             AppIntegrationAccountSession, AppTriggerHTTPRequest, AppTriggerRecurrence]
 
   - name: azure-managedidentity
     source: ghcr.io/crossplane-contrib/provider-azure-managedidentity:v2.6.0
@@ -802,6 +982,15 @@ providers:
              ContainerImmutabilityPolicy, DataLakeGen2FileSystem, DataLakeGen2Path,
              EncryptionScope, ObjectReplication, Queue, Share, ShareDirectory, Table, TableEntity]
 
+  - name: gcp-accesscontextmanager
+    source: ghcr.io/crossplane-contrib/provider-gcp-accesscontextmanager:v2.6.0
+    installedBy: nothing — no module's xrd/providers.yaml installs it (schemas generated, not wired in)
+    schemas: packages/providers/gcp-accesscontextmanager/models
+    groups: [accesscontextmanager.gcp.m.upbound.io]
+    used: []
+    unused: [AccessLevel, AccessLevelCondition, AccessPolicy, AccessPolicyIAMMember,
+             ServicePerimeter, ServicePerimeterResource]
+
   - name: gcp-apigee
     source: ghcr.io/crossplane-contrib/provider-gcp-apigee:v2.6.0
     installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-apigee:v2.6.0 in cloud/apigateway/xrd/providers.yaml
@@ -828,16 +1017,16 @@ providers:
 
   - name: gcp-artifact
     source: ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0 in cloud/registry/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0 in cloud/registry/xrd/providers.yaml, cloud/package-registry/xrd/providers.yaml
     schemas: packages/providers/gcp-artifact/models
     groups: [artifact.gcp.m.upbound.io]
     used:
       - kind: RegistryRepository
         group: artifact.gcp.m.upbound.io
-        by: [cloud/registry/gcp]
+        by: [cloud/registry/gcp, cloud/package-registry/gcp]
       - kind: RegistryRepositoryIAMMember
         group: artifact.gcp.m.upbound.io
-        by: [cloud/registry/gcp]
+        by: [cloud/registry/gcp, cloud/package-registry/gcp]
     unused: []
 
   - name: gcp-cloudbuild
@@ -1038,9 +1227,20 @@ providers:
              DefaultObjectAccessControl, DefaultObjectACL, HMACKey, ManagedFolder,
              ManagedFolderIAMMember, Notification, ObjectAccessControl, ObjectACL]
 
+  - name: gcp-workflows
+    source: ghcr.io/crossplane-contrib/provider-gcp-workflows:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-workflows:v2.6.0 in cloud/workflow/xrd/providers.yaml
+    schemas: packages/providers/gcp-workflows/models
+    groups: [workflows.gcp.m.upbound.io]
+    used:
+      - kind: Workflow
+        group: workflows.gcp.m.upbound.io
+        by: [cloud/workflow/gcp]
+    unused: []
+
   - name: helm
     source: ghcr.io/crossplane-contrib/provider-helm:v1.3.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-helm:v1.3.0 in cloud/cluster/xrd/providers.yaml, cloud/email/xrd/providers.yaml, cloud/kms/xrd/providers.yaml, cloud/postgres/xrd/providers.yaml, cloud/redis/xrd/providers.yaml, cloud/registry/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-helm:v1.3.0 in cloud/cluster/xrd/providers.yaml, cloud/email/xrd/providers.yaml, cloud/kms/xrd/providers.yaml, cloud/package-registry/xrd/providers.yaml, cloud/postgres/xrd/providers.yaml, cloud/redis/xrd/providers.yaml, cloud/registry/xrd/providers.yaml
     schemas: packages/providers/helm/models
     groups: [helm.m.crossplane.io]
     used:
@@ -1049,12 +1249,13 @@ providers:
         by: [cloud/cluster/onprem]
       - kind: Release
         group: helm.m.crossplane.io
-        by: [cloud/cluster/onprem, cloud/email/stalwart, cloud/kms/xrd, cloud/postgres/xrd,
+        by: [cloud/cluster/onprem, cloud/email/stalwart, cloud/kms/xrd,
+             cloud/package-registry/forgejo, cloud/package-registry/zot, cloud/postgres/xrd,
              cloud/queue/xrd, cloud/redis/valkey, cloud/registry/zot]
       - kind: ClusterProviderConfig
         group: helm.m.crossplane.io
-        by: [cloud/email/xrd, cloud/kms/xrd, cloud/postgres/xrd, cloud/queue/xrd, cloud/redis/xrd,
-             cloud/registry/xrd]
+        by: [cloud/email/xrd, cloud/kms/xrd, cloud/package-registry/xrd, cloud/postgres/xrd,
+             cloud/queue/xrd, cloud/redis/xrd, cloud/registry/xrd]
     unused: [ProviderConfigUsage]
 
   - name: vault

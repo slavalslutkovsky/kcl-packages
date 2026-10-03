@@ -1,0 +1,29 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: VirtualMachine
+metadata:
+  namespace: default
+  name: build-agent
+spec:
+  # No cloud account involved: the machine is a kubevirt.io/v1 VirtualMachine
+  # in this XR's own namespace, on masqueraded pod networking. `region` stays
+  # required by the XRD, so give it something honest — the kubevirt backend
+  # keeps it as a free-form site label and schedules wherever it can.
+  region: in-cluster
+  size: medium                       # -> domain.cpu.cores=2, domain.memory.guest=8Gi
+  image: ubuntu-24-04                # -> quay.io/containerdisks/ubuntu:24.04
+  diskGb: 50                         # PVC size CDI imports that image into
+  storageClass: local-path           # in-cluster only; unset = the cluster default
+  sshKey:                            # -> a Secret + accessCredentials, noCloud propagation
+    user: ubuntu                     # ignored here: cloud-init authorizes the image's own default user
+    publicKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample build-agent
+  # -> the cloudInitNoCloud disk's userData, verbatim. Do not re-declare the
+  # ssh key here; the injected one already lands in the cloud-init metadata.
+  userData: |
+    #cloud-config
+    package_update: true
+  tags:
+    team: platform                   # -> labels on the VirtualMachine
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: kubevirt           # the flag: picks the backend (aws | gcp | azure | kubevirt)

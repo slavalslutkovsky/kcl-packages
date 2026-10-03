@@ -10,6 +10,10 @@
 # The in-cluster (cnpg) backend composes a postgresql.cnpg.io/v1 Cluster
 # DIRECTLY — no Crossplane provider is involved. It needs the CloudNativePG
 # operator instead, which providerconfigs.yaml installs through provider-helm.
+#
+# The self-managed (vm) backend needs no provider of its own either: it
+# composes a VirtualMachine XR, so install the vm module (`just install-module
+# vm`) and the provider of whichever cloud spec.vm.provider names.
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:

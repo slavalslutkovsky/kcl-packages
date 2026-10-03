@@ -1,0 +1,26 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: gitopsplatform
+  # Deliberately no `provider` label: this is the only implementation of
+  # GitOpsPlatform and the XRD names it as defaultCompositionRef. The backend
+  # choice that does exist — where the fallback database runs — is made per
+  # child, from spec.db.provision.backend.
+spec:
+  compositeTypeRef:
+    apiVersion: platform.example.org/v1alpha1
+    kind: GitOpsPlatform
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-kcl
+      input:
+        apiVersion: krm.kcl.dev/v1alpha1
+        kind: KCLInput
+        spec:
+          # Pin a release with ?tag=<version> once published via `nx release`.
+          source: oci://docker.io/yurikrupnik/gitopsplatform?tag=0.1.1
+    - step: ready
+      functionRef:
+        name: function-auto-ready

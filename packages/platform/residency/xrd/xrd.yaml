@@ -1,0 +1,192 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: residencies.platform.example.org
+spec:
+  scope: Namespaced
+  group: platform.example.org
+  names:
+    kind: Residency
+    plural: residencies
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Where an organization is allowed to keep data, and the encryption
+                keys that live there. A Residency lists LOGICAL locations (il,
+                de, nl, gb, us-va — jurisdictions, not cloud regions), resolves
+                each to the concrete region of the chosen backend from a built-in
+                catalog, and composes one EncryptionKey per (location, key)
+                pair in that region. A workload that must stay in Israel asks
+                for the `il` key; which cloud region that is on AWS, GCP, Azure
+                or OCI is this resource's business, not the workload's.
+
+                Like Inbox this XR composes CHILD COMPOSITE RESOURCES
+                (cloud.example.org EncryptionKey) rather than managed resources,
+                typed against the kms-xrd schemas, so it knows nothing about
+                KeyRings, Key Vaults or transit mounts; the kms capability keeps
+                owning that mapping. Each child is named
+                <residency>-<location>-<key>.
+
+                A key is created only in the region of its location — never
+                replicated elsewhere — because CMEK requires the key in the same
+                location as the data it protects, and a copy of an Israeli key in
+                the EU would be an Israeli secret outside Israel.
+
+                The catalog maps a location to a region in the SAME COUNTRY on
+                every backend or not at all: nl has no AWS region, so an nl
+                location on aws is a render error until you set its `region`
+                explicitly (and thereby choose a different jurisdiction on
+                purpose). openbao has no regions: its keys live in the cluster's
+                OpenBao, and residency is where that cluster runs.
+              properties:
+                provider:
+                  type: string
+                  enum: [aws, gcp, azure, oci, openbao]
+                  description: |
+                    Backend for every key, stamped onto each child as
+                    spec.crossplane.compositionSelector.matchLabels.provider
+                    and used to pick the catalog column. One backend per
+                    Residency: an org on two clouds declares two Residencies,
+                    because a location's key on AWS and its key on GCP are
+                    different keys with different owners.
+                locations:
+                  type: array
+                  minItems: 1
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [name]
+                  description: The locations the organization keeps data in. Every key is created in every location unless the key narrows it with keys[].locations.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        pattern: "^[a-z][a-z0-9-]{0,7}$"
+                        description: |
+                          Logical location id, part of every child name. Catalog
+                          ids: il (Israel), de (Germany), nl (Netherlands), gb
+                          (United Kingdom), us-va (United States, Virginia). Any
+                          other id is accepted only together with `region`.
+                      region:
+                        type: string
+                        description: Explicit backend region for this location, overriding the catalog. Required for ids outside the catalog and for catalog ids the backend has no region for (nl on aws). Ignored by openbao.
+                    required:
+                      - name
+                keys:
+                  type: array
+                  minItems: 1
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [name]
+                  description: The keys each location holds — typically one per consumer class (audit, app-data, backups), since revoking a key revokes everything it protects.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        pattern: "^[a-z][a-z0-9-]{0,11}$"
+                        description: Key id, the last part of every child name (<residency>-<location>-<key>).
+                      locations:
+                        type: array
+                        items:
+                          type: string
+                        description: Restrict this key to these locations (names from spec.locations). Unset means every location.
+                      purpose:
+                        type: string
+                        enum: [encrypt-decrypt, sign-verify]
+                        default: encrypt-decrypt
+                        description: EncryptionKey spec.purpose.
+                      algorithm:
+                        type: string
+                        enum: [symmetric, rsa-2048, rsa-3072, rsa-4096, ec-p256, ec-p384]
+                        default: symmetric
+                        description: EncryptionKey spec.algorithm. sign-verify needs an asymmetric algorithm.
+                      protectionLevel:
+                        type: string
+                        enum: [software, hsm]
+                        default: software
+                        description: EncryptionKey spec.protectionLevel.
+                      rotationDays:
+                        type: integer
+                        minimum: 1
+                        default: 90
+                        description: EncryptionKey spec.rotationDays. On by default here (90 days), unlike the bare EncryptionKey — an organization's residency keys are long-lived. Dropped where the backend cannot honour it, as documented on EncryptionKey — asymmetric keys on aws and gcp, and every key on oci (automatic rotation needs a private vault, which the oci backend never creates).
+                      deletionWindowDays:
+                        type: integer
+                        minimum: 7
+                        maximum: 90
+                        default: 30
+                        description: EncryptionKey spec.deletionWindowDays.
+                    required:
+                      - name
+                resourceGroup:
+                  type: string
+                  description: Azure-only — forwarded as EncryptionKey spec.resourceGroup to every key. Required when provider is azure.
+                tenantId:
+                  type: string
+                  description: Azure-only — forwarded as EncryptionKey spec.tenantId to every key. Required when provider is azure.
+                compartmentId:
+                  type: string
+                  description: OCI-only — forwarded as EncryptionKey spec.compartmentId to every key. Required when provider is oci.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Orphan
+                  description: Forwarded as spec.deletionPolicy to every key. Orphan by default, unlike the bare EncryptionKey — deleting a Residency must not schedule the destruction of the keys every encrypted resource in the organization depends on. Set Delete only for sandboxes.
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata forwarded as spec.tags to every key. The Residency adds `residency-location` per key.
+              required:
+                - provider
+                - locations
+                - keys
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True only when every composed key reports status.ready.
+                provider:
+                  type: string
+                  description: Backend the keys were placed on.
+                keysReady:
+                  type: string
+                  description: Ready keys over composed keys, e.g. 3/4.
+                locations:
+                  type: object
+                  description: Per location — the resolved region and each key's canonical reference.
+                  additionalProperties:
+                    type: object
+                    properties:
+                      region:
+                        type: string
+                        description: Backend region the location resolved to (observed from the keys once they exist).
+                      jurisdiction:
+                        type: string
+                        description: Country the catalog places this location in. Absent for ids outside the catalog.
+                      ready:
+                        type: boolean
+                        description: True when every key of this location is ready.
+                      keys:
+                        type: object
+                        description: Key id -> keyUri, copied from each EncryptionKey status.keyUri. What a bucket, database or cluster in this location passes as its CMEK.
+                        additionalProperties:
+                          type: string
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: KEYS
+          type: string
+          jsonPath: .status.keysReady

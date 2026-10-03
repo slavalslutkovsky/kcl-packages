@@ -1,0 +1,33 @@
+# A KclModule whose source is inline, so it needs no registry to try:
+#
+#   kubectl apply -f manifests/kclx-operator/example.yaml
+#   kubectl get kclmodules
+#   kubectl get cm -l kclx.example.org/module=default.hello
+#
+# The published packages of this repo work the same way — swap `source` for
+# `oci://docker.io/yurikrupnik/app?tag=0.1.4` and put that package's values
+# under `params`.
+apiVersion: kclx.example.org/v1alpha1
+kind: KclModule
+metadata:
+  name: hello
+  namespace: default
+spec:
+  interval: 5m
+  source: |
+    _params = option("params") or {}
+
+    items = [
+        {
+            apiVersion = "v1"
+            kind = "ConfigMap"
+            metadata.name = "hello-kclx"
+            data = {
+                greeting = _params?.greeting or "hello"
+                replicas = str(_params?.replicas or 1)
+            }
+        }
+    ]
+  params:
+    greeting: hello from a KclModule
+    replicas: 2

@@ -1,0 +1,11 @@
+{
+  "name": "crossplane-catalog",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Scans packages/** for XRDs, Compositions and example XRs; emits Backstage catalog entities, a dependency graph and refactor findings, and serves the same data over MCP.",
+  "dependencies": {
+    "smol-toml": "^1.6.1",
+    "yaml": "^2.9.0"
+  }
+}

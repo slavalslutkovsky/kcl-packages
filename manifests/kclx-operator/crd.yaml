@@ -1,0 +1,194 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kclmodules.kclx.example.org
+spec:
+  group: kclx.example.org
+  names:
+    kind: KclModule
+    plural: kclmodules
+    shortNames:
+    - kclm
+    singular: kclmodule
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Reason
+      type: string
+    - jsonPath: .spec.source
+      name: Source
+      priority: 1
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].message
+      name: Status
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for KclModuleSpec via `CustomResource`
+        properties:
+          spec:
+            description: |-
+              Render a KCL package and apply what it produces.
+
+              `spec.source` takes the same three shapes the CLI and the composition
+              function take (`oci://…?tag=…`, a path, or inline KCL), so a package can be
+              rehearsed with `kclx render` and then handed to the operator unchanged.
+            properties:
+              interval:
+                default: 5m
+                description: |-
+                  How often to re-render and re-apply, which is also how quickly manual
+                  edits to the applied objects are corrected. `30s`, `5m`, `1h`.
+                type: string
+              options:
+                default:
+                  arguments: []
+                  disableNone: true
+                  sortKeys: false
+                description: |-
+                  The `kcl run` flags that make sense for an operator. Deliberately a subset
+                  of [`kcl_render::Options`]: `-O`/`-S` rewrite or select part of the plan,
+                  which is a rendering trick, not a deployment one, and `vendor` is about a
+                  working tree.
+                properties:
+                  arguments:
+                    default: []
+                    description: '`-D name=value`, applied after `params`.'
+                    items:
+                      type: string
+                    type: array
+                  disableNone:
+                    default: true
+                    description: |-
+                      `-n`. On by default: KCL emits `null` for every unset optional
+                      attribute, and a server-side apply that carries explicit nulls fails
+                      on typed fields.
+                    type: boolean
+                  sortKeys:
+                    default: false
+                    type: boolean
+                type: object
+              params:
+                description: |-
+                  Becomes `option("params")` — the input contract every package in this
+                  repo already reads.
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              prune:
+                default: true
+                description: |-
+                  Delete objects that were in the previous render and are not in this
+                  one. Turning it off leaks objects on purpose (hand-off to another
+                  owner); cleanup on module deletion is unaffected.
+                type: boolean
+              source:
+                description: |-
+                  `oci://host/repo?tag=x.y.z`, a path inside the operator image, or
+                  inline KCL.
+                type: string
+              suspend:
+                default: false
+                description: Stop reconciling without deleting anything.
+                type: boolean
+              targetNamespace:
+                description: |-
+                  Namespace for rendered namespaced objects that do not name one.
+                  Defaults to the module's own namespace.
+                nullable: true
+                type: string
+            required:
+            - source
+            type: object
+          status:
+            nullable: true
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message is a human readable message indicating details about the transition. This may be an empty string.
+                      type: string
+                    observedGeneration:
+                      description: observedGeneration represents the .metadata.generation that the condition was set based upon. For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date with respect to the current state of the instance.
+                      format: int64
+                      type: integer
+                    reason:
+                      description: reason contains a programmatic identifier indicating the reason for the condition's last transition. Producers of specific condition types may define expected values and meanings for this field, and whether the values are considered a guaranteed API. The value should be a CamelCase string. This field may not be empty.
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              inventory:
+                description: |-
+                  Every object the last successful apply owns. The only cleanup and
+                  prune input there is.
+                items:
+                  description: |-
+                    One applied object, in the form that identifies it uniquely to the API
+                    server.
+                  properties:
+                    apiVersion:
+                      type: string
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                    namespace:
+                      nullable: true
+                      type: string
+                  required:
+                  - apiVersion
+                  - kind
+                  - name
+                  type: object
+                type: array
+              lastAppliedHash:
+                description: |-
+                  SHA-256 of the rendered items, so an unchanged render is visible as
+                  such without diffing the cluster.
+                nullable: true
+                type: string
+              lastAppliedTime:
+                description: Time is a wrapper around time.Time which supports correct marshaling to YAML and JSON.  Wrappers are provided for many of the factory methods that the time package offers.
+                format: date-time
+                nullable: true
+                type: string
+              observedGeneration:
+                description: '`metadata.generation` of the spec this status describes.'
+                format: int64
+                nullable: true
+                type: integer
+            type: object
+        required:
+        - spec
+        title: KclModule
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

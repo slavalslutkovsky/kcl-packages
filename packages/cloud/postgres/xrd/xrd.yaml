@@ -23,9 +23,10 @@ spec:
                 parameter mapped onto each backend's native resources (AWS RDS
                 Instance + ParameterGroup, GCP Cloud SQL DatabaseInstance +
                 Database + User, Azure Flexible Server + Database +
-                Configuration, in-cluster CloudNativePG Cluster). Fields a
-                backend cannot express are documented as ignored rather than
-                silently dropped.
+                Configuration, in-cluster CloudNativePG Cluster, self-managed
+                PostgreSQL on a VirtualMachine XR in AWS, GCP or Azure).
+                Fields a backend cannot express are documented as ignored
+                rather than silently dropped.
               properties:
                 region:
                   type: string
@@ -130,7 +131,71 @@ spec:
                   default: 7
                   minimum: 0
                   maximum: 35
-                  description: Days of automatic backups to keep; 0 disables them. AWS backupRetentionPeriod; GCP retainedBackups (COUNT); Azure backupRetentionDays clamped to its 7–35 range. Ignored in-cluster, where backups need an object store this XR does not manage.
+                  description: Days of automatic backups to keep. AWS backupRetentionPeriod; GCP retainedBackups (COUNT); Azure backupRetentionDays clamped to its 7–35 range; in-cluster CNPG backup.retentionPolicy ("<n>d"), which applies only when spec.backup names an object store — without one there is nowhere to keep anything. 0 disables automatic backups on the managed backends; in-cluster it means keep forever instead, because CNPG's retentionPolicy is an expiry rule and the presence of spec.backup is the on/off switch. The 35-day cap is Azure's, and every backend inherits it.
+                backup:
+                  type: object
+                  description: |
+                    In-cluster only — continuous backup to an object store:
+                    periodic base backups plus WAL archiving, run by the
+                    barman-cloud suite the operator ships
+                    (Cluster.spec.backup.barmanObjectStore). Setting this block
+                    is what turns backups on; snapshotRetentionDays then says
+                    how long they live. The managed backends ignore it — RDS,
+                    Cloud SQL and Flexible Server back themselves up to storage
+                    you never see, which is exactly what an in-cluster
+                    PostgreSQL has to be told about.
+
+                    This XR does not create the bucket. Point it at a Bucket XR
+                    (whose name is the bucket name), or through `endpoint` at
+                    an in-cluster S3-compatible server, so that a self-hosted
+                    database survives the cluster it runs on.
+                  properties:
+                    provider:
+                      type: string
+                      enum: [s3, gcs, azure]
+                      default: s3
+                      description: Which object-store API barman-cloud speaks, which picks both the destinationPath scheme and the credential block (s3:// + s3Credentials, gs:// + googleCredentials, the Azure blob URL + azureCredentials). `s3` also covers every S3-compatible server — see endpoint.
+                    bucket:
+                      type: string
+                      description: Bucket (Azure container) the backups are written to; must already exist. Becomes the first path component of barmanObjectStore.destinationPath.
+                    path:
+                      type: string
+                      description: Key prefix inside the bucket, so several clusters can share one. Appended to destinationPath. Unset means the bucket root, where CNPG still separates clusters by serverName (the Cluster's name).
+                    endpoint:
+                      type: string
+                      description: 'Explicit object-store endpoint. For s3 it is barmanObjectStore.endpointURL, which is how an in-cluster RustFS or MinIO is reached (http://rustfs.rustfs.svc.cluster.local:9000); unset means the AWS SDK''s own endpoint discovery. For azure it is REQUIRED and is part of the destination itself (https://<account>.blob.core.windows.net), because CNPG carries the storage account name in the hostname rather than in a field. Ignored for gcs, which has no endpoint override.'
+                    credentialsSecret:
+                      type: object
+                      description: |
+                        Existing Secret in this namespace holding the
+                        object-store credentials. Unset means the ambient
+                        identity of the PostgreSQL pods — EKS IRSA
+                        (s3Credentials.inheritFromIAMRole), GKE Workload
+                        Identity (googleCredentials.gkeEnvironment) or Entra ID
+                        (azureCredentials.inheritFromAzureAD). That is the only
+                        option that keeps a long-lived key out of the cluster,
+                        and the only one a self-hosted cluster cannot use.
+                      properties:
+                        name:
+                          type: string
+                          description: Secret name.
+                        accessKeyIdKey:
+                          type: string
+                          default: ACCESS_KEY_ID
+                          description: Key holding the identity half of the credential — s3Credentials.accessKeyId, or azureCredentials.storageAccount (Azure Secrets conventionally name it AZURE_STORAGE_ACCOUNT, so set it explicitly there). Ignored for gcs, which authenticates with a single JSON file.
+                        secretAccessKeyKey:
+                          type: string
+                          default: ACCESS_SECRET_KEY
+                          description: Key holding the secret half of the credential — s3Credentials.secretAccessKey, or azureCredentials.storageKey (conventionally AZURE_STORAGE_KEY). Ignored for gcs.
+                        applicationCredentialsKey:
+                          type: string
+                          default: gcsCredentials
+                          description: gcs only — key holding the Google service-account JSON (googleCredentials.applicationCredentials). Ignored by the other providers.
+                        regionKey:
+                          type: string
+                          description: s3 only — key holding the bucket's region (s3Credentials.region). There is no literal `region` field here because CNPG accepts the region ONLY as a Secret key reference; unset leaves it to the SDK's own resolution, which is what an S3-compatible endpoint wants.
+                      required: [name]
+                  required: [bucket]
                 maintenanceWindow:
                   type: object
                   description: Weekly window for provider-driven maintenance. Ignored in-cluster.
@@ -170,6 +235,53 @@ spec:
                     privateDnsZoneId:
                       type: string
                       description: Azure private DNS zone for the server's records.
+                vm:
+                  type: object
+                  description: |
+                    vm backend only — the machine a self-managed PostgreSQL is
+                    installed on. The backend composes a VirtualMachine XR on
+                    the chosen cloud and boots it with a script that installs
+                    PostgreSQL <engineVersion> from the PGDG apt repository,
+                    creates `database` owned by `username`, and opens port
+                    5432 to `allowedCidr`. Sizing comes from the common fields:
+                    memoryGb picks the VM size (instanceClass overrides it as a
+                    native machine type), storageGb + 10 GiB sizes the root
+                    disk the data lives on. spec.passwordSecret is REQUIRED:
+                    there is no operator to generate a password, so the
+                    composition reads the Secret and bakes only its md5 hash
+                    (`md5` + md5(password + username), the form PostgreSQL
+                    stores) into the boot script — the plaintext never leaves
+                    the cluster. Every other backend ignores this block.
+                  properties:
+                    provider:
+                      type: string
+                      enum: [aws, gcp, azure]
+                      description: Cloud the VirtualMachine XR resolves to (its compositionSelector provider label).
+                    image:
+                      type: string
+                      enum: [ubuntu-24-04, ubuntu-22-04, debian-12]
+                      default: ubuntu-24-04
+                      description: Abstract OS image; every choice is apt-based, which the install script relies on.
+                    imageId:
+                      type: string
+                      description: Native image override (AMI ID / GCP image self-link / Azure image ID). REQUIRED on aws, which has no account-independent image families.
+                    subnetId:
+                      type: string
+                      description: Subnet for the machine's interface (AWS subnet ID / GCP subnetwork / Azure subnet resource ID, REQUIRED on azure). AWS security groups come from network.securityGroupIds.
+                    allowedCidr:
+                      type: string
+                      default: 10.0.0.0/8
+                      description: Client range admitted by pg_hba.conf (md5 password auth). Network-level reachability is still the cloud firewall's business.
+                    sshKey:
+                      type: object
+                      description: SSH access to the machine (REQUIRED on azure, whose Linux VMs disable passwords).
+                      properties:
+                        user:
+                          type: string
+                        publicKey:
+                          type: string
+                      required: [user, publicKey]
+                  required: [provider]
                 resourceGroup:
                   type: string
                   description: Azure-only — resource group the server is created in. REQUIRED by the azure backend, ignored everywhere else.
@@ -196,7 +308,7 @@ spec:
                   description: True once the backing instance reports an endpoint.
                 provider:
                   type: string
-                  description: Backend that fulfilled the claim (aws | gcp | azure | cnpg).
+                  description: Backend that fulfilled the claim (aws | gcp | azure | cnpg | vm).
                 host:
                   type: string
                   description: Primary (write) hostname.

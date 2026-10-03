@@ -48,11 +48,18 @@ values file can be held without deleting anything; `chaos.namespaces` labels
 namespaces `chaos-mesh.org/inject=enabled` for clusters where Chaos Mesh runs
 with `enableFilterNamespace`.
 
+  • catalog → the Backstage entities for this cluster: one Resource for the
+    cluster itself, one per chaos Workflow, so a game day is an owned thing
+    in the portal instead of a CR someone applied by hand. Built with `app`'s
+    entity atoms and rendered on their own (`-D catalog=true`) — a Backstage
+    entity is not a Kubernetes object.
+
 Rendered like `app`: `kcl run packages/manager -D values=<file> [-D env=<env>]`,
 or in code `import manager.lib as manager; manager.render(manager.Manager {**values})`.
 """
 
 import k8s.api.core.v1 as corev1
+import regex
 import app.lib as app
 import flux_source.models.v1.source_toolkit_fluxcd_io_v1_helm_repository as helmrepo
 import flux_helm.models.v2.helm_toolkit_fluxcd_io_v2_helm_release as helmrelease
@@ -219,6 +226,9 @@ schema Experiment(app.Fault):
     """An `app.Fault` with an explicit target instead of a workload. Same types, same knobs, same `schedule`."""
     target: Target
 
+    check:
+        $type not in ["http-abort", "http-delay"] or port, "experiment ${name}: an HTTP fault needs the `port` the target pods serve on — there is no workload here to take it from"
+
 schema Step(app.Fault):
     """
     One step of a Workflow: an `app.Fault` run for `duration` against `target`
@@ -229,6 +239,7 @@ schema Step(app.Fault):
 
     check:
         not schedule, "step ${name}: a workflow step cannot have a schedule; put the cron on the Workflow via chaos.experiments instead"
+        $type not in ["http-abort", "http-delay"] or port, "step ${name}: an HTTP fault needs the `port` the target pods serve on — there is no workload here to take it from"
 
 schema Workflow:
     """
@@ -263,6 +274,46 @@ schema Chaos:
         len(experiments) == len({e.name: 1 for e in experiments}), "experiment names must be unique"
         len(workflows) == len({w.name: 1 for w in workflows}), "workflow names must be unique"
 
+schema Catalog:
+    """
+    Backstage entities for the cluster this values file describes.
+
+    Where `app`'s `catalog:` describes one workload, this describes what
+    surrounds them: a Resource of type `kubernetes-cluster`, and a Resource of
+    type `chaos-workflow` per game day. One id links entity to cluster — every
+    experiment and Workflow rendered here is labelled
+    `backstage.io/kubernetes-id` with its own name, so the Kubernetes plugin
+    resolves the live Chaos Mesh objects from the entity page.
+
+    What the portal can answer without cluster access comes from annotations
+    derived here, never hand-written: which charts Flux keeps installed
+    (`platform.example.org/charts`), which cluster-scope experiments exist
+    (`platform.example.org/chaos-experiments`), and for each game day its steps
+    and target namespaces.
+    """
+    # spec.owner. Required: Backstage will not accept an ownerless entity.
+    owner: str
+    # entity name of the cluster Resource; default: the Manager's `name`
+    name?: str
+    title?: str
+    description?: str
+    # spec.system of the cluster and of every game day under it
+    system?: str
+    tags: [str] = []
+    # merged OVER the derived annotations
+    annotations: {str:str} = {}
+    links: [app.Link] = []
+
+    # linked from the cluster and from every game day: where a run is watched.
+    # `devkit.toml` keeps the Chaos Mesh dashboard off by default (docs/chaos.md).
+    dashboardUrl?: str
+    # entity refs the cluster depends on, e.g. "resource:aws-account-prod"
+    dependsOn: [str] = []
+
+    check:
+        name == Undefined or regex.match(name, r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$"), "catalog name '${name}' is not a valid Backstage entity name: [A-Za-z0-9._-], starting and ending alphanumeric, at most 63 characters"
+        all t in tags {regex.match(t, r"^[a-z0-9][a-z0-9+#-]*$")}, "catalog tags must be lowercase [a-z0-9+#-] and start alphanumeric — Backstage rejects the rest: ${tags}"
+
 schema Manager:
     """The whole cluster-management release: one values.yaml per cluster."""
     name: str = "manager"
@@ -278,6 +329,7 @@ schema Manager:
     # cert-manager chart itself belongs in `dependencies` above.
     issuers: [Issuer] = []
     chaos?: Chaos
+    catalog?: Catalog
     _typeOf = {d.name: d.$type for d in dependencies}
 
     check:
@@ -423,7 +475,7 @@ _selector = lambda t: Target -> {str:} {
 # Workflows are not pausable by annotation (delete or let the deadline pass),
 # so only experiments and Schedules get the pause marker.
 _chaosMeta = lambda m: Manager, name: str, pausable: bool -> {str:} {
-    {name = name, namespace = m.chaos.namespace, labels = _labels(m)} | ({
+    {name = name, namespace = m.chaos.namespace, labels = _labels(m) | {"backstage.io/kubernetes-id" = name}} | ({
         annotations = {"experiment.chaos-mesh.org/pause" = "true"}
     } if pausable and m.chaos.paused else {})
 }
@@ -443,7 +495,7 @@ _experiment = lambda m: Manager, e: Experiment -> any {
 _stepTemplate = lambda w: Workflow, s: Step -> {str:} {
     _kind = app.faultKind(s)
     _spec = {k: v for k, v in app.faultSpec(s, _selector(s.target or w.target)) if k != "duration"}
-    {name = s.name, templateType = _kind, deadline = s.duration} | ({podChaos = _spec} if _kind == "PodChaos" else {networkChaos = _spec} if _kind == "NetworkChaos" else {stressChaos = _spec})
+    {name = s.name, templateType = _kind, deadline = s.duration} | {"${app.faultEmbedKey(s)}" = _spec}
 }
 
 _workflow = lambda m: Manager, w: Workflow -> cmworkflow.Workflow {
@@ -458,6 +510,68 @@ _workflow = lambda m: Manager, w: Workflow -> cmworkflow.Workflow {
             templates = [{name = "entry", templateType = "Parallel" if w.parallel else "Serial", deadline = w.deadline, children = _children}] + [_stepTemplate(w, s) for s in w.steps] + _pauses
         }
     }
+}
+
+# ── Backstage catalog ────────────────────────────────────────────────────────
+# Entity atoms come from `app` (app.entity / app.link / app.faultSummary), so a
+# cluster entity and a component entity are built the same way. Nothing here is
+# a Kubernetes object: `catalogEntities` is a separate render, never part of
+# the manifest stream.
+
+# What Flux keeps installed on this cluster, as "<chart>=<type>" pairs — the
+# roster the `role` already decided, not every row in the file.
+_chartSummary = lambda deps: [Dependency] -> str {
+    ",".join(["${d.name}=${d.$type}" for d in deps])
+}
+
+_dashboardLink = lambda c: Catalog -> [{str:}] {
+    [app.link(app.Link {url = c.dashboardUrl, title = "Chaos dashboard", icon = "dashboard"})] if c.dashboardUrl else []
+}
+
+_clusterEntity = lambda m: Manager -> {str:} {
+    _c = m.catalog
+    _name = _c.name or m.name
+    _deps = _installed(m)
+    _experiments = m.chaos.experiments if m.chaos else []
+    _links = _dashboardLink(_c) + [app.link(l) for l in _c.links]
+    _ann = {
+        "backstage.io/kubernetes-id" = _name
+        "platform.example.org/cluster-role" = m.role
+    } | ({"platform.example.org/charts" = _chartSummary(_deps)} if _deps else {}) | ({
+        "platform.example.org/chaos-experiments" = app.faultSummary(_experiments)
+    } if _experiments else {}) | _c.annotations
+    app.entity("Resource", {
+        name = _name
+        annotations = _ann
+    } | ({title = _c.title} if _c.title else {}) | ({description = _c.description} if _c.description else {}) | ({tags = _c.tags} if _c.tags else {}) | ({links = _links} if _links else {}), {
+        $type = "kubernetes-cluster"
+        owner = _c.owner
+    } | ({system = _c.system} if _c.system else {}) | ({dependsOn = _c.dependsOn} if _c.dependsOn else {}))
+}
+
+# A game day as a catalog object. Its kubernetes-id is the Workflow's own name,
+# which is exactly what _chaosMeta labels the Workflow with, so the entity page
+# shows the live run and its nodes. The description is derived — a values file
+# cannot claim a run does something other than what it renders.
+_workflowEntity = lambda m: Manager, w: Workflow -> {str:} {
+    _c = m.catalog
+    _shape = "parallel" if w.parallel else "series"
+    app.entity("Resource", {
+        name = w.name
+        description = "${len(w.steps)} chaos faults in ${_shape}, ${w.deadline} deadline, against ${','.join(w.target.namespaces)}"
+        annotations = {
+            "backstage.io/kubernetes-id" = w.name
+            "backstage.io/kubernetes-namespace" = m.chaos.namespace
+            "platform.example.org/chaos-steps" = app.faultSummary(w.steps)
+            "platform.example.org/chaos-target" = ",".join(w.target.namespaces)
+        } | _c.annotations
+    } | ({tags = _c.tags} if _c.tags else {}) | ({links = _dashboardLink(_c)} if _c.dashboardUrl else {}), {
+        $type = "chaos-workflow"
+        owner = _c.owner
+        # The run belongs to the cluster it is aimed at, so the portal shows
+        # both sides of the edge.
+        dependsOn = ["resource:${_c.name or m.name}"]
+    } | ({system = _c.system} if _c.system else {}))
 }
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -480,4 +594,22 @@ render = lambda m: Manager -> [any] {
     _issuers: [any] = [_issuer(m, i) for i in m.issuers] if m.role == "manager" or _issuerType(m) == "application" else []
     _runs: [any] = ([_experiment(m, e) for e in m.chaos.experiments] + [_workflow(m, w) for w in m.chaos.workflows]) if m.chaos else []
     _namespaces + _flux + _issuers + _runs
+}
+
+catalogEntities = lambda m: Manager -> [any] {
+    """
+    The Backstage entities for a Manager: the cluster Resource, plus one per
+    chaos Workflow. Empty when the values file has no `catalog:`.
+
+    A second render rather than extra items in `render`, because a Backstage
+    entity is not a Kubernetes object:
+
+      kcl run packages/manager -D values=<file> -D catalog=true -q > catalog-info.yaml
+
+    Cluster-scope experiments are listed on the cluster entity instead of
+    getting one each: an experiment is a fault, a Workflow is a run, and only a
+    run is worth owning in a catalog.
+    """
+    _c = m.catalog
+    ([_clusterEntity(m)] + ([_workflowEntity(m, w) for w in m.chaos.workflows] if m.chaos else [])) if _c else []
 }

@@ -114,3 +114,32 @@ fn a_missing_source_is_an_error_not_an_empty_render() {
         .to_string();
     assert!(err.contains("does/not/exist.k"), "unexpected error: {err}");
 }
+
+/// The composition function and the operator both render for several callers
+/// at once. Materialising an inline source used to write one `main.k` per
+/// *process*, so two concurrent renders of different sources raced on the
+/// same file and one of them executed the other's program.
+#[test]
+fn concurrent_inline_renders_do_not_execute_each_others_source() {
+    let engine = std::sync::Arc::new(engine("concurrent"));
+    let threads: Vec<_> = (0..8)
+        .map(|n| {
+            let engine = engine.clone();
+            std::thread::spawn(move || {
+                for _ in 0..25 {
+                    let source = format!("items = [{{kind = \"K{n}\"}}]\n");
+                    let rendered = engine
+                        .render(&Request::new(Source::Inline(source)))
+                        .unwrap_or_else(|e| panic!("thread {n}: {e:#}"));
+                    assert_eq!(
+                        rendered.items[0]["kind"], json!(format!("K{n}")),
+                        "thread {n} rendered another thread's source"
+                    );
+                }
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().expect("render thread panicked");
+    }
+}

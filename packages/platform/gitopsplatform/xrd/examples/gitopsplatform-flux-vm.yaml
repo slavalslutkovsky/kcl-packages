@@ -1,0 +1,26 @@
+apiVersion: platform.example.org/v1alpha1
+kind: GitOpsPlatform
+metadata:
+  namespace: default
+  name: platform-selfhosted
+spec:
+  engine: flux
+  db:
+    # No connection: nothing to validate, so the database is provisioned
+    # straight away and the check is reported as Skipped.
+    provision:
+      backend: vm                 # self-managed PostgreSQL on a VirtualMachine
+      spec:
+        region: westeurope
+        resourceGroup: platform-rg  # azure needs it
+        memoryGb: 8               # -> VM size medium
+        storageGb: 100            # -> 110 GiB root disk
+        passwordSecret:
+          name: platform-db       # REQUIRED by the vm backend
+        vm:
+          provider: azure         # aws | gcp | azure
+          subnetId: /subscriptions/sub-1/resourceGroups/platform-rg/providers/Microsoft.Network/virtualNetworks/vnet/subnets/db
+          allowedCidr: 10.20.0.0/16
+          sshKey:
+            user: ops
+            publicKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyOnly ops@example

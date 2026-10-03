@@ -1,0 +1,29 @@
+# Functions the PackageRegistry Compositions run.
+#
+# Pinned, and sourced from ghcr.io: `xpkg.upbound.io/crossplane-contrib/
+# function-auto-ready:latest` does not exist (the registry 404s with
+# MANIFEST_UNKNOWN), and a floating `:latest` on a Function lets Crossplane roll
+# the rendering engine forward underneath a pinned Composition.
+#
+# `function-package-registry` is OURS: the Python function built from
+# python/function-package-registry (`just pkgreg-image`). The reference below is
+# the public publish target documented in that directory's
+# package/crossplane.yaml; publishing it is manual, exactly like function-kclx.
+# On the local kind cluster the wave-2 manifest in manifests/crossplane/
+# functions.yaml installs the locally built package under the same Function
+# name instead, so the Compositions here need no change.
+#
+# There is no function-kcl entry: these Compositions render no KCL package.
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-package-registry
+spec:
+  package: ghcr.io/yurikrupnik/function-package-registry:v0.1.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-auto-ready
+spec:
+  package: ghcr.io/crossplane-contrib/function-auto-ready:v0.7.0

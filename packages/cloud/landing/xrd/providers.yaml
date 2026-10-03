@@ -1,0 +1,108 @@
+# Crossplane providers the LandingPage Compositions render against. Install
+# only the ones whose backends you intend to use; each Composition references
+# exactly one cloud family (plus provider-helm for the onprem backend).
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-landing-providers`) — keep them in step, or
+# the rendered manifests can reference fields the installed provider does not
+# have.
+#
+# aws needs three families, because a static site served over HTTPS on a custom
+# domain is three services: S3 holds the objects, CloudFront is the only thing
+# that can put TLS in front of them, and ACM is the only certificate source
+# CloudFront accepts.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-s3
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-s3:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-cloudfront
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-cloudfront:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-acm
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-acm:v2.6.0
+---
+# gcp: the bucket, plus the global load balancer pieces (BackendBucket, URLMap,
+# TargetHTTPSProxy, GlobalAddress, GlobalForwardingRule, ManagedSSLCertificate)
+# that are Cloud CDN's only front door.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-storage
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-compute
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0
+---
+# azure: the Storage Account (static website + blobs) and Front Door Standard.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-storage
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-storage:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-cdn
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-cdn:v2.6.0
+---
+# onprem: one namespaced Release serving the content from a ConfigMap. v1.x is
+# required — v0.21 ships cluster-scoped CRDs only.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-helm
+spec:
+  package: ghcr.io/crossplane-contrib/provider-helm:v1.3.0
+  runtimeConfigRef:
+    name: provider-helm
+---
+# provider-helm needs in-cluster RBAC to install charts (the nginx Release
+# creates a Deployment, a Service, a ConfigMap and an Ingress). This binds its
+# ServiceAccount to cluster-admin, which is what the upstream quickstart does;
+# scope it down before using this outside a sandbox.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provider-helm
+  namespace: crossplane-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: provider-helm-cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: provider-helm
+    namespace: crossplane-system
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-helm
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-helm

@@ -16,8 +16,9 @@ offers for app monorepos are left at their defaults and unused here.
 
 Every `devkit` command, flag and default is listed in
 [devkit-commands.md](devkit-commands.md), generated from the module's own help
-text by `just nu-docs` (`monodocs nu`). `just docs` regenerates it together with
-[install-graph.md](install-graph.md); `just docs-check` fails if either is stale.
+text by `just nu-docs` (`monodocs nu`). `just gen-docs` regenerates it together with
+the other generated docs ([install-graph.md](install-graph.md), crossplane-graph.md);
+`just gen-docs-check` fails if any is stale.
 
 ## What this repo actually calls
 

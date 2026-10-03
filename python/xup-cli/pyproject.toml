@@ -1,0 +1,75 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "xup-cli"
+description = "Pythonic multi-cloud scaffolding/validation CLI for Crossplane packages (aws/gcp/azure)"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "Apache-2.0"
+keywords = ["crossplane", "kubernetes", "cli", "aws", "gcp", "azure"]
+authors = [{ name = "Yuri Krupnik" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.11",
+  "Environment :: Console",
+]
+
+dependencies = [
+  "typer>=0.12.3",
+  "rich>=13.7",
+  "pyyaml>=6.0",
+]
+
+dynamic = ["version"]
+
+[project.urls]
+Documentation = "https://github.com/yurikrupnik/kcl-packages/tree/main/python/xup-cli#readme"
+Issues = "https://github.com/yurikrupnik/kcl-packages/issues"
+Source = "https://github.com/yurikrupnik/kcl-packages"
+
+[project.scripts]
+xup = "xup.main:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["xup"]
+
+[tool.hatch.version]
+path = "xup/__version__.py"
+validate-bump = false
+
+[tool.hatch.envs.default]
+type = "virtual"
+path = ".venv-default"
+
+[tool.hatch.envs.hatch-static-analysis]
+dependencies = ["ruff==0.12.7"]
+config-path = "none"
+
+[tool.hatch.envs.hatch-test]
+dependencies = []
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+  "A", "ARG", "ASYNC", "B", "C", "D", "DTZ", "E", "EM", "ERA", "F", "FBT",
+  "I", "ICN", "ISC", "N", "PLC", "PLE", "PLR", "PLW", "Q", "RUF", "S", "T",
+  "TID", "UP", "W", "YTT",
+]
+ignore = ["ISC001"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "S101", "S108"]
+# typer's documented option/argument pattern requires calling typer.Option()/
+# typer.Argument() as default values.
+"xup/main.py" = ["B008"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["xup"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

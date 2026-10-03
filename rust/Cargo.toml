@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/kcl-render", "crates/kclx"]
+members = ["crates/kcl-agent", "crates/kcl-operator", "crates/kcl-render", "crates/kclx"]
 resolver = "3"
 
 [workspace.package]
@@ -35,6 +35,24 @@ sha2 = "0.10"
 tar = "0.4"
 tokio = { version = "1", features = ["rt", "net", "time"] }
 toml = "0.5"
+
+# Operator (crate `kcl-operator`) and the two front ends built on it. kube 4.x
+# is pinned to k8s-openapi 0.28 by its own dependency; `latest` is that
+# crate's newest supported API version and only apimachinery types (Condition,
+# Time) are used from it, so it stays compatible with older API servers.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+futures = "0.3"
+k8s-openapi = { version = "0.28", features = ["latest", "schemars"] }
+kube = { version = "4", features = ["derive", "runtime"] }
+schemars = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# The agent (crate `kcl-agent`) talks to an OpenAI-compatible endpoint. These
+# are exactly the features `oci-client` already compiles reqwest with, so the
+# agent adds no second TLS stack: default features (native-tls) stay off.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [profile.release]
 lto = "thin"

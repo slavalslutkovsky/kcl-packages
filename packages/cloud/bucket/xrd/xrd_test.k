@@ -17,6 +17,20 @@ test_examples_are_buckets = lambda {
     assert aws.spec.lifecycleRules[0].transitionStorageClass == "cold"
 }
 
+# Adopting an existing bucket is part of the schema: existingName is the one
+# required field, mode defaults to observe, and the enums reject a typo.
+test_import_example = lambda {
+    b = bucket.Bucket {**yaml.decode(file.read("examples/bucket-import.yaml"))}
+    assert b.spec.$import.existingName == "legacy-assets-8f3a1c", "the cloud name, not the XR name"
+    assert b.spec.$import.mode == "observe" and b.spec.$import.source == "terraform"
+    assert b.spec.$import.address == "aws_s3_bucket.assets"
+    assert b.spec.deletionPolicy == "Orphan", "the shipped example must never delete an adopted bucket"
+    d = bucket.Bucket {
+        spec = {region = "us-east-1", import = {existingName = "x"}}
+    }
+    assert d.spec.$import.mode == "observe", "mode defaults to observe"
+}
+
 test_defaults_match_xrd = lambda {
     # XRD defaults come through the generated schema, so a composer that omits a
     # field renders exactly what the API server would have filled in.

@@ -1,0 +1,33 @@
+# The prod overlay for values.yaml: `just fleet packages/fleet/examples/values.yaml prod`.
+#
+# Overlay semantics are Helm's: maps merge, scalars and LISTS replace. A layer
+# is a list, so an overlay that changes one app restates that layer — which is
+# the point here: prod runs the `web` team only, pinned to a release tag instead
+# of a branch, with no Git credential because the release artifact is public.
+name: platform-prod
+
+teams:
+  - name: web
+    namespace: web
+    labels:
+      team: web
+      cost-center: "4711"
+    apps:
+      - name: nginx
+        engine: helm
+        source:
+          url: oci://registry-1.docker.io/bitnamicharts
+        chart: nginx
+        version: 21.1.24
+        values:
+          replicaCount: 4
+          service:
+            type: ClusterIP
+      - name: web-api
+        engine: kustomize
+        source:
+          url: oci://ghcr.io/example/web-api
+          tag: v2.3.1
+        path: ./deploy/overlays/prod
+        dependsOn: [nginx]
+        serviceAccount: web-deployer

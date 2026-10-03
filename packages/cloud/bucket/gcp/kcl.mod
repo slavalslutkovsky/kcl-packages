@@ -1,7 +1,7 @@
 [package]
 name = "bucket-gcp"
 edition = "v0.12.3"
-version = "0.1.4"
+version = "0.1.5"
 
 [dependencies]
 gcp-storage = { path = "../../../providers/gcp-storage" }

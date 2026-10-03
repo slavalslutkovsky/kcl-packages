@@ -1,0 +1,75 @@
+name: Rust
+
+# Gate for the `rust/` workspace: the `kcl-render` engine and its front ends
+# (`kclx` CLI, Crossplane composition function, KclModule operator, REST API,
+# LLM agent).
+#
+# Deliberately not a job in ci.yml. That workflow is the nx/KCL gate — no Rust
+# toolchain, and every one of its runs is cheap because nx caches per project.
+# A Rust job there would install a toolchain and compile the KCL SDK (a git
+# dependency, built from source) on PRs that touch no Rust at all. Hence a
+# separate, path-filtered workflow: `rust/**` changes get checked, nothing
+# else pays for it.
+#
+# Reproduce locally with `just kclx-test`.
+
+on:
+  pull_request:
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust.yml'
+
+permissions:
+  contents: read
+
+# Superseded PR pushes are worth cancelling; main is not (its runs are the
+# record of what the branch actually compiles).
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Nothing is debugged from a runner, and the KCL SDK drags in a large
+  # dependency graph: dropping debuginfo cuts both link time and the size of
+  # the cache uploaded below. `profile.test` inherits it from `dev`.
+  CARGO_PROFILE_DEV_DEBUG: '0'
+
+jobs:
+  check:
+    # Clippy and the tests run in one job on purpose: they compile the same
+    # (very large) dependency graph, so splitting them across jobs duplicates
+    # that build instead of parallelising it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # Keyed on Cargo.lock + the rustc version. `workspaces` is required:
+      # the workspace is rust/, not the repo root.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      # --locked on every cargo invocation: kcl-lang/lib depends on
+      # kcl-lang/kcl by *branch*, so an unlocked resolve silently follows
+      # upstream main and CI stops testing the code that ships (rust/Dockerfile
+      # pins it for the same reason).
+      - name: Clippy
+        working-directory: rust
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # The one `#[ignore]`d test in deps.rs pulls from docker.io; left
+      # ignored, so this job needs no registry credentials and no network
+      # beyond the crate/git fetches above.
+      - name: Test
+        working-directory: rust
+        run: cargo test --locked

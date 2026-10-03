@@ -387,13 +387,13 @@ chaos:
 test_example_valid = lambda {
     m = Manager {**yaml.decode(file.read("examples/values.yaml"))}
     out = render(m)
-    assert _kinds(out) == ["Namespace", "Namespace"] + ["HelmRepository"] * 5 + ["HelmRelease"] * 5 + ["ClusterIssuer"] * 4 + ["Schedule", "StressChaos", "NetworkChaos", "Workflow", "Workflow"], "example → namespaces, repos, releases, issuers, experiments, workflows: ${_kinds(out)}"
-    assert m.name == "platform" and m.role == "manager" and len(m.dependencies) == 5 and len(m.issuers) == 4 and len(m.chaos.experiments) == 3
-    assert [d.$type for d in m.dependencies] == ["manager", "application", "application", "application", "application"], "crossplane is what makes it a manager cluster; the apps' operators go everywhere"
+    assert _kinds(out) == ["Namespace", "Namespace"] + ["HelmRepository"] * 6 + ["HelmRelease"] * 6 + ["ClusterIssuer"] * 4 + ["Schedule", "StressChaos", "NetworkChaos", "Workflow", "Workflow"], "example → namespaces, repos, releases, issuers, experiments, workflows: ${_kinds(out)}"
+    assert m.name == "platform" and m.role == "manager" and len(m.dependencies) == 6 and len(m.issuers) == 4 and len(m.chaos.experiments) == 3
+    assert [d.$type for d in m.dependencies] == ["manager"] + ["application"] * 5, "crossplane is what makes it a manager cluster; the apps' operators go everywhere"
 
     # The shipped overlay: the same file on a workload cluster loses crossplane and nothing else.
     w = render(Manager {**app.mergeValues(yaml.decode(file.read("examples/values.yaml")), yaml.decode(file.read("examples/values.workload.yaml")))})
-    assert [o.metadata.name for o in w if o.kind == "HelmRelease"] == ["cert-manager", "chaos-mesh", "keda", "kube-prometheus-stack"], "workload overlay drops the manager-type charts"
+    assert [o.metadata.name for o in w if o.kind == "HelmRelease"] == ["cert-manager", "chaos-mesh", "keda", "kube-prometheus-stack", "backstage"], "workload overlay drops the manager-type charts"
     assert len(w) == len(out) - 2, "exactly crossplane's repo + release are gone: ${_kinds(w)}"
     _cm = [d for d in m.dependencies if d.name == "cert-manager"][0]
     assert _cm.values.crds.enabled == True, "the chart's CRDs are off by default and startupapicheck fails without them"
@@ -408,6 +408,74 @@ test_empty = lambda {
         role = "workload"
         chaos = {}
     })) == [], "an empty chaos block renders nothing"
+}
+
+# ── Backstage catalog ────────────────────────────────────────────────────────
+# The cluster Resource: what the portal can answer about a cluster without
+# reaching it.
+test_catalog_cluster = lambda {
+    m = Manager {**yaml.decode("""\
+name: platform
+role: manager
+dependencies:
+  - name: crossplane
+    type: manager
+    repo: https://charts.crossplane.io/stable
+  - name: keda
+    type: application
+    repo: https://kedacore.github.io/charts
+chaos:
+  experiments:
+    - name: nightly-kill
+      type: pod-kill
+      target: {namespaces: [zerg]}
+catalog:
+  owner: platform-team
+  system: platform
+  tags: [kubernetes]
+  dashboardUrl: http://localhost:2333
+""")}
+    out = catalogEntities(m)
+    assert _kinds(out) == ["Resource"], "a cluster with no workflows is one entity: ${_kinds(out)}"
+    c = out[0]
+    assert c.apiVersion == "backstage.io/v1alpha1", "entities are catalog objects, not Kubernetes ones"
+    assert c.metadata.name == "platform", "the entity name defaults to the Manager's name"
+    assert c.spec.$type == "kubernetes-cluster" and c.spec.owner == "platform-team" and c.spec.system == "platform"
+    _ann = c.metadata.annotations
+    assert _ann["platform.example.org/charts"] == "crossplane=manager,keda=application", "the installed roster must be listed for the portal"
+    assert _ann["platform.example.org/chaos-experiments"] == "nightly-kill=pod-kill", "cluster-scope faults are listed on the cluster, not given an entity each"
+    assert _ann["platform.example.org/cluster-role"] == "manager"
+    assert c.metadata.links == [{url = "http://localhost:2333", title = "Chaos dashboard", icon = "dashboard"}], "the dashboard is linked from the cluster"
+
+    # A workload cluster never installs the manager charts, so it must not
+    # claim them either.
+    _w = Manager {**app.mergeValues(yaml.decode(file.read("examples/values.yaml")), {role = "workload"})}
+    assert "crossplane" not in catalogEntities(_w)[0].metadata.annotations["platform.example.org/charts"], "the chart roster must follow `role`"
+}
+
+# A game day is a Resource of its own, linked to the cluster, and resolvable to
+# the live Workflow object through the id both carry.
+test_catalog_workflows = lambda {
+    m = Manager {**app.mergeValues(yaml.decode(file.read("examples/values.yaml")), {})}
+    out = catalogEntities(m)
+    assert [e.metadata.name for e in out] == ["platform-manager", "game-day", "everything-at-once"], "cluster first, then one entity per run: ${[e.metadata.name for e in out]}"
+    g = [e for e in out if e.metadata.name == "game-day"][0]
+    assert g.spec.$type == "chaos-workflow" and g.spec.dependsOn == ["resource:platform-manager"], "a run belongs to the cluster it is aimed at"
+    assert g.metadata.annotations["platform.example.org/chaos-steps"] == "kill-half=pod-kill,cut-db=partition,cpu-burn=cpu", "the steps must be readable without the cluster"
+    assert g.metadata.annotations["platform.example.org/chaos-target"] == "zerg"
+    assert g.metadata.description == "3 chaos faults in series, 30m deadline, against zerg", "the description is derived from the run, not written by hand"
+    assert [e for e in out if e.metadata.name == "everything-at-once"][0].metadata.description == "2 chaos faults in parallel, 10m deadline, against zerg", "parallel runs say so"
+
+    # The link that makes the entity page show the live run.
+    _live = [o for o in render(m) if o.kind == "Workflow"]
+    assert [o.metadata.labels["backstage.io/kubernetes-id"] for o in _live] == ["game-day", "everything-at-once"], "every Workflow carries the id its entity is annotated with"
+    assert [o.metadata.labels["backstage.io/kubernetes-id"] for o in render(m) if o.kind in ["Schedule", "StressChaos", "NetworkChaos"]] == ["zerg-random-kill", "node-memory-pressure", "zerg-db-loss"], "experiments are discoverable by id too"
+}
+
+test_catalog_absent = lambda {
+    m = Manager {**yaml.decode(file.read("examples/values.yaml"))}
+    assert catalogEntities(Manager {role = "manager"}) == [], "no catalog block → no entities"
+    assert all_true([o.apiVersion != "backstage.io/v1alpha1" for o in render(m)]), "entities must never reach the manifest stream"
 }
 
 # invalid inputs — a target without namespaces, a step with a schedule,
@@ -426,3 +494,6 @@ test_issuers()
 test_issuer_dns01_providers()
 test_example_valid()
 test_empty()
+test_catalog_cluster()
+test_catalog_workflows()
+test_catalog_absent()

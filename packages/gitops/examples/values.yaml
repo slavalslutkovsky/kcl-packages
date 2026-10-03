@@ -1,0 +1,80 @@
+# The loop for github.com/yurikrupnik-org/gitops.
+#
+#   kcl run packages/gitops -D values=packages/gitops/examples/values.yaml -q
+#   # after the history is pushed into the forge:
+#   kcl run packages/gitops -D values=packages/gitops/examples/values.yaml -D env=forge -q
+#
+# Two Secrets are referenced and deliberately NOT rendered — a credential does
+# not belong in a values file or in git:
+#
+#   # 1. what Flux clones with (private repo, PAT as the password)
+#   kubectl -n flux-system create secret generic gitops-auth \
+#     --from-literal=username=yurikrupnik \
+#     --from-literal=password="$GITHUB_PAT"
+#
+#   # 2. what the Repository XRs call the forge API with. The `token ` prefix
+#   #    is mandatory: provider-http substitutes these bytes verbatim into the
+#   #    Authorization header.
+#   kubectl -n platform create secret generic forge-token \
+#     --from-literal=authorization="token $FORGEJO_PAT"
+
+name: gitops
+namespace: flux-system # where the Flux objects live
+
+tenant:
+  namespace: platform # the Entitlement is named after this
+  plan: team # `private` repositories need team or better
+  features: [forgejo, repository]
+  quota:
+    storageGb: 50 # ceiling for forge.storageGb
+    repositories: 50
+  reference: self-hosted
+
+source:
+  origin: github # `forge` follows the in-cluster clone instead
+  url: https://github.com/yurikrupnik-org/gitops
+  branch: main
+  path: ./clusters/dev # directory the Kustomization applies
+  interval: 1m # how often the repo is polled
+  reconcileInterval: 10m # how often the Kustomization re-applies
+  secretRef: gitops-auth # Secret 1 above; drop it for a public repo
+  prune: true
+  wait: true
+  repository: gitops # the entry origin `forge` switches to
+
+forge:
+  name: git # XR name, helm release name, Service prefix
+  hostname: git.yurikrupnik.com # ROOT_URL; clone URLs are built from it
+  storageGb: 20
+  database:
+    mode: sqlite # chart 17.x bundles no PostgreSQL; `postgres` needs an existing server
+  ingress:
+    enabled: true
+    className: nginx
+    # tlsSecretName: git-tls        # also flips ROOT_URL and status.url to https
+  chartVersion: "17.1.5" # appVersion Forgejo 15.0.7
+  deletionPolicy: Delete # Orphan keeps the release, its PVC and the repositories
+  tokenSecret: forge-token # Secret 2 above
+  values: # raw chart values, merged last by the Composition
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+# The organization `yurikrupnik-org` is pre-created in the forge and shared by
+# both repositories, so neither XR claims ownership of it: deleting an XR that
+# owns an org deletes every repository in that org, including the other one.
+repositories:
+  - name: gitops
+    owner: yurikrupnik-org
+    description: cluster state, mirrored from github.com/yurikrupnik-org/gitops
+    private: true
+    defaultBranch: main
+    autoInit: false # seeded by `git push`, not by an initial commit
+    deletionPolicy: Orphan # it carries the history no other object holds
+  - name: kcl-packages
+    owner: yurikrupnik-org
+    description: KCL packages published to oci://docker.io/yurikrupnik
+    private: true
+    autoInit: false
+    deletionPolicy: Orphan

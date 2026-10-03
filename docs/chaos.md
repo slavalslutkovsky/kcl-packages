@@ -11,8 +11,13 @@ Two layers, one fault vocabulary:
   run several faults as one managed run, a global pause, and the platform
   charts (Chaos Mesh itself among them) as Flux HelmReleases. See
   [The manager package](#the-manager-package).
+- **`backstage`** — where a human sees it: both layers also render Backstage
+  catalog entities from the same values files, and every experiment carries the
+  `backstage.io/kubernetes-id` label of the component (or game day) it belongs
+  to, so a run shows up on its entity page. See
+  [docs/backstage.md](backstage.md).
 
-Both render with the kcl CLI and print a manifest stream:
+The two render layers print a manifest stream:
 
 ```
 just app manifests/apps/app1.yaml [env]      | kubectl apply -f -
@@ -50,8 +55,8 @@ Chaos Mesh on Kind: the chart is installed with
 docker) — chaos-daemon needs the node's container runtime socket to kill
 containers and to enter their network namespace for `tc`/`iptables`. The three
 pods that land: `chaos-controller-manager`, one `chaos-daemon` per node
-(DaemonSet, privileged), and `chaos-dns-server` (unused here; only DNSChaos
-needs it).
+(DaemonSet, privileged), and `chaos-dns-server` (the resolver `dns-error` /
+`dns-random` faults redirect lookups to; DNSChaos does nothing without it).
 
 The version is pinned in two places that must agree: the chart version in
 `devkit.toml` and the `ref` of the `chaos-mesh` row in
@@ -61,7 +66,8 @@ schemas; `just providers-check` reports drift against the registry).
 ## What renders to what
 
 `packages/providers/crds.yaml` has the full used/unused list. The app package
-renders four of Chaos Mesh's 23 kinds:
+renders eight of Chaos Mesh's 23 kinds (PodChaos, NetworkChaos, StressChaos,
+HTTPChaos, IOChaos, DNSChaos, TimeChaos, Schedule):
 
 | `type` | kind | knobs |
 |---|---|---|
@@ -71,24 +77,34 @@ renders four of Chaos Mesh's 23 kinds:
 | `delay` | NetworkChaos | `latency`, `jitter`, `correlation`, `externalTargets`, `duration`. |
 | `loss` | NetworkChaos | `loss` (percent), `correlation`, `externalTargets`, `duration`. |
 | `partition` | NetworkChaos | `direction` (`to`/`from`/`both`), `externalTargets`, `duration`. |
+| `bandwidth` | NetworkChaos | `rate` (tc tbf rate, default `1mbps`), `buffer` (bytes, default 10000), `limit` (bytes, default 20971520), `externalTargets`, `duration`. |
+| `corrupt` | NetworkChaos | `corrupt` (percent, default 10), `correlation`, `externalTargets`, `duration`. |
+| `duplicate` | NetworkChaos | `duplicate` (percent, default 10), `correlation`, `externalTargets`, `duration`. |
 | `cpu` | StressChaos | `workers`, `load` (percent of one core per worker), `containerNames`, `duration`. |
 | `memory` | StressChaos | `workers`, `size` (`256MB`, `50%`), `containerNames`, `duration`. |
+| `http-abort` | HTTPChaos | `httpTarget` (`Request`/`Response`, default `Request`), `port` (default: the workload's `port`), `path`, `method`, `duration`. |
+| `http-delay` | HTTPChaos | as `http-abort` plus `latency`. |
+| `io-latency` | IOChaos | `volumePath` (required), `path` (file glob), `percent` (default 100), `methods`, `latency`, `containerNames`, `duration`. |
+| `io-fault` | IOChaos | as `io-latency` but `errno` (default 5 = EIO) instead of `latency`. |
+| `dns-error` | DNSChaos | `patterns` (default: every lookup), `containerNames`, `duration`. Lookups fail. |
+| `dns-random` | DNSChaos | as `dns-error`; lookups return random IPs. |
+| `time-skew` | TimeChaos | `timeOffset` (default `-10m`), `clockIds` (default `CLOCK_REALTIME`), `containerNames`, `duration`. |
 | any + `schedule` | Schedule | wraps the above; `concurrencyPolicy` (default `Forbid`), `historyLimit` (default 1). |
 
 Common to all: `mode` (`one` by default; `all`, `fixed`, `fixed-percent`,
 `random-max-percent` with `value`) and `duration` (default `30s`). The object is
 named `<workload>-<fault>` and carries the workload's labels, so
-`kubectl -n zerg get podchaos,networkchaos,stresschaos,schedule -l app=zerg-api`
+`kubectl -n zerg get podchaos,networkchaos,stresschaos,httpchaos,iochaos,dnschaos,timechaos,schedule -l app=zerg-api`
 lists everything aimed at one app.
 
-The other 19 kinds are not reachable from `chaos:` on purpose. `HTTPChaos`,
-`IOChaos`, `DNSChaos`, `TimeChaos`, `JVMChaos`, `KernelChaos`, `BlockChaos`
-are fault types with no `type` yet — add one by extending `Fault.$type` and the
-`_faultKind`/`_*ChaosSpec` lambdas in `packages/app/lib.k`. `Pod{Http,IO,Network}Chaos`
-are the per-pod records the controller derives from an experiment, never
-authored. `Workflow`/`WorkflowNode`/`StatusCheck` are the workflow engine,
-`RemoteCluster`/`PhysicalMachine*`/`AWSChaos`/`GCPChaos`/`AzureChaos` target
-things that are not pods.
+The other 15 kinds are not reachable from `chaos:` on purpose. `JVMChaos`,
+`KernelChaos`, `BlockChaos` are fault types with no `type` yet — add one by
+extending `Fault.$type`, `_faultKinds`, `_embedKeys` and a `_*ChaosSpec`
+lambda (wired into `faultSpec` / `experiment`) in `packages/app/lib.k`.
+`Pod{Http,IO,Network}Chaos` are the per-pod records the controller derives
+from an experiment, never authored. `Workflow`/`WorkflowNode`/`StatusCheck`
+are the workflow engine, `RemoteCluster`/`PhysicalMachine*`/`AWSChaos`/`GCPChaos`/`AzureChaos`
+target things that are not pods.
 
 ## Blast radius
 
@@ -105,9 +121,12 @@ and nothing else. Chaos Mesh label selectors are cluster-wide unless
 without an explicit `namespace` — a values file that relies on `kubectl -n` for
 the Deployment would otherwise select every `app=<name>` pod in the cluster.
 The schema also rejects duplicate fault names, `fixed`/percent modes without
-`value`, and the two shapes Chaos Mesh's own webhook rejects (`delay`/`loss`
-with `direction: from|both` and no target; `partition` `from|both` with no
-`externalTargets`) so they fail at render time instead of at apply time.
+`value`, `io-latency`/`io-fault` without `volumePath`, and the two shapes
+Chaos Mesh's own webhook rejects (network faults other than `partition` with
+`direction: from|both`; `partition` `from|both` with no `externalTargets`) so
+they fail at render time instead of at apply time. In `manager`, where there
+is no workload port to default to, `http-abort`/`http-delay` experiments and
+steps without `port` are rejected too.
 
 Chaos Mesh's own guard rails on top of that (chart values, not set here):
 `clusterScoped: false` + `controllerManager.targetNamespace` confines the
@@ -187,12 +206,12 @@ What each section renders:
 |---|---|---|
 | `dependencies` | one `HelmRepository` (`type: oci` for `oci://`) + one `HelmRelease` per chart, in `namespace` (default `flux-system`), `targetNamespace` = the chart's namespace, `install.createNamespace`, `remediation.retries: 3`; both carry the label `platform.example.org/type: manager\|application` from the required `type` field | This is the GitOps twin of `devkit.toml` `[[deps]]`. **Do not list a chart in both**: helm-controller adopts a release with the same name and the two owners fight. devkit bootstraps the e2e cluster; a manager values file is for a cluster Flux owns. Two kinds of cluster: a *manager* cluster manages other clusters and cloud resources (crossplane), a *workload* cluster only runs apps — and a manager can run apps too. `type: manager` charts install on manager clusters only; `type: application` charts (the operators behind `app`: keda, chaos-mesh, cert-manager, monitoring) on every cluster that runs apps. The required `Manager.role` picks what renders — `manager` everything, `workload` the application charts (and the issuers, which take cert-manager's type) — so one base file plus a `role: workload` overlay serves both kinds (`packages/manager/examples/values.workload.yaml`). An application chart may not `dependsOn` a manager one, since on a workload cluster it would wait forever. `just manager-phase <type>` still splits a stream by the label. Beyond the sugar (`repo`, `chart`, `version`, `namespace`, `values`, `dependsOn`) a dependency takes the Flux objects' own fields, typed by the generated CRD schemas: `install` (deep-merged over the defaults), `upgrade`, `driftDetection`, `postRenderers`, `valuesFrom` go to `HelmRelease.spec` verbatim; `secretRef` and `provider` (`aws`/`azure`/`gcp`, `oci://` only) to `HelmRepository.spec`. |
 | `chaos.namespaces` | `Namespace` objects carrying `chaos-mesh.org/inject: enabled` | Only meaningful when Chaos Mesh runs with `enableFilterNamespace`; harmless otherwise. |
-| `chaos.experiments` | `PodChaos` / `NetworkChaos` / `StressChaos`, or a `Schedule`, exactly as `app` renders them — `Experiment` *is* `app.Fault` plus a `target` | `target.namespaces` is required, for the same reason `app` requires `namespace`: a selector without it is cluster-wide. `labels`, `nodes`, `nodeLabels`, `phases` narrow it. "Memory on the whole cluster" is `type: memory, mode: all` with a target spanning the namespaces. |
-| `chaos.workflows` | one `Workflow`: an `entry` template (`Serial`, or `Parallel` with `parallel: true`) under `deadline`, one template per step (`deadline` = the step's `duration`, spec built by the same renderers), `Suspend` templates between serial steps when `pauseBetween` is set | A step may carry its own `target` to narrow the workflow's. A step cannot have `schedule` — the Workflow is the run. Workflows are not pausable by annotation: delete one or let the deadline pass. |
+| `chaos.experiments` | `PodChaos` / `NetworkChaos` / `StressChaos` / `HTTPChaos` / `IOChaos` / `DNSChaos` / `TimeChaos`, or a `Schedule`, exactly as `app` renders them — `Experiment` *is* `app.Fault` plus a `target` | `target.namespaces` is required, for the same reason `app` requires `namespace`: a selector without it is cluster-wide. `labels`, `nodes`, `nodeLabels`, `phases` narrow it. HTTP faults need an explicit `port`. "Memory on the whole cluster" is `type: memory, mode: all` with a target spanning the namespaces. |
+| `chaos.workflows` | one `Workflow`: an `entry` template (`Serial`, or `Parallel` with `parallel: true`) under `deadline`, one template per step (`deadline` = the step's `duration`, spec built by the same renderers and embedded under `app.faultEmbedKey`, so every fault type works as a step), `Suspend` templates between serial steps when `pauseBetween` is set | A step may carry its own `target` to narrow the workflow's. A step cannot have `schedule` — the Workflow is the run. Workflows are not pausable by annotation: delete one or let the deadline pass. |
 | `chaos.paused` | adds `experiment.chaos-mesh.org/pause: "true"` to every experiment and Schedule | An overlay with `chaos: {paused: true}` holds a whole cluster's chaos without deleting anything. |
 
 The renderers are shared, not copied: `manager` imports `app.lib` and calls
-`app.experiment` / `app.faultSpec` / `app.faultKind`, so a `type: delay` means
+`app.experiment` / `app.faultSpec` / `app.faultKind` / `app.faultEmbedKey`, so a `type: delay` means
 the same thing, with the same validation, whether it targets one workload or
 three namespaces.
 
@@ -229,9 +248,9 @@ of truth for anything meant to recur.
 
 | file | role |
 |---|---|
-| `packages/app/lib.k` | `Fault` schema, `Workload.chaos`; the public `experiment` / `faultSpec` / `faultKind` renderers both packages use |
+| `packages/app/lib.k` | `Fault` schema, `Workload.chaos`; the public `experiment` / `faultSpec` / `faultKind` / `faultEmbedKey` renderers both packages use |
 | `packages/app/app_test.k` | `test_chaos_*` — one object per fault, pinned selector, Schedule wrapping, release ordering |
-| `packages/app/examples/values-chaos.yaml` | every fault type, one-shot and scheduled |
+| `packages/app/examples/values-chaos.yaml` | every fault type, one-shot and scheduled, plus the `catalog:` block that puts them in the portal |
 | `packages/manager/lib.k` | `Dependency`, `Target`, `Experiment`, `Step`, `Workflow`, `Chaos`, `Manager`; Flux and Workflow renderers |
 | `packages/manager/manager_test.k` | dependencies, free-target experiments, pause, serial/parallel Workflows |
 | `packages/manager/examples/values.yaml` | charts + cluster-scope experiments (incl. node memory pressure) + two Workflows |
@@ -240,3 +259,4 @@ of truth for anything meant to recur.
 | `packages/providers/crds.yaml` | which Chaos Mesh (and Litmus, and every other operator/provider) kinds are used vs unused |
 | `devkit.toml` | the `chaos-mesh` chart row: Kind runtime settings, dashboard off |
 | `justfile` | `just app`, `just manager` — render locally with the kcl CLI |
+| `docs/backstage.md` | the catalog entities both packages render, and how a fault reaches a component page |

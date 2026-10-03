@@ -95,11 +95,19 @@ test_ssh_key = lambda {
     assert fp.adminSshKey[0].publicKey == "ssh-ed25519 AAAA key", "public key carried"
 }
 
+# userData must reach customData — the only payload cloud-init executes on
+# Azure — through a composed Secret whose decoded value is the base64 field.
 test_user_data = lambda {
-    fp = vm.render(_build({userData = "#!/bin/sh\necho hi"}), {})[0].spec.forProvider
-    assert fp.userData == base64.encode("#!/bin/sh\necho hi"), "userData must be delivered base64-encoded"
-    _plain = vm.render(_build({}), {})[0].spec.forProvider
-    assert not _plain?.userData, "no user data unless asked"
+    items = vm.render(_build({userData = "#!/bin/sh\necho hi"}), {})
+    fp = items[0].spec.forProvider
+    assert fp?.userData == Undefined, "Azure userData is never executed at boot, so the script must not go there"
+    sec = items[-1]
+    assert sec.kind == "Secret" and sec.metadata.name == "demo-custom-data", "the payload must be a composed Secret"
+    assert fp.customDataSecretRef.name == sec.metadata.name and fp.customDataSecretRef.key == "customData", "the VM must reference the composed Secret's key"
+    assert base64.decode(sec.data.customData) == base64.encode("#!/bin/sh\necho hi"), "the Secret value must be the base64 customData field"
+    _plain = vm.render(_build({}), {})
+    assert not _plain[0].spec.forProvider?.customDataSecretRef, "no custom data unless asked"
+    assert len(_plain) == 2, "no Secret unless asked"
 }
 
 # ---- render: spot / tags -------------------------------------------------------------

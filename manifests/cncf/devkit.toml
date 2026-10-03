@@ -1,0 +1,38 @@
+# devkit config for the local developer cluster (`just cncf-up kind`). devkit
+# discovers the nearest devkit.toml walking up from $PWD, so running it from
+# this directory shadows the repo root's file: a different cluster, and Flux as
+# the ONLY dep.
+#
+# Everything this cluster runs — ingress-nginx, cert-manager — is what
+# packages/cncf delivers as Flux HelmReleases. A chart must have one owner, so
+# none of them may appear below.
+#
+# `ingress = true` is what makes the kind runner work: packages/cluster labels
+# the control-plane `ingress-ready=true` and binds host ports 80/443 to it,
+# which is exactly where the cncf render pins the ingress-nginx controller
+# (hostPort). Nothing else on the host may hold 80/443 — the kcl-e2e cluster
+# does, so `just e2e-down` first.
+
+[cluster]
+name = "kcl-cncf"           # not kcl-e2e / kcl-manager: those are deleted by their own recipes
+workers = 1
+db_workers = 0
+ingress = true
+
+# Flux 2.19.0 (source-controller + helm-controller are what the cncf render
+# needs; the chart ships the CRDs, and `helm --wait` returns once they are
+# established). Same pin and same trims as the root devkit.toml row.
+[[deps]]
+name = "flux2"
+repo = "https://fluxcd-community.github.io/helm-charts"
+version = "2.19.0"
+namespace = "flux-system"
+set = [
+    "imageAutomationController.create=false",
+    "imageReflectionController.create=false",
+    "notificationController.create=false",
+]
+
+# Tilt is started by `just cncf-dev` against manifests/cncf/Tiltfile, not by devkit.
+[tilt]
+enabled = false

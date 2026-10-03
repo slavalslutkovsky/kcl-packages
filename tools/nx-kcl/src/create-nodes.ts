@@ -48,6 +48,11 @@ export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
             test: {
               cache: true,
               executor: 'nx:run-commands',
+              // `kcl test` writes a temporary `_kcl_test_<pid>.k` into the
+              // package dir; a `kcl lint` of the same package running
+              // concurrently compiles it and fails on its undefined test
+              // lambdas. Ordering test after lint keeps them from overlapping.
+              dependsOn: ['lint'],
               inputs: [
                 '{projectRoot}/**/*.k',
                 '{projectRoot}/kcl.mod',

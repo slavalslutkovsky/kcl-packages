@@ -1,0 +1,13 @@
+apiVersion: platform.example.org/v1alpha1
+kind: Residency
+metadata:
+  namespace: default
+  name: dev
+spec:
+  provider: openbao                # no regions: keys live in this cluster's OpenBao
+  locations:
+    - name: il
+    - name: lab                    # outside the catalog: fine on openbao, which ignores regions
+  keys:
+    - name: app-data
+  deletionPolicy: Delete           # a laptop sandbox: let keys go with the Residency

@@ -6,11 +6,26 @@ schema PortMapping:
     hostPort: int
     $protocol?: "TCP" | "UDP" = "TCP"
 
+schema Mount:
+    """Host path bind-mounted into a Kind node container"""
+    hostPath: str
+    containerPath: str
+
 schema Node:
     """Kind cluster node configuration"""
     role: "control-plane" | "worker"
     kubeadmConfigPatches?: [str]
     extraPortMappings?: [PortMapping]
+    extraMounts?: [Mount]
+
+# The host's /proc at /procHost. A node is itself a container, so its own /proc
+# shows only the node's processes; agents that watch every process on the host
+# (Tetragon: helm `--set tetragon.hostProcPath=/procHost`) need the real one.
+# On Docker Desktop "the host" is the Linux VM, which is what such agents want.
+_host_proc_mounts: [Mount] = [Mount {
+    hostPath: "/proc"
+    containerPath: "/procHost"
+}]
 
 # Kubeadm patch for ingress-ready nodes
 _ingress_init_patch = '''
@@ -20,17 +35,21 @@ nodeRegistration:
     node-labels: "ingress-ready=true"
 '''
 
-# Kubeadm patch for database-dedicated nodes
-_db_join_patch = '''
+# Kubeadm patch for a dedicated worker pool: label and NoSchedule taint
+# `dedicated=<pool>`, so only pods that tolerate the taint and select the label
+# (a database operator's instances, a Kafka operator's brokers) land there.
+_dedicated_join_patch = lambda pool: str -> str {
+    '''
 kind: JoinConfiguration
 nodeRegistration:
   kubeletExtraArgs:
-    node-labels: "dedicated=database"
+    node-labels: "dedicated=${pool}"
   taints:
     - key: "dedicated"
-      value: "database"
+      value: "${pool}"
       effect: "NoSchedule"
 '''
+}
 
 # Kubeadm patch pinning the API server's service-account token issuer to a
 # publicly reachable OIDC discovery URL. An external STS (GCP Workload Identity
@@ -57,7 +76,12 @@ schema Cluster:
         name: Cluster name (default: "kind")
         workers: Number of worker nodes (default: 0)
         db_workers: Number of database-dedicated worker nodes with taints (default: 0)
+        kafka_workers: Number of Kafka-dedicated worker nodes, labelled and tainted
+            dedicated=kafka:NoSchedule, for a Kafka operator (Strimzi, Redpanda, ...)
+            and its brokers/controllers (default: 0)
         ingress: Enable ingress ports 80/443 on control-plane (default: false)
+        host_proc: Mount the host's /proc at /procHost on every node, for
+            host-wide eBPF agents such as Tetragon (default: false)
         oidc_bucket: GCS bucket serving this cluster's OIDC discovery documents
         oidc_id: Path prefix inside oidc_bucket, one per cluster (e.g. a developer name)
 
@@ -69,8 +93,10 @@ schema Cluster:
     # Configuration options from CLI
     _name: str = option("name", default="kind")
     _ingress: bool = option("ingress", default=False)
+    _host_proc: bool = option("host_proc", default=False)
     _workers: int = option("workers", default=0)
     _db_workers: int = option("db_workers", default=0)
+    _kafka_workers: int = option("kafka_workers", default=0)
     _oidc_bucket: str = option("oidc_bucket", default="")
     _oidc_id: str = option("oidc_id", default="")
 
@@ -90,6 +116,8 @@ schema Cluster:
             role: "control-plane"
             if len(_control_plane_patches) > 0:
                 kubeadmConfigPatches: _control_plane_patches
+            if _host_proc:
+                extraMounts: _host_proc_mounts
             if _ingress:
                 extraPortMappings: [
                     PortMapping {
@@ -106,10 +134,19 @@ schema Cluster:
         }
     ] + [Node {
         role: "worker"
+        if _host_proc:
+            extraMounts: _host_proc_mounts
     } for _ in range(_workers)] + [Node {
         role: "worker"
-        kubeadmConfigPatches: [_db_join_patch]
-    } for _ in range(_db_workers)]
+        kubeadmConfigPatches: [_dedicated_join_patch("database")]
+        if _host_proc:
+            extraMounts: _host_proc_mounts
+    } for _ in range(_db_workers)] + [Node {
+        role: "worker"
+        kubeadmConfigPatches: [_dedicated_join_patch("kafka")]
+        if _host_proc:
+            extraMounts: _host_proc_mounts
+    } for _ in range(_kafka_workers)]
 
     check:
         # A half-set pair would silently produce a bogus issuer URL, and every

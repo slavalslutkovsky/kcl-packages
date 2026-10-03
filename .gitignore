@@ -2,10 +2,13 @@ node_modules/
 dist/
 .nx/
 *.tar
-oci/
+# Root-only: an unanchored `oci/` also hid the kms oci backend package.
+/oci/
 .env
-
+./.idea
 .claude/worktrees
+# per-developer overrides; .claude/settings.json and the skills/hooks are shared
+.claude/settings.local.json
 
 # scratch dir: `just seed-queue-providers` downloads CRDs here
 tmp/
@@ -14,3 +17,9 @@ tmp/
 tools/bench/out/
 # Rust build output (`rust/Cargo.lock` is committed on purpose)
 rust/target/
+# Python composition function (`python/function-package-registry`): the hatch
+# environment and the tool caches. The wheel lands in dist/, already ignored.
+.venv-default/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
