@@ -16,7 +16,6 @@ flowchart TB
   crossplane(["crossplane 2.3.4"])
   pgbouncer(["pgbouncer 4.1.9"])
   openebs(["openebs 4.6"])
-  vcluster(["vcluster 0.37.0-rc.3"])
   external_secrets(["external-secrets 2.9.0"])
   kubeblocks_crds["kubeblocks-crds"]
   flagger(["flagger 1.44.0"])
@@ -87,7 +86,6 @@ flowchart TB
   crossplane --> wave1
   pgbouncer --> wave1
   openebs --> wave1
-  vcluster --> wave1
   external_secrets --> wave1
   kubeblocks_crds --> wave1
   flagger --> wave1
@@ -224,7 +222,6 @@ flowchart TB
   class crossplane mod_chart,overlap
   class pgbouncer mod_chart
   class openebs mod_chart
-  class vcluster mod_chart
   class external_secrets mod_chart
   class kubeblocks_crds mod_external
   class kubeblocks mod_chart

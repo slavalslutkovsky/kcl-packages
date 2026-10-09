@@ -8,6 +8,21 @@ export interface NxKclPluginOptions {
   registryPrefix?: string;
 }
 
+// A KCL package compiles its local path deps (provider schemas, `app`, …) along
+// with its own sources, so the cache key must cover them too. `^` filesets are
+// hashed over every project the graph says this one depends on — the edges
+// create-dependencies.ts derives from `kcl.mod` path deps, transitively — so
+// regenerating a provider invalidates the cached build/test/lint of every
+// consumer instead of replaying a stale pass.
+const KCL_INPUTS = [
+  '{projectRoot}/**/*.k',
+  '{projectRoot}/kcl.mod',
+  '{projectRoot}/kcl.mod.lock',
+  '^{projectRoot}/**/*.k',
+  '^{projectRoot}/kcl.mod',
+  '^{projectRoot}/kcl.mod.lock',
+];
+
 export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
   '**/kcl.mod',
   (kclModFiles, options, context) => {
@@ -35,11 +50,7 @@ export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
             build: {
               cache: true,
               executor: 'nx:run-commands',
-              inputs: [
-                '{projectRoot}/**/*.k',
-                '{projectRoot}/kcl.mod',
-                '{projectRoot}/kcl.mod.lock',
-              ],
+              inputs: KCL_INPUTS,
               options: {
                 command: `kcl run {projectRoot}/main.k`,
                 cwd: '{workspaceRoot}',
@@ -53,11 +64,7 @@ export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
               // concurrently compiles it and fails on its undefined test
               // lambdas. Ordering test after lint keeps them from overlapping.
               dependsOn: ['lint'],
-              inputs: [
-                '{projectRoot}/**/*.k',
-                '{projectRoot}/kcl.mod',
-                '{projectRoot}/kcl.mod.lock',
-              ],
+              inputs: KCL_INPUTS,
               options: {
                 command: 'kcl test',
                 cwd: `{workspaceRoot}/${projectRoot}`,
@@ -66,7 +73,7 @@ export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
             lint: {
               cache: true,
               executor: 'nx:run-commands',
-              inputs: ['{projectRoot}/**/*.k', '{projectRoot}/kcl.mod'],
+              inputs: KCL_INPUTS,
               options: {
                 command: 'kcl lint',
                 cwd: `{workspaceRoot}/${projectRoot}`,
@@ -100,11 +107,7 @@ export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
               cache: true,
               executor: 'nx:run-commands',
               dependsOn: ['test', 'lint'],
-              inputs: [
-                '{projectRoot}/**/*.k',
-                '{projectRoot}/kcl.mod',
-                '{projectRoot}/kcl.mod.lock',
-              ],
+              inputs: KCL_INPUTS,
               outputs: ['{projectRoot}/*.tar'],
               options: {
                 command: 'kcl mod pkg --target .',
@@ -116,13 +119,23 @@ export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
               executor: 'nx-kcl:publish',
               options: options?.registryPrefix ? { registry: options.registryPrefix } : {},
             },
+            // Stages the exact artifact `nx-release-publish` would push (path
+            // deps vendored transitively) and compiles it, without pushing. CI
+            // and the release gate run it so an artifact that only compiles
+            // from the repo layout fails before any version is tagged.
+            'publish-check': {
+              cache: true,
+              executor: 'nx-kcl:publish',
+              inputs: KCL_INPUTS,
+              options: { verifyOnly: true },
+            },
           },
         };
 
         // Composition packages ship a composition.yaml alongside their KCL.
         // `render` runs it through `crossplane render` against the working tree
-        // — no publish, no cluster. Uncached: the rendered output also depends
-        // on the provider schema packages, which nx does not track as inputs.
+        // — no publish, no cluster. Uncached: the output also depends on the
+        // function image, composition.yaml and the example XRs.
         if (existsSync(join(context.workspaceRoot, projectRoot, 'composition.yaml'))) {
           project.targets!['render'] = {
             cache: false,

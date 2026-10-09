@@ -1,8 +1,8 @@
 [dependencies]
   [dependencies.app]
     name = "app"
-    full_name = "app_0.1.5"
-    version = "0.1.5"
+    full_name = "app_0.1.6"
+    version = "0.1.6"
   [dependencies.aws-ec2]
     name = "aws-ec2"
     full_name = "aws-ec2_0.0.1"
@@ -109,8 +109,8 @@
     version = "0.1.5"
   [dependencies.vm-azure]
     name = "vm-azure"
-    full_name = "vm-azure_0.1.5"
-    version = "0.1.5"
+    full_name = "vm-azure_0.1.6"
+    version = "0.1.6"
   [dependencies.vm-gcp]
     name = "vm-gcp"
     full_name = "vm-gcp_0.1.5"

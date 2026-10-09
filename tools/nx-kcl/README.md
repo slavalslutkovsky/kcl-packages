@@ -16,7 +16,7 @@ each one, synthesizes an Nx project:
 - **root** — the directory containing `kcl.mod`
 - **projectType** — `library`
 - **tags** — `lang:kcl`
-- **targets** — `build`, `test`, `lint`, `fmt`, `add`, `remove`, `pkg`, `nx-release-publish`
+- **targets** — `build`, `test`, `lint`, `fmt`, `add`, `remove`, `pkg`, `nx-release-publish`, `publish-check`
 
 There is no `project.json` to write and no registration step: drop a `kcl.mod`
 anywhere under the workspace and the project appears automatically.
@@ -135,8 +135,14 @@ Each KCL package gets these targets:
 | `add`               | `kcl mod add <args>`             | no     | Add a dependency (args forwarded). |
 | `remove`            | `nx-kcl:remove`                  | no     | Remove a dependency + reconcile the lock. |
 | `pkg`               | `kcl mod pkg --target .`         | yes    | Builds a `.tar`; depends on `test`, `lint`. |
-| `nx-release-publish` | `nx-kcl:publish`                 | no     | `kcl mod push` to OCI; depends on `test`, `lint`. Run via `nx release`. |
+| `nx-release-publish` | `nx-kcl:publish`                 | no     | `kcl mod push` to OCI; depends on `test`, `lint`. Compiles the staged artifact first and refuses to push if it fails. Run via `nx release`. |
+| `publish-check`      | `nx-kcl:publish --verifyOnly`    | yes    | Stages the artifact `nx-release-publish` would push and runs `kcl run main.k` in it; never pushes. CI and the release gate run it. |
 | `render`            | `nx-kcl:render`                  | no     | Only on Composition packages. `crossplane render` against the working tree — no publish, no cluster. |
+
+Cached targets hash the package's own `*.k`, `kcl.mod` and `kcl.mod.lock` **and**
+the same files of every package it depends on (`^` inputs over the `kcl.mod`
+path-dep graph, transitively). Regenerating a provider schema therefore
+invalidates the cached results of every consumer.
 
 ```bash
 nx build cluster
@@ -183,8 +189,8 @@ The container is named `nx-kcl-render` and is left running so later renders reus
 it (~6s cold, ~1.5s warm). Stop it with `just render-stop`, or render with
 `--keepContainer=false`.
 
-> `render` is deliberately **not cached**: its output also depends on the provider
-> schema packages, which nx does not track as inputs of the Composition package.
+> `render` is deliberately **not cached**: its output also depends on the function
+> image, `composition.yaml` and the example XRs, none of which are target inputs.
 
 ## Dependency management
 
@@ -407,9 +413,13 @@ configured in `nx.json`:
   (e.g. `cluster@1.2.0`).
 - **Changelog** — per-project `CHANGELOG.md`.
 - **Publish** — `nx-release-publish` runs `nx-kcl:publish` → `kcl mod push`,
-  using the version from `kcl.mod` as the OCI tag. Local path-dep schemas are
-  embedded into the artifact at push time (see below), so published images are
-  self-contained and schema packages are never pushed.
+  using the version from `kcl.mod` as the OCI tag. Local path deps are
+  embedded into the artifact at push time, transitively (see below), and the
+  staged artifact must pass `kcl run main.k` before it is pushed, so published
+  images are self-contained and schema packages are never pushed.
+- **Gate** — `release.yml` runs `build test lint publish-check` on the affected
+  releasable projects **before** versioning; nothing is tagged or pushed if one
+  fails.
 
 ```bash
 nx release --dry-run                   # preview version bumps + changelog
@@ -455,14 +465,18 @@ gcp-storage = { path = "../../../providers/gcp-storage" }
   (tagged `area:providers`) and are excluded from `nx release`. A composition's
   typed `import` is generated from the provider CRDs (via `import-crd`); the
   schema is never pushed to a registry on its own.
-- **Embedded at publish** — when `nx-kcl:publish` pushes a composition, it
-  vendors each path-dep schema into the artifact as an in-package source dir
-  (`<import_name>/`), drops the path dep, and merges the schema's registry deps.
-  The repo source keeps the clean path dep (local `kcl run`/`nx build` resolve it
-  from disk); only the published image is self-contained. This mirrors Upbound's
-  `up project build` — generate schemas from provider CRDs, embed at build, never
-  publish them separately — so a consumer can `kcl run oci://<registry>/bucket-gcp`
-  and get the **typed** managed resource.
+- **Embedded at publish** — when `nx-kcl:publish` pushes a package, it vendors
+  every package in its path-dep closure into the artifact as an in-package
+  source dir (`<import_name>/`), drops the path deps, and merges their registry
+  deps (the package's own pins win; two deps pinning the same registry dep to
+  different versions is an error). Transitive matters: `application` depends on
+  `app`, which imports `chaos-mesh` and `prometheus-operator`, so all three are
+  vendored at the artifact root. The repo source keeps the clean path deps
+  (local `kcl run`/`nx build` resolve them from disk); only the published image
+  is self-contained. This mirrors Upbound's `up project build` — generate
+  schemas from provider CRDs, embed at build, never publish them separately —
+  so a consumer can `kcl run oci://<registry>/bucket-gcp` and get the **typed**
+  managed resource.
 
 ## Layout
 
