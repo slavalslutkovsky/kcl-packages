@@ -190,7 +190,7 @@ fn desired_view(desired: &Desired) -> Value {
 fn emit_one(value: &Value, format: Format) -> Result<String> {
     Ok(match format {
         Format::Json => format!("{value:#}\n"),
-        Format::Yaml => serde_yaml_ng::to_string(value)?,
+        Format::Yaml => serde_saphyr::to_string(value)?,
     })
 }
 

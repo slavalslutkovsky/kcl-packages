@@ -15,7 +15,9 @@ clap = { version = "4", features = ["derive", "env"] }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-serde_yaml_ng = "0.10"
+# `comments` (a default feature) is off: its comment budget rejects real
+# files with long comment blocks, and nothing here needs comments preserved.
+serde-saphyr = { version = "2.0.0", default-features = false, features = ["serialize", "deserialize"] }
 # Pulled in directly only to pick a crypto provider: aws-lc-rs (tonic TLS) and
 # ring (the OCI client) are both linked in, and rustls will not choose.
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
