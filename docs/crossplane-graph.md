@@ -253,7 +253,7 @@ whether the e2e cluster ever sees it.
 | `Name` | name | aws, gcp | 2 | 1 | — | 0 | **3** |
 | `BackupPlan` | backup | velero | 1 | 1 | — | 0 | **2** |
 | `Forge` | forge | forgejo | 1 | 1 | — | 5 | **2** |
-| `Repository` | repository | forgejo | 1 | 1 | — | 4 | **2** |
+| `Repository` | repository | forgejo | 1 | 1 | — | 5 | **2** |
 
 ## Composites of composites
 

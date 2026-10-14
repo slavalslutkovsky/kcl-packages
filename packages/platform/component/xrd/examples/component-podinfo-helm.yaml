@@ -14,3 +14,5 @@ spec:
     targetNamespace: default      # where the chart's own resources are created
     values:
       replicaCount: 1             # free-form, passed through verbatim as spec.values
+
+kcl run vendor/kcl-packages/packages/fleet/ -D values=vendor/kcl-packages/packages/fleet/examples/values.yaml

@@ -1,8 +1,9 @@
 name: CI
 
-# Validates every KCL package (build + test + lint) on pull requests and
-# pushes to main. The publish workflow gates on these same targets, so a
-# broken package can never be published.
+# Validates every KCL package (build + test + lint, plus `publish-check`: the
+# self-contained artifact the release would push still compiles) on pull
+# requests and pushes to main. release.yml re-runs the same targets before it
+# versions anything, so a broken package is never tagged or published.
 
 on:
   pull_request:
@@ -38,5 +39,14 @@ jobs:
       - name: Install KCL CLI
         run: curl -fsSL https://kcl-lang.io/script/install-cli.sh | bash
 
-      - name: Build, test and lint
-        run: pnpm exec nx affected -t build test lint
+      - name: Build, test, lint and check publish artifacts
+        run: pnpm exec nx affected -t build test lint publish-check
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      # docs/devkit-commands.md (`just nu-docs-check`) is local only: it needs
+      # monodocs and the installed devkit module, which this runner has neither of.
+      - name: Generated docs are current
+        run: just graph-check

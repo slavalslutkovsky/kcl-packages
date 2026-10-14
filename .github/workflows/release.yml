@@ -146,6 +146,15 @@ jobs:
           echo "Affected: $AFFECTED"
           echo "projects=$AFFECTED" >> "$GITHUB_OUTPUT"
 
+      # Everything that can fail runs here, BEFORE the version step tags and the
+      # push step lands: once tags are on main, a failure leaves bumped versions
+      # with nothing published. `publish-check` compiles the exact artifact the
+      # publish step will push (path deps vendored transitively), which neither
+      # ci.yml's build nor the publish target's `dependsOn` (test, lint) covers.
+      - name: Build, test, lint and check publish artifacts
+        if: steps.affected.outputs.projects != ''
+        run: pnpm exec nx run-many -t build test lint publish-check --projects="${{ steps.affected.outputs.projects }}"
+
       - name: Version, changelog and tag (patch bump)
         if: steps.affected.outputs.projects != ''
         id: version

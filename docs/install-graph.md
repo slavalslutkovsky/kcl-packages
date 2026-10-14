@@ -16,12 +16,12 @@ flowchart TB
   crossplane(["crossplane 2.3.4"])
   pgbouncer(["pgbouncer 4.1.9"])
   openebs(["openebs 4.6"])
-  vcluster(["vcluster 0.37.0-rc.3"])
   external_secrets(["external-secrets 2.9.0"])
   kubeblocks_crds["kubeblocks-crds"]
   flagger(["flagger 1.44.0"])
   chaos_mesh(["chaos-mesh 2.8.4"])
   flux2(["flux2 2.19.0"])
+  dam["dam"]
   kubeblocks(["kubeblocks 1.2.0-alpha.3"])
   gateway_api_crds["gateway-api-crds"]
   entitlement_crd["entitlement-crd"]
@@ -86,12 +86,12 @@ flowchart TB
   crossplane --> wave1
   pgbouncer --> wave1
   openebs --> wave1
-  vcluster --> wave1
   external_secrets --> wave1
   kubeblocks_crds --> wave1
   flagger --> wave1
   chaos_mesh --> wave1
   flux2 --> wave1
+  dam --> wave1
   wave1 --> kubeblocks
   wave1 --> gateway_api_crds
   wave1 --> entitlement_crd
@@ -222,7 +222,6 @@ flowchart TB
   class crossplane mod_chart,overlap
   class pgbouncer mod_chart
   class openebs mod_chart
-  class vcluster mod_chart
   class external_secrets mod_chart
   class kubeblocks_crds mod_external
   class kubeblocks mod_chart
@@ -286,6 +285,7 @@ flowchart TB
   class repository_providers mod_repository
   class repository_composition_forgejo mod_repository
   class repository_examples mod_repository
+  class dam mod_repository
 ```
 
 ## `manager` — Flux `dependsOn`

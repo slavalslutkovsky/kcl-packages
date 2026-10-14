@@ -104,11 +104,6 @@ namespace = "openebs"
 # Mayastor (replicated engine) needs hugepages + io-engine nodes — not
 # available on kind/macOS; local PV engines are enough for e2e.
 set = ["engines.replicated.mayastor.enabled=false"]
-[[deps]]
-name = "vcluster"
-repo = "https://charts.loft.sh"
-version = "0.37.0-rc.3"
-namespace = "vcluster"
 
 [[deps]]
 name = "external-secrets"
@@ -545,6 +540,11 @@ wave = 4
 name = "repository-examples"
 manifest = "packages/cloud/repository/xrd/examples/"
 wave = 5
+
+[[deps]]
+name = "dam"
+manifest = "packages/cloud/repository/xrd/examples/1"
+#wave = 5
 
 [tilt]
 enabled = true
