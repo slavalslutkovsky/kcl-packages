@@ -1,4 +1,5 @@
 import .bucket
+import runtime
 
 # ---- helpers ----------------------------------------------------------------
 # NOTE: helper names must not collide with render()'s `oxr` parameter — KCL
@@ -191,6 +192,67 @@ test_status_mode = lambda {
     assert bucket.status(_build({region = "us-central1", import = {existingName = "x", mode = "manage"}}), {}).status.mode == "managed", "manage -> managed"
 }
 
+# ---- access: CI pipelines and ticket systems -----------------------------------
+
+_pool = "iam.googleapis.com/projects/42/locations/global/workloadIdentityPools"
+
+# Grants of an access spec, as (role, member) pairs.
+_grants = lambda _spec {
+    [[_i.spec.forProvider.role, _i.spec.forProvider.member] for _i in bucket.render_access(_build({region = "eu", federation.gcpProjectNumber = "42"} | _spec), {})]
+}
+
+# One member per pool, per repository or per subject; role picks an object-level GCS role.
+test_access_members_and_roles = lambda {
+    assert _grants({access = [{client = "github", owner = "acme", role = "write"}]}) == [["roles/storage.objectUser", "principalSet://${_pool}/github-actions-pool/*"]]
+    assert _grants({access = [{client = "gitlab", ticket = "jira", repositories = ["g/a", "g/b"]}]}) == [
+        ["roles/storage.objectViewer", "principalSet://${_pool}/jira-gitlab/attribute.project_path/g/a"]
+        ["roles/storage.objectViewer", "principalSet://${_pool}/jira-gitlab/attribute.project_path/g/b"]
+    ], "read is the default; the ticket entry names its own pool"
+    assert _grants({access = [{client = "github", owner = "acme", subjects = ["repo:acme/app:ref:refs/heads/main"], role = "admin"}]}) == [["roles/storage.objectAdmin", "principal://${_pool}/github-actions-pool/subject/repo:acme/app:ref:refs/heads/main"]]
+    assert bucket.render_access(_build({region = "eu"}), {}) == [], "no access, no grants"
+}
+
+# Names come from the entry and the member, not the list position.
+test_access_names_stable_under_reordering = lambda {
+    _a = [{client = "github", owner = "acme"}, {client = "gitlab", owner = "g"}]
+    _names = lambda _l {
+        sorted([_i.metadata.annotations["krm.kcl.dev/composition-resource-name"] for _i in bucket.render_access(_build({region = "eu", federation.gcpProjectNumber = "42", access = _l}), {})])
+    }
+    assert _names(_a) == _names([_a[1], _a[0]])
+    _got = _names(_a)
+    assert all _n in _got {
+        _n.startswith("access-github-actions-pool-") or _n.startswith("access-gitlab-ci-pool-")
+    }
+}
+
+# Grants bind to the composed bucket, or by name to an adopted one being managed.
+test_access_bucket_binding_and_policies = lambda {
+    _m = bucket.render_access(_build({region = "eu", federation.gcpProjectNumber = "42", deletionPolicy = "Orphan", access = [{client = "github", owner = "acme"}]}), {})[0]
+    assert _m.spec.forProvider.bucketSelector.matchControllerRef == True
+    assert _m.spec.managementPolicies == ["Observe", "Create", "Update", "LateInitialize"], "Orphan keeps the grant"
+    _i = bucket.render_access(_build({region = "eu", federation.gcpProjectNumber = "42", $import = {existingName = "legacy", mode = "manage"}, access = [{client = "github", owner = "acme"}]}), {})[0]
+    assert _i.spec.forProvider.bucket == "legacy"
+}
+
+test_access_failures = lambda {
+    _err = lambda _spec {
+        runtime.catch(lambda {
+            bucket.render_access(_build({region = "eu"} | _spec), {})
+        })
+    }
+    assert "gcpProjectNumber is required" in _err({access = [{client = "github", owner = "acme"}]})
+    assert "not GCP fields" in _err({federation = {gcpProjectNumber = "42", awsAccountId = "111122223333"}})
+    assert "import.mode observe" in _err({federation.gcpProjectNumber = "42", $import = {existingName = "legacy"}, access = [{client = "github", owner = "acme"}]})
+    assert "shared by every GitHub Actions user" in _err({federation.gcpProjectNumber = "42", access = [{client = "github"}]})
+}
+
+# status.access names what each pipeline authenticates as.
+test_status_access = lambda {
+    _s = bucket.status(_build({region = "eu", federation.gcpProjectNumber = "42", access = [{client = "github", owner = "acme", role = "write"}]}), {}).status
+    assert _s.access == [{name = "github-actions-pool", role = "write", members = ["principalSet://${_pool}/github-actions-pool/*"]}]
+    assert "access" not in bucket.status(_build({region = "eu"}), {}).status
+}
+
 test_render()
 test_storage_class()
 test_versioning()
@@ -206,3 +268,8 @@ test_status_pending()
 test_status_ready()
 test_import()
 test_status_mode()
+test_access_members_and_roles()
+test_access_names_stable_under_reordering()
+test_access_bucket_binding_and_policies()
+test_access_failures()
+test_status_access()

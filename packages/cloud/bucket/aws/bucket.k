@@ -10,6 +10,11 @@
 # provider's identifier (the S3 companion APIs are keyed by bucket). Companions
 # then name the bucket directly instead of resolving it through the selector,
 # so nothing waits on a reference in observe-only mode.
+#
+# spec.access (render_access) gives CI pipelines and the ticket systems that
+# start them keyless access: per entry an aws-iam Role trusting the account's
+# IAM OIDC provider for the entry's issuer, plus an inline RolePolicy scoped
+# to this bucket (federation library: packages/cloud/federation).
 import aws_s3.models.v1beta1.s3_awsm_upbound_io_v1beta1_bucket as backend
 import aws_s3.models.v1beta1.s3_awsm_upbound_io_v1beta1_bucket_versioning as versioning
 import aws_s3.models.v1beta1.s3_awsm_upbound_io_v1beta1_bucket_server_side_encryption_configuration as encryption
@@ -21,6 +26,11 @@ import aws_s3.models.v1beta1.s3_awsm_upbound_io_v1beta1_bucket_cors_configuratio
 import aws_s3.models.v1beta1.s3_awsm_upbound_io_v1beta1_bucket_logging as logging
 import aws_s3.models.v1beta1.s3_awsm_upbound_io_v1beta1_bucket_website_configuration as website
 import aws_s3.models.v1beta1.s3_awsm_upbound_io_v1beta1_bucket_request_payment_configuration as payment
+import aws_iam.models.v1beta1.iam_awsm_upbound_io_v1beta1_role as iamrole
+import aws_iam.models.v1beta1.iam_awsm_upbound_io_v1beta1_role_policy as iampolicy
+import federation.lib as fed
+import crypto
+import json
 
 # Abstract storage tier -> S3 native class for lifecycle transitions
 # (S3 has no bucket-level storage class).
@@ -29,6 +39,49 @@ _aws_class = {"standard" = "STANDARD", "nearline" = "STANDARD_IA", "cold" = "GLA
 _transition = {"nearline" = {storageClass = "STANDARD_IA", days = 30}, "cold" = {storageClass = "GLACIER_IR", days = 90}, "archive" = {storageClass = "DEEP_ARCHIVE", days = 180}}
 
 _orphan_policies = ["Observe", "Create", "Update", "LateInitialize"]
+
+# spec.access role -> S3 actions on the bucket ARN and on its objects. Object
+# data only: never bucket configuration, bucket policy or IAM.
+#   read  = list + get (any version)
+#   write = read + put/delete (a delete marker when versioned) + multipart
+#   admin = write + permanent version deletes, restore, ACLs, tagging,
+#           retention / legal hold (incl. bypassing GOVERNANCE retention)
+_s3_read_bucket = ["s3:ListBucket", "s3:GetBucketLocation"]
+_s3_read_objects = ["s3:GetObject", "s3:GetObjectVersion"]
+_s3_write_bucket = _s3_read_bucket + ["s3:ListBucketMultipartUploads"]
+_s3_write_objects = _s3_read_objects + ["s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
+_s3_bucket_actions = {
+    read = _s3_read_bucket
+    write = _s3_write_bucket
+    admin = _s3_write_bucket + ["s3:ListBucketVersions"]
+}
+_s3_object_actions = {
+    read = _s3_read_objects
+    write = _s3_write_objects
+    admin = _s3_write_objects + ["s3:DeleteObjectVersion", "s3:RestoreObject", "s3:GetObjectAcl", "s3:PutObjectAcl", "s3:GetObjectVersionAcl", "s3:PutObjectVersionAcl", "s3:GetObjectTagging", "s3:PutObjectTagging", "s3:DeleteObjectTagging", "s3:GetObjectVersionTagging", "s3:PutObjectVersionTagging", "s3:DeleteObjectVersionTagging", "s3:GetObjectRetention", "s3:PutObjectRetention", "s3:GetObjectLegalHold", "s3:PutObjectLegalHold", "s3:BypassGovernanceRetention"]
+}
+# KMS key use the role needs when the bucket encrypts with a customer key.
+_kms_actions = {read = ["kms:Decrypt"], write = ["kms:Decrypt", "kms:GenerateDataKey"], admin = ["kms:Decrypt", "kms:GenerateDataKey"]}
+
+# The IAM role name an access entry pins: "<xr namespace>-<xr name>-<entry>",
+# cut to IAM's 64 characters with a hash of the full name when longer.
+access_role_name = lambda oxr, entry: str -> str {
+    _full = "${oxr.metadata?.namespace or 'default'}-${oxr.metadata.name}-${entry}"
+    _full if len(_full) <= 64 else "${_full[:55]}-${crypto.sha256(_full)[:8]}"
+}
+
+# Inline policy of an access role: `level` (read|write|admin) on bucket
+# `bucketName` and its objects, plus the bucket's KMS key when one is set.
+access_policy = lambda level: str, bucketName: str, kmsKeyArn: str -> str {
+    _stmts = [
+        {Sid = "Bucket", Effect = "Allow", Action = _s3_bucket_actions[level], Resource = "arn:aws:s3:::${bucketName}"}
+        {Sid = "Objects", Effect = "Allow", Action = _s3_object_actions[level], Resource = "arn:aws:s3:::${bucketName}/*"}
+    ]
+    if kmsKeyArn:
+        _stmts += [{Sid = "Kms", Effect = "Allow", Action = _kms_actions[level], Resource = kmsKeyArn}]
+
+    json.encode({Version = "2012-10-17", Statement = _stmts})
+}
 
 render = lambda oxr {
     _spec = oxr.spec
@@ -198,6 +251,59 @@ render = lambda oxr {
     _items
 }
 
+# spec.access: one IAM Role per entry, trusting the account's IAM OIDC
+# provider for the entry's issuer (aud + sub, see federation.aws_trust), with
+# its name pinned so the inline RolePolicy can name it. The policy needs the
+# bucket name, which a created bucket only has once observed: it is composed
+# on the pass after the Bucket shows up in ocds (import.existingName: at once).
+render_access = lambda oxr, ocds -> [any] {
+    _spec = oxr.spec
+    _fedcfg = _spec?.federation or {}
+    assert not _fedcfg?.gcpProjectNumber, "bucket-aws: spec.federation.gcpProjectNumber is GCP-only; AWS access roles trust spec.federation.awsAccountId"
+    assert not _fedcfg?.azureResourceGroup, "bucket-aws: spec.federation.azureResourceGroup is Azure-only; AWS access roles trust spec.federation.awsAccountId"
+    _entries = fed.access_list(_spec?.access or [])
+    _account = _fedcfg?.awsAccountId
+    assert not _entries or _account, "bucket-aws: spec.federation.awsAccountId is required with spec.access: the account whose IAM OIDC providers (one per issuer) the access roles trust"
+    _imp = _spec?.$import
+    _observe = _imp?.existingName and (_imp?.mode or "observe") == "observe"
+    assert not _entries or not _observe, "bucket-aws: access writes IAM; Crossplane promised read-only in observe mode — switch import.mode to manage or drop access"
+    _kms = _spec?.encryptionKmsKeyId or ""
+    assert not _entries or not _kms or (_kms.startswith("arn:") and ":key/" in _kms), "bucket-aws: access grants kms:Decrypt on encryptionKmsKeyId, which must then be a key ARN (arn:aws:kms:<region>:<account>:key/<id>), got '${_kms}'"
+    _mp = _orphan_policies if (_spec?.deletionPolicy or "Delete") == "Orphan" else Undefined
+    _at = (ocds["managed"]?.Resource?.status?.atProvider) if ("managed" in ocds) else Undefined
+    _bucket = _imp?.existingName or _at?.id
+    _xr = "${oxr.metadata?.namespace or 'default'}/${oxr.metadata.name}"
+
+    _one = lambda entry: any -> [any] {
+        _n = fed.access_name(entry)
+        _rn = access_role_name(oxr, _n)
+        _t = fed.ticket_of(entry)
+        _who = fed.client_of(entry).label + (" started by ${_t.label}" if _t else "")
+        _role = [iamrole.Role {
+            metadata.annotations = {
+                "krm.kcl.dev/composition-resource-name" = "access-${_n}"
+                "crossplane.io/external-name" = _rn
+            }
+            if _mp:
+                spec.managementPolicies = _mp
+            spec.forProvider.assumeRolePolicy = json.encode(fed.aws_trust(entry, _account))
+            spec.forProvider.description = "Keyless ${entry.role} access to Bucket ${_xr} for ${_who} (${_n})"
+            if _spec?.tags:
+                spec.forProvider.tags = _spec.tags
+        }]
+        _policy = [iampolicy.RolePolicy {
+            metadata.annotations = {"krm.kcl.dev/composition-resource-name" = "access-${_n}-policy"}
+            if _mp:
+                spec.managementPolicies = _mp
+            spec.forProvider.role = _rn
+            spec.forProvider.policy = access_policy(entry.role, _bucket, _kms)
+        }] if _bucket else []
+        _role + _policy
+    }
+
+    [_r for _x in _entries for _r in _one(_x)]
+}
+
 # How Crossplane relates to the cloud bucket, for status.mode:
 # created (Crossplane made it) | observe (adopted, read-only) | managed (adopted, Crossplane writes).
 mode_of = lambda oxr -> str {
@@ -207,6 +313,17 @@ mode_of = lambda oxr -> str {
 
 # Build the desired composite carrying observed status back to the XR.
 status = lambda oxr, ocds {
+    _access = fed.access_list(oxr.spec?.access or [])
+    _access_status = lambda entry: any -> {str:} {
+        _n = fed.access_name(entry)
+        _ra = (ocds["access-${_n}"]?.Resource?.status?.atProvider) if ("access-${_n}" in ocds) else Undefined
+        {
+            name = _n
+            role = entry.role
+            if _ra?.arn:
+                roleArn = _ra.arn
+        }
+    }
     _at = (ocds["managed"]?.Resource?.status?.atProvider) if ("managed" in ocds) else Undefined
     _imp = oxr.spec?.$import
     _name = (_at?.id) or _imp?.existingName or oxr.metadata.name
@@ -232,6 +349,8 @@ status = lambda oxr, ocds {
                     endpoint = _at.bucketDomainName
                 if _at?.id:
                     id = _at.id
+            if _access:
+                access = [_access_status(_x) for _x in _access]
         }
     }
     _dxr

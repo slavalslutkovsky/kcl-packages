@@ -2,13 +2,20 @@
 # Typed against the gcp-storage schema package. Maps the portable Bucket
 # common parameters onto a single GCS Bucket (GCS expresses versioning,
 # access, encryption, retention, lifecycle, cors, logging and website inline).
+import crypto
 import gcp_storage.models.v1beta1.storage_gcpm_upbound_io_v1beta1_bucket as backend
+import gcp_storage.models.v1beta1.storage_gcpm_upbound_io_v1beta1_bucket_i_a_m_member as iammember
+import federation.lib as fed
 
 # Abstract storage tier -> gcp native value.
 _storage_class = {"standard" = "STANDARD", "nearline" = "NEARLINE", "cold" = "COLDLINE", "archive" = "ARCHIVE"}
 
 # Crossplane management policy set for the Orphan deletion policy (everything but Delete).
 _orphan_policies = ["Observe", "Create", "Update", "LateInitialize"]
+
+# access role -> GCS predefined role on the bucket. Object-level only: none
+# of them can change the bucket's configuration or its IAM policy.
+_access_roles = {read = "roles/storage.objectViewer", write = "roles/storage.objectUser", admin = "roles/storage.objectAdmin"}
 
 # How Crossplane relates to the cloud bucket, for status.mode:
 # created (Crossplane made it) | observe (adopted, read-only) | managed (adopted, Crossplane writes).
@@ -125,9 +132,37 @@ render = lambda oxr {
     }]
 }
 
+# spec.access -> one BucketIAMMember per member of each entry. The members
+# live in workload identity pools of federation.gcpProjectNumber, named by the
+# same binding (fed.pool_id): the pool and its provider condition (owner,
+# workflows, ticket trigger) must already exist there, e.g. composed by a
+# GcpProject from the same entry. Nothing here depends on observed state.
+render_access = lambda oxr, ocds -> [any] {
+    _spec = oxr.spec
+    _access = fed.access_list(_spec?.access or [])
+    _fed = _spec?.federation or {}
+    assert not _access or _fed?.gcpProjectNumber, "bucket-gcp: spec.federation.gcpProjectNumber is required with spec.access — the project whose workload identity pools the members name"
+    assert not _fed?.awsAccountId and not _fed?.azureResourceGroup, "bucket-gcp: spec.federation.awsAccountId / azureResourceGroup are not GCP fields — set gcpProjectNumber"
+    _imp = _spec?.$import
+    assert not _access or not _imp?.existingName or _imp?.mode == "manage", "bucket-gcp: spec.access writes the bucket's IAM, but import.mode observe promises Crossplane never writes — set import.mode manage or drop access"
+    _mp = _orphan_policies if (_spec?.deletionPolicy or "Delete") == "Orphan" else Undefined
+    [iammember.BucketIAMMember {
+        metadata.annotations = {"krm.kcl.dev/composition-resource-name" = "access-${fed.access_name(_a)}-${crypto.sha256(_m)[:8]}"}
+        if _mp:
+            spec.managementPolicies = _mp
+        if _imp?.existingName:
+            spec.forProvider.bucket = _imp.existingName
+        else:
+            spec.forProvider.bucketSelector.matchControllerRef = True
+        spec.forProvider.role = _access_roles[_a.role]
+        spec.forProvider.member = _m
+    } for _a in _access for _m in fed.gcp_members(_a, _fed.gcpProjectNumber)]
+}
+
 # Build the desired composite carrying observed status back to the XR.
 status = lambda oxr, ocds {
     _at = (ocds["managed"]?.Resource?.status?.atProvider) if ("managed" in ocds) else Undefined
+    _spec_access = fed.access_list(oxr.spec?.access or [])
     _name = (_at?.id) or oxr.spec?.$import?.existingName or oxr.metadata.name
     _dxr = {
         apiVersion = oxr?.apiVersion or "cloud.example.org/v1alpha1"
@@ -151,6 +186,8 @@ status = lambda oxr, ocds {
                     region = _at.location
                 if _at?.storageClass:
                     storageClass = _at.storageClass
+            if _spec_access:
+                access = [{name = fed.access_name(_a), role = _a.role, members = fed.gcp_members(_a, oxr.spec.federation.gcpProjectNumber)} for _a in _spec_access]
         }
     }
     _dxr

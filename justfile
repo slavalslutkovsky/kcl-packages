@@ -103,6 +103,16 @@ gitops values="packages/gitops/examples/values.yaml" env="":
 fleet values="packages/fleet/examples/values.yaml" env="":
     kcl run packages/fleet -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
 
+# Jira epics → one Namespace + Project per customer (packages/epics). `data`
+# is the `atlassian-ingest export-epics` JSON; paying customers land on
+# dedicated nodes. `epics-report` is the second reduce: placement, the node
+# labels/taints dedicated tenants need, epics still waiting.
+epics values="packages/epics/examples/values.yaml" data="packages/epics/examples/epics.json" env="":
+    kcl run packages/epics -D values={{ values }} -D data={{ data }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+epics-report values="packages/epics/examples/values.yaml" data="packages/epics/examples/epics.json" env="":
+    kcl run packages/epics -D values={{ values }} -D data={{ data }} -D report=true {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
 # The portal side of the same values files: entities, not manifests. Piping
 # either of these into `kubectl apply` is a mistake — backstage.io/v1alpha1 is
 # not a Kubernetes API. See docs/backstage.md.

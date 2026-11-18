@@ -24,6 +24,9 @@ mode_of = lambda oxr -> str {
 
 render = lambda oxr {
     _spec = oxr.spec
+    # Not silently ignored like the other unread fields: a pipeline relying on
+    # it would find no access, and no backend here can grant it.
+    assert not _spec?.access, "bucket-rustfs: spec.access is not expressible — RustFS federates OIDC server-wide (one identity provider whose token claims map to RustFS policy names), not per bucket, and no Crossplane provider manages its IAM; grant CI access with a RustFS policy on the server instead"
     _del = _spec?.deletionPolicy or "Delete"
     _imp = _spec?.$import
     _existing = _imp?.existingName

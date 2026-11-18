@@ -1,0 +1,30 @@
+# Keyless CI access to a GCS bucket. Each entry grants the members of one
+# workload identity pool in project 123456789012 (the pool and its provider,
+# named by the same entry, must exist there — e.g. a GcpProject
+# spec.workloadIdentity with the same client/ticket/owner). Composes one
+# BucketIAMMember per member; status.access lists them.
+apiVersion: cloud.example.org/v1alpha1
+kind: Bucket
+metadata:
+  namespace: default
+  name: release-artifacts-gcp
+spec:
+  region: us-central1
+  federation:
+    gcpProjectNumber: "123456789012"
+  access:
+    # Every workflow of the acme org: pool github-actions-pool, roles/storage.objectUser.
+    - client: github
+      owner: acme
+      role: write
+    # Jira-started runs of one workflow: pool jira-github, read only.
+    - client: github
+      ticket: jira
+      workflows: [acme/ops/.github/workflows/jira.yml@refs/heads/main]
+    # One GitLab project, any pipeline: pool gitlab-ci-pool, principalSet per project.
+    - client: gitlab
+      repositories: [acme-platform/deployer]
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp

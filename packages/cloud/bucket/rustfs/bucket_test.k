@@ -1,4 +1,5 @@
 import .bucket
+import runtime
 
 _orphan = ["Observe", "Create", "Update", "LateInitialize"]
 
@@ -55,3 +56,11 @@ test_storage_class()
 test_deletion_policy()
 test_import()
 test_mode_of()
+
+# spec.access fails instead of rendering a bucket no pipeline can reach.
+test_access_not_expressible = lambda {
+    _err = runtime.catch(lambda {
+        bucket.render({metadata.name = "demo", spec = {region = "us-east-1", access = [{client = "github", owner = "acme"}]}})
+    })
+    assert "spec.access is not expressible" in _err
+}

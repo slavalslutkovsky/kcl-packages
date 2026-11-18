@@ -158,6 +158,16 @@ test_example_valid = lambda {
     assert _named(_components(render(merged)), "web-api").spec.source.kind == "OCIRepository", "prod tracks a release artifact, not a branch"
 }
 
+# The platform team's own operators: a platform layer and nothing else.
+test_example_platform_valid = lambda {
+    f = Fleet {**yaml.decode(file.read("examples/values.platform.yaml"))}
+    out = render(f)
+    assert _kinds(out) == ["Component"] * 4, "four platform apps, no teams, no Namespaces: ${_kinds(out)}"
+    assert [c.metadata.name for c in out] == ["gitops-hub", "dev-portal", "resource-stats-operator", "epic-watch"]
+    assert all_true([c.metadata.labels["platform.example.org/layer"] == "platform" for c in out])
+    assert all_true([c.spec.source.kind == "GitRepository" for c in out]), "every entry is a kustomize path in a Git repository"
+}
+
 # invalid inputs — a helm app whose source.kind is an explicit GitRepository, a
 # chart name on a kustomize app, `values` on a Kustomization, a HelmRepository
 # app with no `chart`, a `chart` alongside an OCI-artifact chart, a `branch` on
@@ -175,3 +185,4 @@ test_platform_barrier()
 test_engine_helm()
 test_engine_kustomize_and_crossplane()
 test_example_valid()
+test_example_platform_valid()

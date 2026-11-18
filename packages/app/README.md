@@ -76,6 +76,8 @@ Main `Workload` / `Task` field groups:
 | `monitoring` | workload | ServiceMonitor or PodMonitor, PrometheusRule (`defaultRules`, `rules`), Grafana dashboard ConfigMaps for kube-prometheus-stack |
 | `chaos` | workload | List of `Fault`s, one Chaos Mesh experiment each (or a `Schedule` with `schedule`), selector pinned to `app=<name>` in the workload's namespace |
 | `schedule`, `concurrencyPolicy`, `backoffLimit`, `restartPolicy`, … | task | CronJob / Job controls |
+| `podLabels` | both | Extra pod template labels (cost attribution, `azure.workload.identity/use` for a ServiceAccount created elsewhere) |
+| `nodeSelector`, `tolerations` | both | Pod scheduling, e.g. a customer's dedicated node pool |
 | `extraManifests` | both | Appended to the stream as written |
 
 `monitoring`, `chaos` and `serviceAccount.rules` need an explicit `namespace`.

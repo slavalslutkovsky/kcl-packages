@@ -27,6 +27,13 @@ workloads. One values.yaml, four concerns:
 
     An application dependency may not depend on a manager one: it has to
     install on a workload cluster, where manager dependencies do not exist.
+  • bundles → capability bundles: one word per area (finops | secops |
+    devops | sre | platform) that expands to predefined, version-pinned
+    `Dependency` rows (`bundleDependencies` below). They join the explicit
+    `dependencies` and are filtered by `role` like them; an explicit row with
+    the same name replaces the bundle's, so a bundle is a default, never a
+    constraint. Bundle-sourced Flux objects carry the label
+    `platform.example.org/bundle: <bundle>`.
   • issuers → cert-manager ClusterIssuers (or namespaced Issuers): the thing
     an Ingress names in `cert-manager.io/cluster-issuer`. ACME (Let's
     Encrypt) with HTTP01 or DNS01 solvers for public certificates,
@@ -314,6 +321,162 @@ schema Catalog:
         name == Undefined or regex.match(name, r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$"), "catalog name '${name}' is not a valid Backstage entity name: [A-Za-z0-9._-], starting and ending alphanumeric, at most 63 characters"
         all t in tags {regex.match(t, r"^[a-z0-9][a-z0-9+#-]*$")}, "catalog tags must be lowercase [a-z0-9+#-] and start alphanumeric — Backstage rejects the rest: ${tags}"
 
+# ── Capability bundles ───────────────────────────────────────────────────────
+# One word per platform area, each a set of CNCF projects as ready-made
+# `Dependency` rows. Types follow the same rule as hand-written rows:
+# `application` for what every app cluster needs (policy, runtime security,
+# metrics, logs, traces, cost), `manager` for what drives other clusters
+# (Crossplane, Argo CD, Tekton, the portal). dependsOn only crosses bundles
+# where a chart needs another bundle's CRDs or service, and every such edge
+# points at an `application` row, so `role: workload` keeps every edge valid.
+#
+# Versions: the newest stable chart in each repository's live index.yaml (or
+# OCI tag list), verified 2026-11-18. Pin a different one with an explicit row
+# of the same name.
+type Bundle = "finops" | "secops" | "devops" | "sre" | "platform"
+
+bundleDependencies: {str:[Dependency]} = {
+    # Cost allocation per namespace / label and its UI — the cluster's "cloud
+    # usage" view. Reads Prometheus, so it needs kube-prometheus-stack (the
+    # `sre` bundle or an explicit row); the service name below is that
+    # release's Prometheus.
+    finops = [
+        Dependency {
+            name = "opencost"
+            $type = "application"
+            repo = "https://opencost.github.io/opencost-helm-chart"
+            version = "2.5.34"
+            dependsOn = ["kube-prometheus-stack"]
+            values.opencost.prometheus.internal = {namespaceName = "monitoring", serviceName = "kube-prometheus-stack-prometheus", port = 9090}
+        }
+    ]
+    # Admission policy, runtime threat detection, vulnerability / config scans.
+    secops = [
+        Dependency {
+            name = "kyverno"
+            $type = "application"
+            repo = "https://kyverno.github.io/kyverno"
+            version = "3.10.0"
+        }
+        Dependency {
+            name = "falco"
+            $type = "application"
+            repo = "https://falcosecurity.github.io/charts"
+            version = "9.2.2"
+        }
+        Dependency {
+            name = "trivy-operator"
+            $type = "application"
+            repo = "https://aquasecurity.github.io/helm-charts"
+            version = "0.38.1"
+            namespace = "trivy-system"
+        }
+    ]
+    # Delivery and CI on the manager cluster. Flux is not here: it is what
+    # delivers this render, so it is on the cluster already.
+    devops = [
+        Dependency {
+            name = "argocd"
+            $type = "manager"
+            repo = "https://argoproj.github.io/argo-helm"
+            chart = "argo-cd"
+            version = "10.18.0"
+        }
+        # The official chart (tektoncd/operator, OCI only). The operator's
+        # webhook needs its CRDs at startup, and the chart only ships them
+        # behind installCRDs.
+        Dependency {
+            name = "tekton-operator"
+            $type = "manager"
+            repo = "oci://ghcr.io/tektoncd/operator/charts"
+            version = "0.82.0"
+            values.installCRDs = True
+        }
+    ]
+    # Metrics, logs, traces, chaos. Loki and Tempo ship ServiceMonitors, which
+    # are kube-prometheus-stack CRDs, hence their dependsOn. kube-prometheus-stack
+    # and chaos-mesh are the examples/values.yaml rows (minus that file's keda edge).
+    sre = [
+        Dependency {
+            name = "kube-prometheus-stack"
+            $type = "application"
+            repo = "oci://ghcr.io/prometheus-community/charts"
+            version = "93.4.0"
+            namespace = "monitoring"
+            install = {crds = "CreateReplace"}
+            upgrade = {crds = "CreateReplace"}
+            values.grafana.sidecar.dashboards = {searchNamespace = "ALL", folderAnnotation = "grafana_folder", provider.foldersFromFilesStructure = True}
+        }
+        # Monolithic Loki on the pod's filesystem: one replica, no object
+        # store. Override with an explicit row for S3 / GCS / Azure storage.
+        Dependency {
+            name = "loki"
+            $type = "application"
+            repo = "https://grafana-community.github.io/helm-charts"
+            version = "21.3.1"
+            namespace = "monitoring"
+            dependsOn = ["kube-prometheus-stack"]
+            values = {
+                loki = {
+                    auth_enabled = False
+                    commonConfig.replication_factor = 1
+                    storage.$type = "filesystem"
+                    schemaConfig.configs = [{"from" = "2024-04-01", store = "tsdb", object_store = "filesystem", "schema" = "v13", index = {prefix = "index_", period = "24h"}}]
+                }
+                singleBinary.replicas = 1
+                read.replicas = 0
+                write.replicas = 0
+                backend.replicas = 0
+                monitoring.serviceMonitor.enabled = True
+            }
+        }
+        Dependency {
+            name = "tempo"
+            $type = "application"
+            repo = "https://grafana-community.github.io/helm-charts"
+            version = "3.2.1"
+            namespace = "monitoring"
+            dependsOn = ["kube-prometheus-stack"]
+            values.serviceMonitor.enabled = True
+        }
+        Dependency {
+            name = "chaos-mesh"
+            $type = "application"
+            repo = "https://charts.chaos-mesh.org"
+            version = "2.8.8"
+            values = {
+                chaosDaemon = {runtime = "containerd", socketPath = "/run/containerd/containerd.sock"}
+                dashboard.create = False
+            }
+        }
+    ]
+    # Cloud resources and clusters, the developer portal, certificates — the
+    # examples/values.yaml rows, except that the portal is the manager
+    # cluster's UI here, so `manager`.
+    platform = [
+        Dependency {
+            name = "crossplane"
+            $type = "manager"
+            repo = "https://charts.crossplane.io/stable"
+            version = "2.4.3"
+            namespace = "crossplane-system"
+        }
+        Dependency {
+            name = "backstage"
+            $type = "manager"
+            repo = "https://backstage.github.io/charts"
+            version = "2.11.0"
+        }
+        Dependency {
+            name = "cert-manager"
+            $type = "application"
+            repo = "https://charts.jetstack.io"
+            version = "v1.21.3"
+            values.crds.enabled = True
+        }
+    ]
+}
+
 schema Manager:
     """The whole cluster-management release: one values.yaml per cluster."""
     name: str = "manager"
@@ -324,29 +487,40 @@ schema Manager:
     # namespace the HelmRepository / HelmRelease objects live in
     namespace: str = "flux-system"
     dependencies: [Dependency] = []
+    # Capability bundles (bundleDependencies), appended after `dependencies`
+    # minus any row an explicit dependency of the same name replaces.
+    bundles: [Bundle] = []
 
     # cert-manager issuers. Cluster-scoped unless a row sets `namespace`; the
     # cert-manager chart itself belongs in `dependencies` above.
     issuers: [Issuer] = []
     chaos?: Chaos
     catalog?: Catalog
-    _typeOf = {d.name: d.$type for d in dependencies}
+
+    # Every dependency this file installs on a manager cluster: the explicit
+    # rows, then the bundles' rows no explicit one replaces.
+    _explicit = {d.name: 1 for d in dependencies}
+    _bundleOf: {str:str} = {d.name: b for b in bundles for d in bundleDependencies[b] if d.name not in _explicit}
+    _deps: [Dependency] = dependencies + [d for b in bundles for d in bundleDependencies[b] if d.name not in _explicit]
+    _typeOf = {d.name: d.$type for d in _deps}
 
     check:
         len(dependencies) == len({d.name: 1 for d in dependencies}), "dependency names must be unique"
-        all_true([dep in _typeOf for d in dependencies for dep in d.dependsOn]), "dependsOn must name another dependency in this file"
-        all_true([_typeOf[dep] == "application" for d in dependencies if d.$type == "application" for dep in d.dependsOn if dep in _typeOf]), "an application dependency may not depend on a manager dependency: it must install on a workload cluster, where manager dependencies are absent"
+        len(bundles) == len({b: 1 for b in bundles}), "bundles must be unique: ${bundles}"
+        "finops" not in bundles or "kube-prometheus-stack" in _typeOf, "bundle finops: opencost reads Prometheus — add the sre bundle or a kube-prometheus-stack dependency"
+        all_true([dep in _typeOf for d in _deps for dep in d.dependsOn]), "dependsOn must name another dependency in this file"
+        all_true([_typeOf[dep] == "application" for d in _deps if d.$type == "application" for dep in d.dependsOn if dep in _typeOf]), "an application dependency may not depend on a manager dependency: it must install on a workload cluster, where manager dependencies are absent"
         len(issuers) == len({i.name: 1 for i in issuers}), "issuer names must be unique"
 
 # Which dependencies a cluster of this role installs.
 _installed = lambda m: Manager -> [Dependency] {
-    m.dependencies if m.role == "manager" else [d for d in m.dependencies if d.$type == "application"]
+    m._deps if m.role == "manager" else [d for d in m._deps if d.$type == "application"]
 }
 
 # Issuers are instances of cert-manager's CRDs, so they go wherever the
 # cert-manager chart goes. Without the chart in this file: manager clusters.
 _issuerType = lambda m: Manager -> str {
-    _cm = [d for d in m.dependencies if d.name == "cert-manager"]
+    _cm = [d for d in m._deps if d.name == "cert-manager"]
     _cm[0].$type if _cm else "manager"
 }
 
@@ -356,8 +530,9 @@ _labels = lambda m: Manager -> {str:str} {
 }
 
 # The phase selector: `kubectl apply -l platform.example.org/type=<type>`.
+# Bundle-sourced rows also say which bundle brought them.
 _dependencyLabels = lambda m: Manager, d: Dependency -> {str:str} {
-    _labels(m) | {"platform.example.org/type" = d.$type}
+    _labels(m) | {"platform.example.org/type" = d.$type} | ({"platform.example.org/bundle" = m._bundleOf[d.name]} if d.name in m._bundleOf else {})
 }
 
 _helmRepository = lambda m: Manager, d: Dependency -> helmrepo.HelmRepository {

@@ -5,4 +5,5 @@ version = "0.1.5"
 
 [dependencies]
 gcp-storage = { path = "../../../providers/gcp-storage" }
+federation = { path = "../../federation" }
 k8s = "1.32.4"

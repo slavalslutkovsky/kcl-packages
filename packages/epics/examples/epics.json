@@ -1,0 +1,16 @@
+{
+  "epics": [
+    {"key": "PLAT-10", "project_key": "PLAT", "issue_type": "Epic", "status": "In Progress", "status_category": "In Progress", "summary": "Acme shop", "updated": "2026-11-10T09:00:00+00:00",
+     "labels": ["customer-acme", "plan-enterprise", "app-shop-web", "app-shop-api", "app-shop-report", "cost-center-4711", "oncall-payments", "alert-critical"]},
+    {"key": "PLAT-11", "project_key": "PLAT", "issue_type": "Epic", "status": "Done", "status_category": "Done", "summary": "Acme order events", "updated": "2026-11-12T09:00:00+00:00",
+     "labels": ["customer-acme", "app-orders", "app-notifier", "cost-center-4711", "oncall-payments", "alert-warning"]},
+    {"key": "PLAT-20", "project_key": "PLAT", "issue_type": "Epic", "status": "In Progress", "status_category": "In Progress", "summary": "Globex storefront", "updated": "2026-11-14T09:00:00+00:00",
+     "labels": ["customer-globex", "app-shop-web", "app-shop-api"]},
+    {"key": "PLAT-21", "project_key": "PLAT", "issue_type": "Epic", "status": "Review", "status_category": "In Progress", "summary": "Globex stores operator (frozen for audit)", "updated": "2026-11-15T09:00:00+00:00",
+     "labels": ["customer-globex", "app-tenant-operator", "freeze"]},
+    {"key": "PLAT-30", "project_key": "PLAT", "issue_type": "Epic", "status": "To Do", "status_category": "To Do", "summary": "Initech pilot", "updated": "2026-11-16T09:00:00+00:00",
+     "labels": ["customer-initech", "plan-team", "app-shop-web"]},
+    {"key": "PLAT-40", "project_key": "PLAT", "issue_type": "Epic", "status": "In Progress", "status_category": "In Progress", "summary": "Q4 platform hardening", "updated": "2026-11-17T09:00:00+00:00",
+     "labels": ["platform", "security"]}
+  ]
+}

@@ -67,6 +67,7 @@ A chart must have one owner: do not list one here and in a `devkit.toml`
 | `role` | required | `manager` renders every dependency; `workload` only `type: application` ones |
 | `namespace` | `flux-system` | Where the HelmRepository / HelmRelease objects live |
 | `dependencies` | `[]` | `Dependency` rows, one chart each (below) |
+| `bundles` | `[]` | Capability bundles (`finops`, `secops`, `devops`, `sre`, `platform`), each expanding to predefined `Dependency` rows appended after `dependencies` ([below](#bundles)) |
 | `issuers` | `[]` | cert-manager issuers: `acme` (needs `email` + `solvers`, http01 or dns01 via `cloud-dns` / `route53` / `azure-dns`), `self-signed`, `ca` (`caSecret`). ClusterIssuer unless `namespace` is set |
 | `chaos` | — | `namespace` (`chaos-mesh`), `paused`, `namespaces` (labelled `chaos-mesh.org/inject=enabled`), `experiments` (an `app.Fault` + a required `target`), `workflows` (serial or `parallel` steps under one `deadline`, optional `pauseBetween`) |
 | `catalog` | — | Backstage cluster Resource; `owner` required |
@@ -87,11 +88,59 @@ A chart must have one owner: do not list one here and in a `devkit.toml`
 | `install`, `upgrade`, `driftDetection`, `postRenderers` | — | HelmRelease.spec fields as typed by the Flux CRD schemas; `install` deep-merges over `createNamespace: true`, `remediation.retries: 3` |
 | `secretRef`, `provider` | — | HelmRepository.spec auth; `provider` (`aws` / `azure` / `gcp`) only for `oci://` |
 
-Rejected at render time: duplicate dependency or issuer names, a `dependsOn`
-naming nothing in the file, and an `application` dependency depending on a
-`manager` one (it must install on a workload cluster, where manager
-dependencies are absent). Chaos section by section:
-[docs/chaos.md](../../docs/chaos.md#the-manager-package).
+Rejected at render time: duplicate dependency or issuer names, a repeated
+bundle, a `dependsOn` naming nothing in the file (bundle rows included), an
+`application` dependency depending on a `manager` one (it must install on a
+workload cluster, where manager dependencies are absent), and `finops` without
+a `kube-prometheus-stack` row (the `sre` bundle or an explicit one). Chaos
+section by section: [docs/chaos.md](../../docs/chaos.md#the-manager-package).
+
+### Bundles
+
+`bundles: [finops, secops, sre]` instead of hand-writing the charts of an
+area. Each bundle is a list of ordinary `Dependency` rows (`bundleDependencies`
+in `lib.k`), so `role` filters them by `type` exactly like explicit rows. The
+rows are appended after `dependencies`, in the order the bundles are listed;
+an explicit dependency with the same `name` replaces the bundle's row whole (no
+duplicate, no merge), which is how a bundle chart gets other values or another
+version. Flux objects rendered from a bundle row carry the label
+`platform.example.org/bundle: <bundle>`; an explicit replacement does not.
+
+Versions are the newest stable chart in each repository's live index (or OCI
+tag list), verified 2026-11-18.
+
+| bundle | area | CNCF project | chart / version | type | dependsOn |
+| --- | --- | --- | --- | --- | --- |
+| `finops` | cost allocation, the "cloud usage" view | OpenCost | `opencost` 2.5.34 (opencost.github.io/opencost-helm-chart) | application | kube-prometheus-stack |
+| `secops` | admission policy | Kyverno | `kyverno` 3.10.0 (kyverno.github.io/kyverno) | application | — |
+| `secops` | runtime threat detection | Falco | `falco` 9.2.2 (falcosecurity.github.io/charts) | application | — |
+| `secops` | vulnerability / config scanning | Trivy Operator | `trivy-operator` 0.38.1 (aquasecurity.github.io/helm-charts), namespace `trivy-system` | application | — |
+| `devops` | GitOps delivery | Argo CD | `argo-cd` 10.18.0 (argoproj.github.io/argo-helm), release `argocd` | manager | — |
+| `devops` | CI pipelines | Tekton (operator) | `tekton-operator` 0.82.0 (oci://ghcr.io/tektoncd/operator/charts), `installCRDs: true` | manager | — |
+| `sre` | metrics, alerting, dashboards | Prometheus (kube-prometheus-stack) | `kube-prometheus-stack` 93.4.0 (oci://ghcr.io/prometheus-community/charts), namespace `monitoring` | application | — |
+| `sre` | logs | Loki | `loki` 21.3.1 (grafana-community.github.io/helm-charts), monolithic on the filesystem, namespace `monitoring` | application | kube-prometheus-stack |
+| `sre` | traces | Tempo | `tempo` 3.2.1 (grafana-community.github.io/helm-charts), namespace `monitoring` | application | kube-prometheus-stack |
+| `sre` | chaos engineering | Chaos Mesh | `chaos-mesh` 2.8.8 (charts.chaos-mesh.org) | application | — |
+| `platform` | cloud resources and clusters | Crossplane | `crossplane` 2.4.3 (charts.crossplane.io/stable), namespace `crossplane-system` | manager | — |
+| `platform` | developer portal | Backstage | `backstage` 2.11.0 (backstage.github.io/charts) | manager | — |
+| `platform` | certificates | cert-manager | `cert-manager` v1.21.3 (charts.jetstack.io), `crds.enabled: true` | application | — |
+
+Notes:
+
+- Flux is not in `devops`: it delivers this render, so it is already there.
+- Tekton: the bundle uses the Tekton Operator chart, the one tektoncd itself
+  publishes (tektoncd/operator, OCI on GHCR); the operator installs Pipelines
+  and Triggers through its default `TektonConfig`. The separate
+  cdfoundation/tekton-helm-chart for Pipelines lags upstream (chart 1.15.3
+  against Pipelines v1.18.0 on 2026-11-18), so it is not used.
+- Loki and Tempo come from the grafana-community repository: the Loki chart in
+  grafana.github.io/helm-charts is now the Grafana Enterprise Logs chart, and
+  its `tempo` chart is deprecated there. Both enable their ServiceMonitor, a
+  kube-prometheus-stack CRD, hence the `dependsOn`.
+- OpenCost reads `kube-prometheus-stack-prometheus.monitoring:9090`, the
+  Prometheus of a `kube-prometheus-stack` release in `monitoring`.
+- Backstage is `manager` in the bundle (the manager cluster's portal); the
+  explicit row in `examples/values.yaml` keeps it `application`.
 
 ## Outputs
 
@@ -112,14 +161,15 @@ With `-D catalog=true`: `backstage.io/v1alpha1` `Resource`s — the cluster
 objects; see [docs/backstage.md](../../docs/backstage.md).
 
 The dependency graph of the example values is drawn in
-[docs/install-graph.md](../../docs/install-graph.md) (`just graph`).
+[docs/install-graph.md](../../docs/install-graph.md) (`just graph`); it reads
+the explicit `dependencies` only, not the rows the bundles add.
 
 ## Examples
 
 | file | renders |
 | --- | --- |
-| `examples/values.yaml` | `role: manager`: crossplane (`manager`), cert-manager, chaos-mesh, keda, kube-prometheus-stack, backstage (`application`); four ClusterIssuers (two ACME, self-signed root, CA); cluster-scope experiments; two Workflows; `catalog:` |
-| `examples/values.workload.yaml` | Overlay setting `role: workload`: crossplane drops out, the application charts and issuers stay |
+| `examples/values.yaml` | `role: manager`: crossplane (`manager`), cert-manager, chaos-mesh, keda, kube-prometheus-stack, backstage (`application`), plus `bundles: [finops, secops, sre]` → opencost, kyverno, falco, trivy-operator, loki, tempo (the explicit kube-prometheus-stack and chaos-mesh replace the sre bundle's); four ClusterIssuers (two ACME, self-signed root, CA); cluster-scope experiments; two Workflows; `catalog:` |
+| `examples/values.workload.yaml` | Overlay setting `role: workload`: crossplane drops out, the application charts (bundled ones included) and issuers stay |
 
 ## Layout
 

@@ -1,0 +1,60 @@
+# Cluster prerequisites for the Project Composition.
+#
+# NOT a Provider manifest. The cloud side is composed as child XRs
+# (cloud.example.org), and what needs Crossplane providers is the modules
+# that implement them — install those per cloud (`just e2e-providers
+# postgres`, …). The app side composes core Kubernetes kinds and CRD kinds
+# directly, as packages/platform/application does.
+#
+# What IS needed is permission: Crossplane's ServiceAccount aggregates every
+# ClusterRole labelled rbac.crossplane.io/aggregate-to-crossplane=true, and
+# built-in kinds or helm-installed CRDs are not granted by default. Only the
+# kinds this module can render are listed — including those reachable through
+# an app's `overrides` (HPA / KEDA / PDB / Prometheus Operator objects).
+#
+# Roles: an `operator` app gets a namespaced Role. Kubernetes only lets a
+# subject create a Role granting permissions it holds itself, or with
+# `escalate` on roles; `bind` is the same rule for RoleBindings. Both are
+# granted here so Crossplane can compose an operator's Role. The XR is
+# namespaced, so such a Role never reaches past the project's namespace —
+# restrict who may create Projects with RBAC on projects.platform.example.org.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: project:aggregate-to-crossplane
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups: [""]
+    resources: [services, configmaps, serviceaccounts]
+    verbs: ["*"]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: ["*"]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: ["*"]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: ["*"]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: ["*"]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: ["*", escalate, bind]
+  - apiGroups: [keda.sh]
+    resources: [scaledobjects, scaledjobs, triggerauthentications]
+    verbs: ["*"]
+  - apiGroups: [external-secrets.io]
+    resources: [externalsecrets]
+    verbs: ["*"]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes]
+    verbs: ["*"]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [servicemonitors, podmonitors, prometheusrules]
+    verbs: ["*"]
+  - apiGroups: [dapr.io]
+    resources: [components]
+    verbs: ["*"]

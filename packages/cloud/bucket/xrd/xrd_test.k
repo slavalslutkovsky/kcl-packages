@@ -39,3 +39,17 @@ test_defaults_match_xrd = lambda {
     assert b.spec.versioning == True and b.spec.blockPublicAccess == True and b.spec.uniformAccess == True
     assert b.spec.deletionPolicy == "Delete"
 }
+
+# The access examples are Buckets too: access entries, their role default and
+# the per-cloud federation anchor are part of the schema.
+test_access_examples = lambda {
+    _xrs = {_c: bucket.Bucket {**yaml.decode(file.read("examples/bucket-access-${_c}.yaml"))} for _c in ["gcp", "aws", "azure"]}
+    assert _xrs.gcp.spec.federation.gcpProjectNumber == "123456789012"
+    assert _xrs.aws.spec.federation.awsAccountId == "111122223333"
+    assert _xrs.azure.spec.federation.azureResourceGroup == "rg-ci-access"
+    assert [_a.role for _a in _xrs.gcp.spec.access] == ["write", "read", "read"], "role defaults to read"
+    assert _xrs.gcp.spec.access[1].ticket == "jira" and _xrs.gcp.spec.access[1].workflows == ["acme/ops/.github/workflows/jira.yml@refs/heads/main"]
+    assert all _c, _x in _xrs {
+        _x.spec.crossplane.compositionSelector.matchLabels.provider == _c
+    }
+}

@@ -1,0 +1,32 @@
+# Keyless CI access to an S3 bucket. Each entry becomes an IAM role trusting
+# account 111122223333's IAM OIDC provider for the entry's issuer (it must
+# exist: one per issuer per account) on the token's sub and aud, with an inline
+# policy on this bucket. status.access[].roleArn is the role-to-assume.
+apiVersion: cloud.example.org/v1alpha1
+kind: Bucket
+metadata:
+  namespace: default
+  name: release-artifacts-aws
+spec:
+  region: us-east-1
+  federation:
+    awsAccountId: "111122223333"
+  access:
+    # sub repo:acme/*, aud sts.amazonaws.com (what configure-aws-credentials requests).
+    - client: github
+      owner: acme
+      role: write
+    # A ticket is not in GitHub's default sub claim: customize the sub template
+    # (include_claim_keys [repo, context, job_workflow_ref]) and list the values.
+    - client: github
+      ticket: jira
+      subjects:
+        - repo:acme/ops:ref:refs/heads/main:job_workflow_ref:acme/ops/.github/workflows/jira.yml@refs/heads/main
+    # GitLab's aud is whatever the job's id_tokens ask for.
+    - client: gitlab
+      repositories: [acme-platform/deployer]
+      audiences: [sts.amazonaws.com]
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws

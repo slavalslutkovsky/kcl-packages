@@ -39,9 +39,15 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 `us-east-1`. Every other portable field — `versioning`, `forceDestroy`,
 `blockPublicAccess`, `uniformAccess`, `encryptionKmsKeyId`, `requesterPays`,
 `retention`, `tags`, `logging`, `website`, `cors`, `lifecycleRules`,
-`import.resourceGroup` — is not read either. No status is written back:
+`import.resourceGroup`, `federation` — is not read either. No status is written back:
 `main.k` renders managed resources only, so `status.mode` (the `MODE`
 column), `ready` and `bucketName` stay unset.
+
+`access` is the exception: a non-empty list fails the render. RustFS
+federates OIDC server-wide (one identity provider whose token claims map to
+RustFS policy names), not per bucket, and no Crossplane provider manages its
+IAM, so ignoring the field would leave the pipelines it names without access
+while the XR looks granted. Grant CI access with a RustFS policy on the server.
 
 The `rustfs` ProviderConfig is not shipped by the bucket module (there is no
 `../xrd/providerconfigs.yaml`); it must exist, pointing provider-aws-s3 at the

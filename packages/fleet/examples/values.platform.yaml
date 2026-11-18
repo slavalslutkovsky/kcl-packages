@@ -1,0 +1,49 @@
+# The platform team's own apps → fleet.Fleet. Render with
+#   kcl run packages/fleet -D values=packages/fleet/examples/values.platform.yaml -q
+#
+# Only a `platform:` layer: these are the operators the platform team ships to
+# the manager cluster itself, next to the charts packages/manager delivers. Two
+# areas:
+#   manager UI   → gitops-hub, dev-portal
+#   cloud usage  → resource-stats-operator, epic-watch
+# Every entry is plain YAML applied by kustomize-controller from the `deploy/`
+# directory of its crate; the manifests set their own namespaces, so no
+# `targetNamespace`.
+
+name: platform-team
+namespace: flux-system            # where every Component XR lives
+
+platform:
+  # Manager UI: gitops-hub — installs Flux / Argo CD from a GitOpsPlatform
+  # object and serves the aggregated "what is broken?" dashboard over both.
+  - name: gitops-hub
+    engine: kustomize
+    source:
+      url: https://github.com/shluviza/shluviza-wrokspace.git
+      branch: main
+    path: ./apps/operators/gitops-hub/deploy
+  # Manager UI: dev-portal — self-service catalog of the Crossplane APIs
+  # (one form per XRD), acting with the signed-in user's own RBAC.
+  - name: dev-portal
+    engine: kustomize
+    source:
+      url: https://github.com/shluviza/shluviza-wrokspace.git
+      branch: main
+    path: ./apps/operators/dev-portal/deploy
+  # Cloud usage: resource-stats-operator — usage, reservations and cost per
+  # cluster / node / namespace / workload into ResourceStats (the FinOps view),
+  # from the toolkit repository.
+  - name: resource-stats-operator
+    engine: kustomize
+    source:
+      url: https://github.com/shluviza/toolkit.git
+      branch: main
+    path: ./crates/resource-stats-operator/deploy
+  # Cloud usage: runtime state of the Jira-epic-labelled workloads (degraded,
+  # frozen, per epic), served on /epics for the manager UI.
+  - name: epic-watch
+    engine: kustomize
+    source:
+      url: https://github.com/shluviza/shluviza-wrokspace.git
+      branch: main
+    path: ./apps/operators/epic-watch/deploy

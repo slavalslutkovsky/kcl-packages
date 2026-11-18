@@ -544,6 +544,12 @@ schema Workload:
     # Chaos Mesh experiments against this workload's pods (needs `namespace`)
     chaos: [Fault] = []
     podAnnotations: {str:str} = {}
+    # Extra pod template labels, e.g. azure.workload.identity/use when the
+    # ServiceAccount is created elsewhere (`create: false`) and `cloud` is unset.
+    podLabels: {str:str} = {}
+    # Scheduling: pod nodeSelector and tolerations, e.g. a dedicated node pool.
+    nodeSelector: {str:str} = {}
+    tolerations: [{str:}] = []
     extraManifests: [{str:}] = []
 
     check:
@@ -592,6 +598,11 @@ schema Task:
     # CronJob / ScaledJob: finished Jobs kept
     successfulJobsHistoryLimit: int = 3
     failedJobsHistoryLimit: int = 1
+    # Extra pod template labels (see Workload.podLabels).
+    podLabels: {str:str} = {}
+    # Scheduling (see Workload.nodeSelector / tolerations).
+    nodeSelector: {str:str} = {}
+    tolerations: [{str:}] = []
     extraManifests: [{str:}] = []
 
     check:
@@ -863,14 +874,14 @@ _deployment = lambda w: Workload -> appsv1.Deployment {
                 matchLabels = {app = w.name}
             }
             template = {
-                metadata = {labels = _labels(w) | (_saPodLabels(w.serviceAccount) if w.serviceAccount else {})} | ({annotations = _ann} if _ann else {})
+                metadata = {labels = _labels(w) | (_saPodLabels(w.serviceAccount) if w.serviceAccount else {}) | w.podLabels} | ({annotations = _ann} if _ann else {})
                 spec = {
                     securityContext = _podSecurity(w)
                     containers = [_container(w)]
                     volumes = w.volumes
                     terminationGracePeriodSeconds = w.terminationGracePeriodSeconds
                     restartPolicy = "Always"
-                } | (_saPodSpec(w.name, w.serviceAccount) if w.serviceAccount else {})
+                } | (_saPodSpec(w.name, w.serviceAccount) if w.serviceAccount else {}) | ({nodeSelector = w.nodeSelector} if w.nodeSelector else {}) | ({tolerations = w.tolerations} if w.tolerations else {})
             }
         }
     }
@@ -1469,7 +1480,7 @@ _jobPodSpec = lambda t: Task -> {str:} {
         containers = [_taskContainer(t)]
         volumes = t.volumes
         restartPolicy = t.restartPolicy
-    } | (_saPodSpec(t.name, t.serviceAccount) if t.serviceAccount else {})
+    } | (_saPodSpec(t.name, t.serviceAccount) if t.serviceAccount else {}) | ({nodeSelector = t.nodeSelector} if t.nodeSelector else {}) | ({tolerations = t.tolerations} if t.tolerations else {})
 }
 
 # Shared JobSpec, used directly for a Job, nested under a CronJob's
@@ -1477,7 +1488,7 @@ _jobPodSpec = lambda t: Task -> {str:} {
 _jobSpec = lambda t: Task -> {str:} {
     {
         template = {
-            metadata = {labels = _taskLabels(t) | (_saPodLabels(t.serviceAccount) if t.serviceAccount else {})}
+            metadata = {labels = _taskLabels(t) | (_saPodLabels(t.serviceAccount) if t.serviceAccount else {}) | t.podLabels}
             spec = _jobPodSpec(t)
         }
         backoffLimit = t.backoffLimit

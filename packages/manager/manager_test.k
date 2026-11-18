@@ -383,17 +383,74 @@ chaos:
     assert _named(wf.spec.templates, "memory").stressChaos.stressors.memory.size == "256MB"
 }
 
+# ── Capability bundles ───────────────────────────────────────────────────────
+_allBundles = ["finops", "secops", "devops", "sre", "platform"]
+_releases = lambda items: [any] -> [any] {
+    [o for o in items if o.kind == "HelmRelease"]
+}
+# Every HelmRelease dependsOn edge points at a HelmRelease in the same render.
+_edgesResolve = lambda items: [any] -> bool {
+    _names = [o.metadata.name for o in _releases(items)]
+    all_true([e.name in _names for o in _releases(items) for e in o.spec?.dependsOn or []])
+}
+
+test_bundles_expand = lambda {
+    # finops reads Prometheus, so it is tried alongside sre.
+    _single = {b: render(Manager {role = "manager", bundles = [b] + (["sre"] if b == "finops" else [])}) for b in _allBundles}
+    assert all_true([[o.metadata.name for o in _releases(_single[b]) if o.metadata.labels["platform.example.org/bundle"] == b] == [d.name for d in bundleDependencies[b]] for b in _allBundles]), "each bundle renders exactly its own rows, labelled with the bundle"
+    assert all_true([len(_single[b]) == 2 * len(_releases(_single[b])) for b in _allBundles]), "a HelmRepository per bundle release"
+    assert all_true([d.version for b in _allBundles for d in bundleDependencies[b]]), "every bundle chart is pinned"
+    assert all_true([_edgesResolve(_single[b]) for b in _allBundles]), "every bundle's dependsOn resolves on its own (finops with sre)"
+
+    everything = render(Manager {role = "manager", bundles = _allBundles})
+    assert len(_releases(everything)) == sum([len(bundleDependencies[b]) for b in _allBundles]), "bundles do not overlap"
+    assert _edgesResolve(everything)
+    assert _edgesResolve(render(Manager {role = "workload", bundles = _allBundles})), "dependsOn still resolves once the manager-type rows drop out"
+    assert [o.metadata.labels["platform.example.org/bundle"] for o in _releases(render(Manager {role = "manager", bundles = ["sre", "finops"]}))] == ["sre"] * 4 + ["finops"], "bundles expand in listed order"
+}
+
+test_bundle_override = lambda {
+    m = Manager {**yaml.decode("""\
+role: manager
+bundles: [sre]
+dependencies:
+  - name: kube-prometheus-stack
+    type: application
+    repo: oci://ghcr.io/prometheus-community/charts
+    version: 77.5.0
+    namespace: monitoring
+""")}
+    out = render(m)
+    kps = [o for o in _releases(out) if o.metadata.name == "kube-prometheus-stack"]
+    assert len(kps) == 1, "an explicit row replaces the bundle's, never duplicates it"
+    assert kps[0].spec.chart.spec.version == "77.5.0" and "values" not in kps[0].spec, "the explicit row wins whole, not merged"
+    assert "platform.example.org/bundle" not in kps[0].metadata.labels, "an explicit row is not bundle-sourced"
+    assert [o.metadata.name for o in _releases(out)] == ["kube-prometheus-stack", "loki", "tempo", "chaos-mesh"], "explicit rows first, then the bundle minus the replaced row"
+    assert _edgesResolve(out), "bundle rows depending on the replaced name resolve to the explicit row"
+}
+
+test_bundle_role = lambda {
+    _values = {bundles = ["devops", "platform", "secops"]}
+    manager = _releases(render(Manager {**_values, role = "manager"}))
+    assert [o.metadata.name for o in manager] == ["argocd", "tekton-operator", "crossplane", "backstage", "cert-manager", "kyverno", "falco", "trivy-operator"]
+    workload = _releases(render(Manager {**_values, role = "workload"}))
+    assert [o.metadata.name for o in workload] == ["cert-manager", "kyverno", "falco", "trivy-operator"], "a workload cluster drops the manager-type bundle rows"
+    assert all_true([o.metadata.labels["platform.example.org/type"] == "application" for o in workload])
+}
+
 # ── Release order and the shipped example ────────────────────────────────────
 test_example_valid = lambda {
     m = Manager {**yaml.decode(file.read("examples/values.yaml"))}
     out = render(m)
-    assert _kinds(out) == ["Namespace", "Namespace"] + ["HelmRepository"] * 6 + ["HelmRelease"] * 6 + ["ClusterIssuer"] * 4 + ["Schedule", "StressChaos", "NetworkChaos", "Workflow", "Workflow"], "example → namespaces, repos, releases, issuers, experiments, workflows: ${_kinds(out)}"
+    assert _kinds(out) == ["Namespace", "Namespace"] + ["HelmRepository"] * 12 + ["HelmRelease"] * 12 + ["ClusterIssuer"] * 4 + ["Schedule", "StressChaos", "NetworkChaos", "Workflow", "Workflow"], "example → namespaces, repos, releases, issuers, experiments, workflows: ${_kinds(out)}"
     assert m.name == "platform" and m.role == "manager" and len(m.dependencies) == 6 and len(m.issuers) == 4 and len(m.chaos.experiments) == 3
     assert [d.$type for d in m.dependencies] == ["manager"] + ["application"] * 5, "crossplane is what makes it a manager cluster; the apps' operators go everywhere"
+    _bundled = [o for o in out if o.kind == "HelmRelease" and "platform.example.org/bundle" in o.metadata.labels]
+    assert [o.metadata.name + "=" + o.metadata.labels["platform.example.org/bundle"] for o in _bundled] == ["opencost=finops", "kyverno=secops", "falco=secops", "trivy-operator=secops", "loki=sre", "tempo=sre"], "the explicit kube-prometheus-stack and chaos-mesh replace the sre bundle's"
 
     # The shipped overlay: the same file on a workload cluster loses crossplane and nothing else.
     w = render(Manager {**app.mergeValues(yaml.decode(file.read("examples/values.yaml")), yaml.decode(file.read("examples/values.workload.yaml")))})
-    assert [o.metadata.name for o in w if o.kind == "HelmRelease"] == ["cert-manager", "chaos-mesh", "keda", "kube-prometheus-stack", "backstage"], "workload overlay drops the manager-type charts"
+    assert [o.metadata.name for o in w if o.kind == "HelmRelease"] == ["cert-manager", "chaos-mesh", "keda", "kube-prometheus-stack", "backstage", "opencost", "kyverno", "falco", "trivy-operator", "loki", "tempo"], "workload overlay drops the manager-type charts"
     assert len(w) == len(out) - 2, "exactly crossplane's repo + release are gone: ${_kinds(w)}"
     _cm = [d for d in m.dependencies if d.name == "cert-manager"][0]
     assert _cm.values.crds.enabled == True, "the chart's CRDs are off by default and startupapicheck fails without them"
@@ -486,6 +543,9 @@ test_catalog_absent = lambda {
 test_dependencies()
 test_dependency_flux_fields()
 test_role()
+test_bundles_expand()
+test_bundle_override()
+test_bundle_role()
 test_experiments()
 test_paused()
 test_workflow_serial()
