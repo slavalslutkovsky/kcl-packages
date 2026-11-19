@@ -1,0 +1,188 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: instancetemplates.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: InstanceTemplate
+    plural: instancetemplates
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                Portable instance template plus the machines stamped from it.
+                The machine fields carry the SAME meaning as on
+                VirtualMachine (cloud.example.org/v1alpha1); each backend
+                maps them onto its native template object and creates every
+                entry of spec.instances FROM that object:
+                AWS EC2 LaunchTemplate -> Instance.launchTemplate;
+                GCP Compute InstanceTemplate -> InstanceFromTemplate;
+                KubeVirt VirtualMachineInstancetype + VirtualMachinePreference
+                -> VirtualMachine.spec.instancetype/preference.
+                Azure has no launch-template object for standalone VMs, so
+                its template is LOGICAL: no cloud-side template exists and
+                every instance is a LinuxVirtualMachine (+ NIC, optional
+                PublicIP) rendered from these fields.
+                A field a CLOUD backend cannot express makes the render FAIL
+                with a clear message rather than silently changing the
+                machines. The in-cluster backend ignores the fields that
+                describe a cloud fabric, as documented per field.
+              properties:
+                region:
+                  type: string
+                  description: Cloud region for the template and its machines. Ignored in-cluster, where it survives as a free-form site label.
+                zone:
+                  type: string
+                  description: GCP-only — default zone for the instances (e.g. us-central1-a), overridable per instance. Defaults to "<region>-a". AWS/Azure pick availability themselves. Ignored in-cluster.
+                size:
+                  type: string
+                  enum: [small, medium, large, xlarge]
+                  default: small
+                  description: 'Abstract machine shape, mapped per backend exactly like VirtualMachine: small (t3.medium / e2-medium / Standard_B2s / 2 vCPU + 4Gi), medium (m5.large / e2-standard-2 / Standard_D2s_v5 / 2 vCPU + 8Gi), large (m5.xlarge / e2-standard-4 / Standard_D4s_v5 / 4 vCPU + 16Gi), xlarge (m5.2xlarge / e2-standard-8 / Standard_D8s_v5 / 8 vCPU + 32Gi). In-cluster it sizes the composed VirtualMachineInstancetype.'
+                machineType:
+                  type: string
+                  description: Native instance/machine/VM type that overrides the size mapping. In-cluster it names an existing VirtualMachineClusterInstancetype, and no namespaced instancetype is composed.
+                image:
+                  type: string
+                  enum: [ubuntu-24-04, ubuntu-22-04, debian-12]
+                  default: ubuntu-24-04
+                  description: Abstract OS image, mapped to each backend's image family (in-cluster, a quay.io/containerdisks image imported into each machine's root disk). AWS has no account-independent image families, so the aws backend requires imageId instead and fails the render without it.
+                imageId:
+                  type: string
+                  description: 'Native image override. AWS: AMI ID (REQUIRED there). GCP: full image/family self-link. Azure: source image resource ID. KubeVirt: any container image reference holding a disk image, used verbatim.'
+                diskGb:
+                  type: integer
+                  default: 30
+                  minimum: 10
+                  description: Root/OS disk size in GiB for every instance. On AWS it is set on each Instance's root block device (a launch template can only size a volume by device name, which depends on the AMI). In-cluster it sizes each machine's root PVC.
+                storageClass:
+                  type: string
+                  description: In-cluster only — StorageClass for each machine's root disk PVC; unset uses the cluster default. Ignored by the managed backends.
+                spot:
+                  type: boolean
+                  default: false
+                  description: Run on spot/preemptible capacity. AWS instanceMarketOptions=spot / GCP provisioningModel=SPOT / Azure priority=Spot with Deallocate eviction. Ignored in-cluster.
+                network:
+                  type: object
+                  description: Existing network the instances attach to. Ignored in-cluster, where machines get masqueraded pod networking.
+                  properties:
+                    subnetId:
+                      type: string
+                      description: 'Subnet for the primary interface. AWS: subnet ID (default VPC when omitted). GCP: subnetwork self-link or name (default network when omitted). Azure: full subnet resource ID, REQUIRED.'
+                    securityGroupIds:
+                      type: array
+                      items: {type: string}
+                      description: AWS-only — VPC security group IDs. Other cloud backends fail the render; ignored in-cluster.
+                    publicIp:
+                      type: boolean
+                      default: false
+                      description: Give every instance a public address. AWS associatePublicIpAddress / GCP accessConfig / Azure a composed PublicIP per instance. Ignored in-cluster.
+                sshKey:
+                  type: object
+                  description: SSH access shared by every instance. AWS composes one KeyPair the template references; GCP writes template metadata ssh-keys; Azure sets the admin user's key (REQUIRED there); in-cluster one Secret is injected through KubeVirt accessCredentials with noCloud propagation.
+                  properties:
+                    user:
+                      type: string
+                      description: Login user the key is authorized for (Azure adminUsername / GCP metadata user). Unused on AWS and in-cluster.
+                    publicKey:
+                      type: string
+                      description: OpenSSH public key material.
+                  required: [user, publicKey]
+                userData:
+                  type: string
+                  description: Boot script/cloud-init for every instance, overridable per instance. AWS launch template userData (base64-encoded by the composition) / GCP metadata startup-script / Azure customData / KubeVirt cloudInitNoCloud userData.
+                resourceGroup:
+                  type: string
+                  description: Azure-only — the Resource Group the instances (and their NICs/PublicIPs) live in. Required by the azure backend. Ignored elsewhere.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the cloud template and machines when this resource is deleted; maps to Crossplane managementPolicies (Orphan keeps them). Ignored in-cluster.
+                tags:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Key/value metadata on the template and every instance. AWS/Azure tags, GCP labels, in-cluster labels.
+                instances:
+                  type: array
+                  default: []
+                  description: Machines created FROM the template, one entry per machine. Each is named "<template>-<name>" on the provider side. Removing an entry deletes that machine (or orphans it under deletionPolicy Orphan).
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [name]
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                        maxLength: 20
+                        description: Instance suffix, unique within the template. The provider-side machine name is "<template>-<name>".
+                      zone:
+                        type: string
+                        description: GCP-only — zone override for this instance. Ignored elsewhere.
+                      userData:
+                        type: string
+                        description: Replaces the template's userData for this instance only.
+                      tags:
+                        type: object
+                        additionalProperties:
+                          type: string
+                        description: Merged over the template's tags for this instance only.
+                    required: [name]
+              required:
+                - region
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the template exists and every instance is provisioned.
+                provider:
+                  type: string
+                  description: Backend that fulfilled the claim (aws | gcp | azure | kubevirt).
+                templateName:
+                  type: string
+                  description: Provider-side template name. Absent on azure (logical template).
+                templateId:
+                  type: string
+                  description: Provider-assigned template id (AWS lt- id, GCP selfLink, KubeVirt namespace/name). Absent on azure.
+                cloud-url:
+                  type: string
+                  description: Cloud-console URL for the template.
+                instances:
+                  type: array
+                  description: One entry per spec.instances entry, in spec order.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: Provider-side machine name ("<template>-<name>").
+                      ready:
+                        type: boolean
+                      id:
+                        type: string
+                      privateIp:
+                        type: string
+                      publicIp:
+                        type: string
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: TEMPLATE
+          type: string
+          jsonPath: .status.templateName

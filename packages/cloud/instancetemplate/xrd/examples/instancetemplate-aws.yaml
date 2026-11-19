@@ -1,0 +1,33 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: InstanceTemplate
+metadata:
+  namespace: default
+  name: build-agents
+spec:
+  region: us-east-1
+  size: medium                       # -> m5.large in the LaunchTemplate
+  imageId: ami-0123456789abcdef0     # REQUIRED on AWS (no account-independent image families)
+  diskGb: 50                         # set on each Instance's root block device
+  spot: true                         # instanceMarketOptions=spot
+  network:
+    subnetId: subnet-0123456789abcdef0
+    securityGroupIds: [sg-0123456789abcdef0]
+    publicIp: true                   # associatePublicIpAddress on the template's NIC
+  sshKey:                            # composes one EC2 KeyPair the template references
+    user: ubuntu
+    publicKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample build-agents
+  userData: |
+    #!/bin/sh
+    echo hello > /etc/motd
+  deletionPolicy: Delete             # Delete | Orphan — Orphan keeps template and machines
+  tags:
+    team: platform
+  instances:                         # each -> an Instance launched FROM the template
+    - name: a                        # EC2 Name tag: build-agents-a
+    - name: b
+      tags:
+        role: canary                 # merged over spec.tags
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws                # the flag: picks the backend (aws | gcp | azure | kubevirt)

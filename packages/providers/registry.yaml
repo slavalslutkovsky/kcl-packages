@@ -78,7 +78,7 @@ providers:
     service: ec2
     image: ghcr.io/crossplane-contrib/provider-aws-ec2
     tag: v2.6.0
-    modules: [network, vm, hubspoke]
+    modules: [network, vm, hubspoke, instancetemplate]
 
   - name: aws-ecr
     cloud: aws
@@ -300,7 +300,7 @@ providers:
     service: compute
     image: ghcr.io/crossplane-contrib/provider-gcp-compute
     tag: v2.6.0
-    modules: [network, vm, landing]
+    modules: [network, vm, landing, instancetemplate]
 
   - name: gcp-container
     cloud: gcp
@@ -423,7 +423,7 @@ providers:
     service: compute
     image: ghcr.io/crossplane-contrib/provider-azure-compute
     tag: v2.6.0
-    modules: [vm]
+    modules: [vm, instancetemplate]
 
   - name: azure-containerapp
     cloud: azure
@@ -501,7 +501,7 @@ providers:
     service: network
     image: ghcr.io/crossplane-contrib/provider-azure-network
     tag: v2.6.0
-    modules: [vm, hubspoke]
+    modules: [vm, hubspoke, instancetemplate]
     notes: >-
       The VM's NIC and public IP live in the network family, not compute — and
       so does Virtual WAN: the hubspoke module's Virtual Hub, its connections
@@ -764,9 +764,11 @@ providers:
     kinds:
       - kubevirt.io/virtualmachine_v1.json:VirtualMachine
       - cdi.kubevirt.io/datavolume_v1beta1.json:DataVolume
+      - instancetype.kubevirt.io/virtualmachineinstancetype_v1beta1.json:VirtualMachineInstancetype
+      - instancetype.kubevirt.io/virtualmachinepreference_v1beta1.json:VirtualMachinePreference
     scope: cluster
     install: none
-    modules: [vm]
+    modules: [vm, instancetemplate]
     notes: >-
       Operator CRDs, not a Crossplane provider: the kubevirt backend composes
       a kubevirt.io/v1 VirtualMachine directly. Catalog-sourced because
@@ -779,6 +781,10 @@ providers:
       tools/datree-crd.sh rebuilds the CRD envelope around it. DataVolume is
       generated alongside because the disk import is expressed as
       spec.dataVolumeTemplates, which CDI must be present to honour.
+      VirtualMachineInstancetype and VirtualMachinePreference (namespaced,
+      v1beta1) back the instancetemplate kubevirt backend: the template's
+      shape and device preferences live in them, and every stamped
+      VirtualMachine references both by name.
 
   - name: velero
     cloud: kubernetes

@@ -72,6 +72,7 @@ Main `Workload` / `Task` field groups:
 | `serviceAccount` | both | ServiceAccount (token not mounted unless `automountToken`), `cloud` + `identity` workload-identity annotation (gcp / aws / azure), `rules` → namespaced Role + RoleBinding |
 | `hpa` | workload | Native HPA on cpu / memory; exclusive with `scaler` |
 | `scaler` | both | Workload: KEDA ScaledObject (`cpu`, `memory`, `triggers`, `minReplicas: 0` for scale-to-zero). Task: KEDA ScaledJob. `authentications` → TriggerAuthentications referenced by a trigger's `auth` |
+| `dapr` | workload | Dapr sidecar via pod-template annotations: `dapr.io/enabled`, `app-id` (default `name`), `app-port` (always `port`), `app-protocol` (`http` / `grpc`), `log-as-json`, optional `maxConcurrency` / `config`, `sidecarResources` (→ `sidecar-{cpu,memory}-{request,limit}`), and the app health check on the readiness (else liveness) http probe's path |
 | `disruptionBudget` | workload | PodDisruptionBudget, exactly one of `minAvailable` / `maxUnavailable` |
 | `monitoring` | workload | ServiceMonitor or PodMonitor, PrometheusRule (`defaultRules`, `rules`), Grafana dashboard ConfigMaps for kube-prometheus-stack |
 | `chaos` | workload | List of `Fault`s, one Chaos Mesh experiment each (or a `Schedule` with `schedule`), selector pinned to `app=<name>` in the workload's namespace |
@@ -84,6 +85,13 @@ Main `Workload` / `Task` field groups:
 A ServiceMonitor scrapes through the Service, so `service: false` needs
 `monitoring.kind: PodMonitor`. Fault types and their knobs:
 [docs/chaos.md](../../docs/chaos.md).
+
+`dapr` needs the target namespace labelled `shluviza.com/dapr: enabled`:
+that label gives it the `pubsub` Component and the platform `Resiliency`
+defaults (gitops `platform/dapr`). The app names only `pubsub` and a topic and
+declares its own subscriptions, so no subscription object is rendered. The pod
+keeps `seccompProfile: RuntimeDefault`, which is what lets the injected sidecar
+pass Pod Security `restricted`.
 
 ## Outputs
 
@@ -113,6 +121,7 @@ the chaos atoms `experiment` / `faultSpec` / `faultKind` / `faultEmbedKey`.
 | `examples/values-backend.yaml` | API workload: ServiceAccount, Deployment, Service, PDB, HPA, ServiceMonitor, PrometheusRule, dashboard ConfigMap, ConfigMap, ExternalSecret; `catalog:` with an API entity |
 | `examples/values-frontend.yaml` | Static frontend: Deployment + Service, uid/gid 101, no prometheus |
 | `examples/values-worker.yaml` | Pull-based queue worker: KEDA ScaledObject with scale-to-zero, no Service |
+| `examples/values-dapr-worker.yaml` | Broker-agnostic worker consuming through a Dapr sidecar (`pubsub` Component), app health check on its readiness probe, CPU-based KEDA scaling, no Service |
 | `examples/values-cli.yaml` | One-shot Job (CronJob once `schedule` is set) |
 | `examples/values-queue-job.yaml` | KEDA ScaledJob on a Pub/Sub backlog, GKE Workload Identity, `podIdentity: gcp` TriggerAuthentication |
 | `examples/values-chaos.yaml` | Every fault type, one-shot and scheduled, plus the `catalog:` block |

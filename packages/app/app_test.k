@@ -4,6 +4,7 @@ import yaml
 import file
 import json
 import crypto
+import runtime
 
 # ── Backend Workload (zerg-api template) ─────────────────────────────────────
 test_backend = lambda {
@@ -885,6 +886,100 @@ chaos:
     assert sched[0].spec.httpChaos.port == 8080
 }
 
+# ── Dapr sidecar ─────────────────────────────────────────────────────────────
+test_dapr_defaults = lambda {
+    w = Workload {
+        name = "orders"
+        namespace = "zerg"
+        image = "i"
+        port = 8081
+        prometheus = False
+        readinessProbe = {$type = "http", path = "/healthz", port = 8081}
+        dapr = {}
+    }
+    dep = render(w)[0]
+    ann = dep.spec.template.metadata.annotations
+    assert _plain(ann) == {
+        "dapr.io/enabled" = "true"
+        "dapr.io/app-id" = "orders"
+        "dapr.io/app-port" = "8081"
+        "dapr.io/app-protocol" = "http"
+        "dapr.io/log-as-json" = "true"
+        "dapr.io/sidecar-cpu-request" = "100m"
+        "dapr.io/sidecar-memory-request" = "64Mi"
+        "dapr.io/sidecar-memory-limit" = "256Mi"
+        "dapr.io/enable-app-health-check" = "true"
+        "dapr.io/app-health-check-path" = "/healthz"
+    }, "dapr defaults: ${ann}"
+    # Pod Security `restricted` admits the injected sidecar only through the pod-level profile
+    assert dep.spec.template.spec.securityContext.seccompProfile.$type == "RuntimeDefault"
+    # no dapr → no dapr annotation at all
+    plain = render(Workload {name = "orders", image = "i"})[0]
+    assert not any_true(["dapr.io/" in k for k in plain.spec.template.metadata.annotations]), "no dapr: block → no sidecar"
+}
+
+test_dapr_overrides = lambda {
+    w = Workload {
+        name = "orders"
+        image = "i"
+        # a probe on another port is not one daprd can reach on the app port
+        livenessProbe = {$type = "http", path = "/live", port = 9000}
+        podAnnotations = {"dapr.io/log-level" = "debug"}
+        dapr = {appId = "orders-v2", maxConcurrency = 5, config = "tracing", sidecarResources = {requests = {memory = "32Mi"}, limits = {cpu = "1"}}}
+    }
+    ann = render(w)[0].spec.template.metadata.annotations
+    assert ann["dapr.io/app-id"] == "orders-v2"
+    assert ann["dapr.io/app-max-concurrency"] == "5" and ann["dapr.io/config"] == "tracing"
+    assert ann["dapr.io/sidecar-memory-request"] == "32Mi" and ann["dapr.io/sidecar-cpu-limit"] == "1"
+    assert ann?["dapr.io/sidecar-cpu-request"] == Undefined, "sidecarResources replaces the defaults"
+    assert ann?["dapr.io/enable-app-health-check"] == Undefined, "probe on another port → no app health check"
+    assert ann["dapr.io/log-level"] == "debug", "podAnnotations still pass through"
+    assert ann["prometheus.io/scrape"] == "true", "prometheus annotations sit next to dapr's"
+
+    grpc = render(Workload {name = "g", image = "i", readinessProbe = {$type = "http", path = "/ready", port = 8080}, dapr = {protocol = "grpc"}})[0].spec.template.metadata.annotations
+    assert grpc["dapr.io/app-protocol"] == "grpc"
+    assert grpc?["dapr.io/enable-app-health-check"] == Undefined, "daprd health-checks a grpc app over grpc, not an http path"
+    off = render(Workload {name = "o", image = "i", readinessProbe = {$type = "http", path = "/ready", port = "http"}, dapr = {appHealthCheck = False}})[0].spec.template.metadata.annotations
+    assert off?["dapr.io/enable-app-health-check"] == Undefined
+}
+
+_daprWorkload = lambda dapr: {str:} {
+    Workload {name = "orders", image = "i", dapr = dapr}
+}
+
+test_dapr_rejected = lambda {
+    assert runtime.catch(lambda {
+        _daprWorkload({protocol = "tcp"})
+    }), "app protocol other than http / grpc is rejected"
+}
+
+test_dapr_rejected_app_id = lambda {
+    assert runtime.catch(lambda {
+        _daprWorkload({appId = "Orders_v2"})
+    }), "app-id that is not a DNS label is rejected"
+}
+
+# Dapr's own checks are exercised on a bare Dapr: a check failing inside a
+# schema nested in Workload survives runtime.catch in KCL 0.13 and fails the
+# rest of the module.
+test_dapr_rejected_sidecar_resources = lambda {
+    assert runtime.catch(lambda {
+        Dapr {sidecarResources = {requests = {"ephemeral-storage" = "1Gi"}}}
+    }), "a resource the injector has no annotation for is rejected"
+    assert runtime.catch(lambda {
+        Dapr {maxConcurrency = 0}
+    }), "zero concurrency is rejected"
+}
+
+test_dapr_example = lambda {
+    r = Release {**yaml.decode(file.read("examples/values-dapr-worker.yaml"))}
+    out = renderRelease(r)
+    assert [m.kind for m in out] == ["ServiceAccount", "Deployment", "ScaledObject", "ConfigMap"], "dapr worker example: ${[m.kind for m in out]}"
+    ann = out[1].spec.template.metadata.annotations
+    assert ann["dapr.io/enabled"] == "true" and ann["dapr.io/app-id"] == "zerg-orders-worker" and ann["dapr.io/app-port"] == "8080"
+    assert ann["dapr.io/app-max-concurrency"] == "10" and ann["dapr.io/app-health-check-path"] == "/healthz"
+}
+
 # invalid faults (no namespace, fixed mode without value, delay with direction
 # from, duplicate names, io-* without volumePath) and the other invalid shapes
 # (monitoring without namespace, ServiceMonitor with service: false, RBAC rules
@@ -917,3 +1012,9 @@ test_scaler_auth()
 test_scaled_job()
 test_monitoring()
 test_chaos_more_types()
+test_dapr_defaults()
+test_dapr_overrides()
+test_dapr_rejected()
+test_dapr_rejected_app_id()
+test_dapr_rejected_sidecar_resources()
+test_dapr_example()

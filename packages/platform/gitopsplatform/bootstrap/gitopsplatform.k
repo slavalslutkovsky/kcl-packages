@@ -43,12 +43,12 @@ engines = {
         chart = "flux2"
         release = "flux2"
         repository = "https://fluxcd-community.github.io/helm-charts"
-        version = "2.19.0"
+        version = "2.20.0"
         namespace = "flux-system"
         values = {
-            imageAutomationController = {create = False}
-            imageReflectionController = {create = False}
-            notificationController = {create = False}
+            imageAutomationController = {create = True}
+            imageReflectionController = {create = True}
+            notificationController = {create = True}
         }
     }
     argocd = {
@@ -63,7 +63,7 @@ engines = {
 
 # The check image ships pg_isready and psql; the client speaks to every
 # supported server major. Its alpine variant's postgres user is uid 70.
-check_image = "postgres:17-alpine"
+check_image = "postgres:18-alpine"
 check_uid = 70
 
 # Composition-resource-name prefix of the connection Job; the suffix is a hash

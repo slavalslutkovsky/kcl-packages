@@ -503,6 +503,46 @@ schema Monitoring:
         scrape or defaultRules or rules or dashboards, "monitoring with nothing to render: enable `scrape`, `defaultRules`, or add `rules` / `dashboards`"
         len(dashboards) == len({d.name: 1 for d in dashboards}), "dashboard names must be unique"
 
+schema Dapr:
+    """
+    Dapr sidecar (daprd) injected into the workload's pods, rendered as the
+    pod-template annotations the Dapr sidecar injector reads. The app reaches
+    its broker only through daprd: it publishes to and subscribes on the
+    namespace's `pubsub` Component by topic, so one image runs unchanged on
+    Kafka (kind), GCP Pub/Sub (GKE) or SNS+SQS (AWS). Subscriptions are
+    declared by the app itself (daprd asks it on GET /dapr/subscribe), which is
+    why nothing here names a topic. daprd injects DAPR_HTTP_PORT /
+    DAPR_GRPC_PORT into the app container and calls the app on the
+    workload's `port` (dapr.io/app-port), so that port is always the one the
+    container declares.
+    """
+    # dapr.io/app-id: the name other apps invoke this one by; default the
+    # workload's name
+    appId?: str
+    # dapr.io/app-protocol: how daprd calls the app on its `port`
+    protocol: "http" | "grpc" = "http"
+    # dapr.io/app-max-concurrency: events daprd hands the app at once (unset:
+    # unlimited), the backpressure knob for a slow consumer
+    maxConcurrency?: int
+    # dapr.io/config: a Dapr Configuration in the workload's namespace
+    # (tracing, metrics, access control)
+    config?: str
+    # dapr.io/enable-app-health-check: daprd stops delivering events while the
+    # app is unhealthy. Probes the path of the workload's readinessProbe (else
+    # livenessProbe), and only when that is an http probe on `port` with an
+    # http app protocol: daprd polls the app port over the app protocol, so
+    # any other probe would describe something daprd cannot reach.
+    appHealthCheck: bool = True
+    # daprd container resources, Workload.resources-shaped →
+    # dapr.io/sidecar-{cpu,memory}-{request,limit}. No cpu limit by default,
+    # the same as the app container's.
+    sidecarResources: {str:{str:str}} = {requests = {cpu = "100m", memory = "64Mi"}, limits = {memory = "256Mi"}}
+
+    check:
+        maxConcurrency == Undefined or maxConcurrency > 0, "dapr.maxConcurrency must be positive (${maxConcurrency}); leave it unset for unlimited"
+        all k in sidecarResources {k in ["requests", "limits"]}, "dapr.sidecarResources takes `requests` / `limits`: ${[k for k in sidecarResources]}"
+        all _, v in sidecarResources {all r in v {r in ["cpu", "memory"]}}, "dapr.sidecarResources: the injector has annotations for cpu and memory only"
+
 schema Workload:
     """A deployable long-running application: Deployment (+ Service, ServiceAccount/RBAC, PodDisruptionBudget, HPA or KEDA ScaledObject, Prometheus monitors/rules/dashboards, Chaos Mesh faults)."""
     name: str = "app"
@@ -541,6 +581,9 @@ schema Workload:
     hpa?: Hpa
     # KEDA ScaledObject (preferred)
     scaler?: Scaler
+    # Dapr sidecar: pub/sub (and state, invocation) through the namespace's
+    # Dapr Components instead of a broker SDK
+    dapr?: Dapr
     # Chaos Mesh experiments against this workload's pods (needs `namespace`)
     chaos: [Fault] = []
     podAnnotations: {str:str} = {}
@@ -559,6 +602,14 @@ schema Workload:
         not monitoring or namespace, "monitoring needs an explicit `namespace`: every query and selector is pinned to it"
         not (monitoring and monitoring.scrape and monitoring.kind == "ServiceMonitor" and not service), "a ServiceMonitor scrapes through the Service, and `service` is false — use monitoring.kind: PodMonitor"
         not (serviceAccount and serviceAccount.rules) or namespace, "serviceAccount.rules need an explicit `namespace`: a RoleBinding subject names the ServiceAccount's namespace"
+        # The Dapr app-id also names the "<app-id>-dapr" Service the injector
+        # creates, so it has to be a DNS label with room for that suffix.
+        not dapr or regex.match(dapr.appId or name, r"^[a-z0-9]([-a-z0-9]{0,56}[a-z0-9])?$"), "dapr app-id '${dapr?.appId or name}' must be a DNS label of at most 58 characters ([a-z0-9-]): the injector adds a '<app-id>-dapr' Service"
+        # Not checkable here, but required: the target namespace must be
+        # labelled `shluviza.com/dapr: enabled`. That label is what gives it the
+        # `pubsub` Component and the `Resiliency/platform-defaults` policy
+        # (vendor/gitops/platform/dapr); without it daprd starts, but every
+        # publish and subscription on `pubsub` fails.
 
 schema Task:
     """A run-to-completion CLI workload: Job, a CronJob when `schedule` is set, or a KEDA ScaledJob when `scaler` is."""
@@ -770,14 +821,39 @@ _labels = lambda w: Workload -> {str:str} {
     } | ({"app.kubernetes.io/version" = w.version} if w.version else {})
 }
 
+# Dapr's injector reads the pod template's annotations only. The health check
+# reuses a probe only when daprd can actually reach it (see Dapr.appHealthCheck).
+_daprHealthPath = lambda w: Workload -> str {
+    _probes = [p for p in [w.readinessProbe, w.livenessProbe] if p and p.$type == "http" and p.path and p.port in [w.port, w.portName]]
+    _probes[0].path if _probes and w.dapr.appHealthCheck and w.dapr.protocol == "http" else ""
+}
+
+_daprAnnotations = lambda w: Workload -> {str:str} {
+    _d = w.dapr
+    _health = _daprHealthPath(w)
+    {
+        "dapr.io/enabled" = "true"
+        "dapr.io/app-id" = _d.appId or w.name
+        "dapr.io/app-port" = "${w.port}"
+        "dapr.io/app-protocol" = _d.protocol
+        "dapr.io/log-as-json" = "true"
+    } | ({"dapr.io/app-max-concurrency" = "${_d.maxConcurrency}"} if _d.maxConcurrency else {}) | ({"dapr.io/config" = _d.config} if _d.config else {}) | {"dapr.io/sidecar-${r}-${'request' if kind == 'requests' else 'limit'}" = q for kind, rs in _d.sidecarResources for r, q in rs} | ({
+        "dapr.io/enable-app-health-check" = "true"
+        "dapr.io/app-health-check-path" = _health
+    } if _health else {})
+}
+
 _podAnnotations = lambda w: Workload -> {str:str} {
     (({
         "prometheus.io/scrape" = "true"
         "prometheus.io/port" = "${w.port}"
         "prometheus.io/path" = w.metricsPath
-    }) if w.prometheus else {}) | w.podAnnotations
+    }) if w.prometheus else {}) | (_daprAnnotations(w) if w.dapr else {}) | w.podAnnotations
 }
 
+# Pod-level seccompProfile is unconditional: Pod Security `restricted` also
+# checks containers injected by others (the Dapr sidecar carries no seccomp
+# profile of its own by default), and the pod-level one is what covers them.
 _podSecurity = lambda w: Workload -> {str:} {
     {
         runAsNonRoot = True

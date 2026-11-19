@@ -103,6 +103,22 @@ gitops values="packages/gitops/examples/values.yaml" env="":
 fleet values="packages/fleet/examples/values.yaml" env="":
     kcl run packages/fleet -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
 
+# Local cluster + its charts from one values file (packages/local-platform).
+# `output=kind` renders the Kind config instead of the manifests.
+local-platform values="packages/local-platform/examples/values.yaml" env="" output="manifests":
+    kcl run packages/local-platform -D values={{ values }} -D output={{ output }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+# Kind cluster from the same values file, then Flux, then the render (applied
+# twice: the CNPG Cluster needs the CRDs its chart installs).
+local-platform-up values="packages/local-platform/examples/values.yaml":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just local-platform {{ values }} "" kind | kind create cluster --config -
+    flux install
+    just local-platform {{ values }} | kubectl apply -f - || true
+    kubectl -n flux-system wait helmrelease/cloudnative-pg --for=condition=Ready --timeout=10m
+    just local-platform {{ values }} | kubectl apply -f -
+
 # Jira epics → one Namespace + Project per customer (packages/epics). `data`
 # is the `atlassian-ingest export-epics` JSON; paying customers land on
 # dedicated nodes. `epics-report` is the second reduce: placement, the node

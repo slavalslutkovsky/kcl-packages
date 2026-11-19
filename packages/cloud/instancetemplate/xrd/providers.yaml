@@ -1,0 +1,41 @@
+# Crossplane providers the InstanceTemplate Compositions render against. The
+# same set as the VirtualMachine capability (cloud/vm/xrd/providers.yaml):
+# install only the ones whose backends you intend to use. azure needs both
+# azure providers below — each instance's NIC and public IP live in the network
+# family.
+#
+# Versions match the schema packages under packages/providers/ (`just
+# seed-vm-providers`) — keep them in step.
+#
+# The in-cluster (kubevirt) backend composes instancetype.kubevirt.io/v1beta1
+# VirtualMachineInstancetype / VirtualMachinePreference and kubevirt.io/v1
+# VirtualMachines DIRECTLY — no Crossplane provider is involved. It needs the
+# KubeVirt and CDI operators; the install commands are in
+# ../../vm/xrd/providers.yaml.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-ec2
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-compute
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-compute
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-compute:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-network
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-network:v2.6.0
