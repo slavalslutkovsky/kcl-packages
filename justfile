@@ -788,13 +788,39 @@ typecheck:
 # Redraw docs/install-graph.md from devkit.toml [[deps]] and the manager values:
 # the wave ladder `devkit cluster deps` runs, and the HelmRelease dependsOn DAG
 # Flux keeps. Code dependencies between KCL packages are a different graph —
-# `nx graph` draws those from kcl.mod path deps.
+# `just package-graph` below, or `nx graph` for path deps inside this repo only.
 graph:
     node tools/graph/src/install-graph.ts
 
 # Fail if docs/install-graph.md no longer matches its sources (pre-commit).
 graph-check:
     node tools/graph/src/install-graph.ts --check
+
+# Write docs/packages/index.html: every kcl.mod here and in the repos checked out
+# beside this one (platform-api, gitops, toolkit, infra, the workspace), their
+# path/oci/registry dependencies, who uses each package, and the findings of
+# package-graph-check. Not checked for staleness: what it shows depends on which
+# repos are checked out, so regenerate it from the workspace.
+package-graph:
+    node tools/graph/src/package-graph.ts
+
+# Dependency findings over the same scan; exits 1 on an error: a cycle, a path dep
+# with no kcl.mod, an oci pin older or newer than its source, or one package name
+# in two directories with different .k files. Stale tags in other files warn.
+package-graph-check:
+    node tools/graph/src/package-graph.ts check
+
+# What a change to <pkg> touches: every package downstream, in bump/publish
+# order, and every file that consumes one. <pkg> is a name, <repo>:<path>, a
+# path, or an external module (`k8s`).
+package-impact pkg:
+    node tools/graph/src/package-graph.ts impact {{ pkg }}
+
+# The same graph as a Neo4j load script (Repo, KclPackage, ExternalModule,
+# SourceFile; DEPENDS_ON, REFERENCES, IN_REPO), with example queries at its top.
+# Load: cypher-shell -u neo4j -p <password> -f <out>
+package-graph-cypher out="dist/kcl-graph.cypher":
+    node tools/graph/src/package-graph.ts cypher {{ out }}
 
 # Regenerate docs/devkit-commands.md: every `devkit …` command, flag and
 # default, from the installed devkit module's own help text (`monodocs nu`,

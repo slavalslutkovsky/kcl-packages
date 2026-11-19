@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Renders the cluster install DAG (devkit.toml waves + manager Flux dependsOn) as Mermaid.",
+  "description": "Renders the cluster install DAG (devkit.toml waves + manager Flux dependsOn) as Mermaid, and the cross-repo KCL package graph (dependencies, usage, findings, impact, Neo4j export).",
   "dependencies": {
     "smol-toml": "^1.6.1",
     "yaml": "^2.9.0"

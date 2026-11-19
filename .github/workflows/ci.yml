@@ -50,3 +50,9 @@ jobs:
       # monodocs and the installed devkit module, which this runner has neither of.
       - name: Generated docs are current
         run: just graph-check
+
+      # Only this repo is checked out here, so cross-repo findings (platform-api
+      # pins, copies diverged between repos) surface where the repos sit side by
+      # side: `just package-graph-check` in the workspace.
+      - name: Package dependencies are consistent
+        run: just package-graph-check

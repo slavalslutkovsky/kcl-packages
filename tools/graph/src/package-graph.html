@@ -1,0 +1,628 @@
+<!doctype html>
+<!-- Template of docs/packages/index.html: tools/graph/src/package-graph.ts embeds the graph in the graph-data script below. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KCL packages</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d2330; --muted: #5b6475; --line: #d9dee7; --panel: #f5f7fa;
+    --accent: #5468ff; --node: #ffffff; --edge: #9aa3b5; --code: #eef1f6;
+    --ok: #1f9d55; --bad: #d64545; --warn: #c27c0e; --skip: #8a93a6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c; --fg: #e3e7ef; --muted: #98a2b3; --line: #2a303c; --panel: #181c25;
+      --node: #1c212c; --edge: #4b5468; --code: #1f2430;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--fg); display: grid;
+         grid-template-rows: auto 1fr; grid-template-columns: 270px 1fr 400px;
+         grid-template-areas: "top top top" "list graph details";
+         font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+  header { grid-area: top; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+           padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  header .sep { flex: 1; }
+  select, input, button { font: inherit; color: var(--fg); background: var(--bg);
+                          border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  label.toggle { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); }
+  #findings-btn.bad { border-color: var(--bad); color: var(--bad); }
+  #list { grid-area: list; overflow: auto; border-right: 1px solid var(--line); padding: 8px 0; }
+  #list h3 { margin: 10px 12px 4px; font-size: 11px; text-transform: uppercase; color: var(--muted); }
+  #list .row { display: flex; align-items: center; gap: 6px; padding: 3px 12px; cursor: pointer; }
+  #list .row:hover, #list .row.sel { background: var(--panel); }
+  #list .row.sel { box-shadow: inset 3px 0 var(--accent); }
+  #list .row.dim { opacity: .35; }
+  #list .row .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 9px; padding: 0 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); flex: none; display: inline-block; }
+  .dot.t-used { background: var(--ok); }
+  .dot.t-docs-only { background: var(--warn); }
+  .dot.t-unused { background: transparent; border: 1px dashed var(--skip); }
+  .dot.t-external { background: transparent; border: 1px solid var(--edge); }
+  .dot.t-consumer { background: var(--accent); }
+  #graph { grid-area: graph; position: relative; overflow: hidden; cursor: grab; }
+  #graph.dragging { cursor: grabbing; }
+  #graph svg { width: 100%; height: 100%; display: block; user-select: none; }
+  #graph .tools { position: absolute; right: 10px; top: 10px; display: flex; gap: 6px; }
+  #graph .legend { position: absolute; left: 10px; bottom: 8px; color: var(--muted); font-size: 11px;
+                   display: flex; gap: 12px; flex-wrap: wrap; background: var(--bg); padding: 2px 6px; border-radius: 6px; }
+  #graph .legend span { display: inline-flex; gap: 4px; align-items: center; }
+  .node rect { fill: var(--node); stroke: var(--line); stroke-width: 1.2; rx: 7; }
+  .node.external rect { stroke-dasharray: 4 3; }
+  .node.consumer rect { stroke: var(--accent); stroke-dasharray: 2 3; }
+  .node.t-used rect { stroke: var(--ok); }
+  .node.t-docs-only rect { stroke: var(--warn); }
+  .node.t-unused rect { stroke: var(--skip); stroke-dasharray: 2 3; }
+  .node.has-error rect { stroke: var(--bad); stroke-width: 2.5; }
+  .node.has-warn rect { stroke-width: 2.2; }
+  .node text { fill: var(--fg); font-size: 12px; pointer-events: none; }
+  .node text.sub { fill: var(--muted); font-size: 10.5px; }
+  .node { cursor: pointer; }
+  .node.sel rect { stroke: var(--accent); stroke-width: 3; }
+  .node.dim, .edge.dim { opacity: .15; }
+  .node.match rect { stroke: var(--warn); stroke-width: 3; }
+  .edge { fill: none; stroke: var(--edge); stroke-width: 1.2; }
+  .edge.pin { stroke-dasharray: 6 4; }
+  .edge.use { stroke-dasharray: 2 4; }
+  .edge.bad { stroke: var(--bad); }
+  .edge.hl { stroke: var(--accent); stroke-width: 2; }
+  .edge.hl.bad { stroke: var(--bad); }
+  #details { grid-area: details; overflow: auto; border-left: 1px solid var(--line); padding: 12px 14px; }
+  #details h2 { font-size: 16px; margin: 0 0 4px; word-break: break-all; }
+  #details h4 { margin: 16px 0 6px; font-size: 12px; text-transform: uppercase; color: var(--muted); }
+  .muted { color: var(--muted); }
+  #details table { border-collapse: collapse; width: 100%; }
+  #details td, #details th { text-align: left; padding: 3px 6px 3px 0; vertical-align: top;
+                              border-bottom: 1px solid var(--line); }
+  #details th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+         background: var(--code); padding: 0 4px; border-radius: 4px; word-break: break-all; }
+  a.link { color: var(--accent); cursor: pointer; text-decoration: none; }
+  details.group { margin: 2px 0; }
+  details.group summary { cursor: pointer; }
+  details.group ul, #details ol { margin: 4px 0 6px 0; padding-left: 18px; }
+  .sev-error { color: var(--bad); }
+  .sev-warn { color: var(--warn); }
+  .finding { margin: 4px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>KCL packages</h1>
+  <select id="repo" title="repository"></select>
+  <select id="tier" title="usage tier">
+    <option value="">every tier</option>
+    <option value="used">used</option>
+    <option value="docs-only">docs-only</option>
+    <option value="unused">unused</option>
+  </select>
+  <input id="search" type="search" placeholder="Search packages and consumers" size="28">
+  <label class="toggle"><input id="consumers" type="checkbox" checked> consumers</label>
+  <label class="toggle"><input id="docs" type="checkbox"> docs references</label>
+  <label class="toggle"><input id="isolated" type="checkbox"> isolated packages</label>
+  <label class="toggle" title="registry/OCI modules from outside: k8s alone is a dependency of nearly every package"><input id="externals" type="checkbox"> external modules</label>
+  <span class="sep"></span>
+  <button id="findings-btn" title="every finding of package-graph check"></button>
+</header>
+<nav id="list"></nav>
+<main id="graph">
+  <svg id="svg"><g id="viewport"><g id="edges"></g><g id="nodes"></g></g></svg>
+  <div class="tools">
+    <button id="focus" title="only the selected node's dependencies and dependents">Focus</button>
+    <button id="unfocus" hidden>Everything</button>
+    <button id="fit">Fit</button>
+  </div>
+  <div class="legend">
+    <span>dependencies left, dependents right</span>
+    <span>solid: path dep</span><span>dashed: oci/registry pin</span><span>dotted: used by a repo's files</span>
+    <span><i class="dot t-used"></i>used</span><span><i class="dot t-docs-only"></i>docs-only</span>
+    <span><i class="dot t-unused"></i>unused</span><span style="color: var(--bad)">red: error finding</span>
+  </div>
+</main>
+<aside id="details"></aside>
+
+<script id="graph-data" type="application/json">__GRAPH_DATA__</script>
+<script>
+"use strict";
+const DATA = JSON.parse(document.getElementById("graph-data").textContent);
+const $ = (id) => document.getElementById(id);
+const SVG = "http://www.w3.org/2000/svg";
+const NODE_W = 220, NODE_H = 46, COL_W = 290, ROW_H = 58;
+
+const state = {
+  repo: "", tier: "", search: "", consumers: true, docs: false, isolated: false, externals: false,
+  selected: null, focus: null, showFindings: false, view: { x: 40, y: 40, k: 1 },
+};
+
+// ------------------------------------------------------------------ model ---
+// An edge `from` depends on `to`. Consumer nodes (one per repo whose files use
+// packages) depend on the packages they reference.
+
+const base = new Map(DATA.nodes.map((n) => [n.id, n]));
+const findingsOf = new Map();
+for (const f of DATA.findings) {
+  for (const id of f.ids) {
+    if (!findingsOf.has(id)) findingsOf.set(id, []);
+    findingsOf.get(id).push(f);
+  }
+}
+const refsOf = new Map();
+for (const r of DATA.refs) {
+  if (!refsOf.has(r.pkg)) refsOf.set(r.pkg, []);
+  refsOf.get(r.pkg).push(r);
+}
+let model = null;
+
+// Levels are recomputed per view: with external modules hidden (the default),
+// a package whose only dependency is k8s is a leaf, not one level up.
+function buildModel() {
+  const nodes = new Map();
+  for (const n of DATA.nodes) if (n.kind !== "external" || state.externals) nodes.set(n.id, { ...n });
+  const edges = DATA.edges.filter((e) => nodes.has(e.to)).map((e) => ({ ...e }));
+  const out = new Map([...nodes.keys()].map((id) => [id, []]));
+  for (const e of edges) out.get(e.from).push(e.to);
+  const levels = new Map(), visiting = new Set();
+  const levelOf = (id) => {
+    if (levels.has(id)) return levels.get(id);
+    if (visiting.has(id)) return 0; // a cycle, reported as a finding
+    visiting.add(id);
+    const l = out.get(id).length ? 1 + Math.max(...out.get(id).map(levelOf)) : 0;
+    visiting.delete(id);
+    levels.set(id, l);
+    return l;
+  };
+  for (const n of nodes.values()) n.level = levelOf(n.id);
+  const maxLevel = Math.max(0, ...[...nodes.values()].map((n) => n.level));
+  if (state.consumers) {
+    const seen = new Set();
+    for (const r of DATA.refs) {
+      if (r.kind === "docs" && !state.docs) continue;
+      const id = `use:${r.repo}`;
+      if (!nodes.has(id)) nodes.set(id, { id, kind: "consumer", name: r.repo, level: maxLevel + 1, refs: [] });
+      nodes.get(id).refs.push(r);
+      const key = `${id}|${r.pkg}`;
+      if (!seen.has(key)) { seen.add(key); edges.push({ from: id, to: r.pkg, kind: "use", pin: null }); }
+    }
+  }
+  const deps = new Map([...nodes.keys()].map((id) => [id, []]));
+  const users = new Map([...nodes.keys()].map((id) => [id, []]));
+  for (const e of edges) { deps.get(e.from).push(e); users.get(e.to).push(e); }
+  model = { nodes, edges, deps, users, maxLevel };
+}
+
+function closure(id, next) {
+  const seen = new Set(), todo = [id];
+  while (todo.length) {
+    const n = todo.pop();
+    for (const m of next(n)) if (!seen.has(m)) { seen.add(m); todo.push(m); }
+  }
+  return seen;
+}
+const ancestors = (id) => closure(id, (x) => model.deps.get(x).map((e) => e.to));
+const descendants = (id) => closure(id, (x) => model.users.get(x).map((e) => e.from));
+
+function pinBad(e) {
+  const t = base.get(e.to);
+  return e.pin !== null && t && t.kind === "package" && e.pin !== t.version;
+}
+
+function isolated(n) {
+  return n.kind === "package" && !model.deps.get(n.id).length && !model.users.get(n.id).length;
+}
+
+function visibleNodes() {
+  let list = [...model.nodes.values()];
+  if (!state.isolated) list = list.filter((n) => !isolated(n));
+  if (state.tier) list = list.filter((n) => n.kind !== "package" || n.tier === state.tier);
+  if (state.repo) {
+    // The repo's packages, and whatever they touch directly, for context.
+    const own = new Set(list.filter((n) => n.repo === state.repo || n.id === `use:${state.repo}`).map((n) => n.id));
+    const near = new Set(own);
+    for (const id of own) {
+      for (const e of model.deps.get(id)) near.add(e.to);
+      for (const e of model.users.get(id)) near.add(e.from);
+    }
+    list = list.filter((n) => near.has(n.id));
+  }
+  if (state.focus && model.nodes.has(state.focus)) {
+    const keep = new Set([state.focus, ...ancestors(state.focus), ...descendants(state.focus)]);
+    list = list.filter((n) => keep.has(n.id));
+  }
+  return list;
+}
+
+function matches(n) {
+  const q = state.search.trim().toLowerCase();
+  if (!q) return false;
+  return n.name.toLowerCase().includes(q) || n.id.toLowerCase().includes(q);
+}
+
+// ----------------------------------------------------------------- layout ---
+// Columns are levels; rows are ordered by the mean row of each node's
+// dependencies and dependents, a few sweeps each way.
+
+function layout(list) {
+  const ids = new Set(list.map((n) => n.id));
+  const cols = new Map();
+  for (const n of list) {
+    if (!cols.has(n.level)) cols.set(n.level, []);
+    cols.get(n.level).push(n.id);
+  }
+  const levels = [...cols.keys()].sort((a, b) => a - b);
+  for (const l of levels) cols.get(l).sort();
+  const row = new Map();
+  const place = () => { for (const l of levels) cols.get(l).forEach((id, i) => row.set(id, i)); };
+  place();
+  const mean = (xs) => xs.length ? xs.reduce((a, id) => a + row.get(id), 0) / xs.length : null;
+  for (let pass = 0; pass < 6; pass++) {
+    const order = pass % 2 ? [...levels].reverse() : levels;
+    for (const l of order) {
+      const key = (id) => {
+        const near = (pass % 2 ? model.users.get(id).map((e) => e.from) : model.deps.get(id).map((e) => e.to))
+          .filter((m) => ids.has(m));
+        const m = mean(near);
+        return m === null ? row.get(id) : m;
+      };
+      cols.get(l).sort((a, b) => key(a) - key(b) || a.localeCompare(b));
+      place();
+    }
+  }
+  // A level taller than MAX_ROWS wraps into several columns side by side.
+  const MAX_ROWS = 24;
+  const tallest = Math.min(MAX_ROWS, Math.max(1, ...levels.map((l) => cols.get(l).length)));
+  const pos = new Map();
+  let x = 0;
+  for (const l of levels) {
+    const col = cols.get(l);
+    for (let start = 0; start < col.length; start += MAX_ROWS) {
+      const chunk = col.slice(start, start + MAX_ROWS), offset = (tallest - chunk.length) * ROW_H / 2;
+      chunk.forEach((id, ri) => pos.set(id, { x, y: offset + ri * ROW_H }));
+      x += COL_W;
+    }
+  }
+  return pos;
+}
+
+// ----------------------------------------------------------------- render ---
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(SVG, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  parent.appendChild(e);
+  return e;
+}
+
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function link(id) {
+  const n = model.nodes.get(id) || base.get(id);
+  const label = n ? (n.kind === "package" && dupName(n) ? `${n.name} (${n.repo})` : n.name) : id;
+  return `<a class="link" data-node="${esc(id)}">${esc(label)}</a>`;
+}
+
+function dupName(n) {
+  return DATA.nodes.filter((m) => m.kind === "package" && m.name === n.name).length > 1;
+}
+
+function nodeClass(n) {
+  const cls = ["node", n.kind];
+  if (n.kind === "package") cls.push(`t-${n.tier}`);
+  const fs = findingsOf.get(n.id) || [];
+  if (fs.some((f) => f.severity === "error")) cls.push("has-error");
+  else if (fs.length) cls.push("has-warn");
+  if (n.kind === "external" && new Set(model.users.get(n.id).map((e) => e.pin)).size > 1) cls.push("has-warn");
+  return cls;
+}
+
+function subtitle(n) {
+  if (n.kind === "consumer") return `${new Set(n.refs.map((r) => r.path)).size} files · ${model.deps.get(n.id).length} packages`;
+  const users = model.users.get(n.id).length;
+  if (n.kind === "external") {
+    const pins = [...new Set(model.users.get(n.id).map((e) => e.pin))];
+    return `external · ${pins.join(", ")} · ${users} users`;
+  }
+  return `${n.version} · ${n.repo} · ${model.deps.get(n.id).length} deps · ${users} users`;
+}
+
+function render(fit) {
+  const list = visibleNodes();
+  const pos = layout(list);
+  const nodes = $("nodes"), edges = $("edges");
+  nodes.textContent = ""; edges.textContent = "";
+  const hot = state.selected && model.nodes.has(state.selected)
+    ? new Set([state.selected, ...ancestors(state.selected), ...descendants(state.selected)]) : null;
+
+  for (const e of model.edges) {
+    if (!pos.has(e.from) || !pos.has(e.to)) continue;
+    // Dependency on the left: the line runs from `to` into `from`.
+    const a = pos.get(e.to), b = pos.get(e.from);
+    const x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2, x2 = b.x, y2 = b.y + NODE_H / 2;
+    const mx = (x1 + x2) / 2;
+    const cls = ["edge"];
+    if (e.kind === "use") cls.push("use");
+    else if (e.kind !== "path") cls.push("pin");
+    if (pinBad(e)) cls.push("bad");
+    if (hot) cls.push(hot.has(e.from) && hot.has(e.to) ? "hl" : "dim");
+    el("path", { d: `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`, class: cls.join(" ") }, edges);
+  }
+  for (const n of list) {
+    const p = pos.get(n.id);
+    const cls = nodeClass(n);
+    if (n.id === state.selected) cls.push("sel");
+    if (hot && !hot.has(n.id)) cls.push("dim");
+    if (matches(n)) cls.push("match");
+    const g = el("g", { class: cls.join(" "), transform: `translate(${p.x},${p.y})` }, nodes);
+    g.dataset.node = n.id;
+    el("rect", { width: NODE_W, height: NODE_H }, g);
+    const title = el("text", { x: 10, y: 19 }, g);
+    const name = n.kind === "external" ? n.name.split("/").pop() : n.name;
+    title.textContent = name.length > 30 ? name.slice(0, 29) + "…" : name;
+    const sub = el("text", { x: 10, y: 35, class: "sub" }, g);
+    const s = subtitle(n);
+    sub.textContent = s.length > 38 ? s.slice(0, 37) + "…" : s;
+    el("title", {}, g).textContent = `${n.id}\n${s}`;
+    g.addEventListener("click", (ev) => { ev.stopPropagation(); select(n.id); });
+  }
+  renderList(list);
+  renderDetails();
+  if (fit) fitView(pos);
+  applyView();
+}
+
+function renderList(list) {
+  const nav = $("list");
+  nav.textContent = "";
+  const shown = new Set(list.map((n) => n.id));
+  const all = [...model.nodes.values()]
+    .filter((n) => !state.repo || shown.has(n.id))
+    .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
+  let level = -1;
+  for (const n of all) {
+    if (n.level !== level) {
+      level = n.level;
+      const h = document.createElement("h3");
+      h.textContent = level === 0 ? "L0 · no dependencies" : n.kind === "consumer" ? "consumers" : `L${level}`;
+      nav.appendChild(h);
+    }
+    const row = document.createElement("div");
+    row.className = "row" + (n.id === state.selected ? " sel" : "") + (shown.has(n.id) ? "" : " dim");
+    const dot = document.createElement("i");
+    dot.className = `dot t-${n.kind === "package" ? n.tier : n.kind}`;
+    const name = document.createElement("span");
+    name.className = "n";
+    name.textContent = n.kind === "package" && dupName(n) ? `${n.name} (${n.repo})` : n.kind === "external" ? n.name.split("/").pop() : n.name;
+    if (matches(n)) name.style.fontWeight = "600";
+    const b = document.createElement("span");
+    b.className = "badge";
+    b.title = "dependents";
+    b.textContent = model.users.get(n.id).length;
+    row.append(dot, name, b);
+    row.addEventListener("click", () => select(n.id, true));
+    nav.appendChild(row);
+  }
+}
+
+function findingHtml(f) {
+  return `<div class="finding"><b class="sev-${f.severity}">${f.severity}</b> <code>${esc(f.code)}</code> ${esc(f.message)}
+    <div>${f.ids.map(link).join(" · ")}</div></div>`;
+}
+
+function refsHtml(refs) {
+  const byRepo = new Map();
+  for (const r of refs) {
+    if (!byRepo.has(r.repo)) byRepo.set(r.repo, []);
+    byRepo.get(r.repo).push(r);
+  }
+  return [...byRepo].map(([repo, rs]) => `<details class="group"${rs.length <= 8 ? " open" : ""}>
+    <summary>${esc(repo)} <span class="muted">${rs.length}</span></summary><ul>
+    ${rs.map((r) => `<li><code>${esc(r.path)}:${r.line}</code>${r.tag ? ` <code>${esc(r.tag)}</code>` : ""} <span class="muted">${r.kind}</span></li>`).join("")}
+    </ul></details>`).join("");
+}
+
+/** Everything downstream of `id`, dependencies first: what to bump and republish, in order. */
+function impactOrder(id) {
+  const affected = new Set([id, ...closure(id, (x) => DATA.edges.filter((e) => e.to === x).map((e) => e.from))]);
+  const inside = DATA.edges.filter((e) => affected.has(e.from) && affected.has(e.to));
+  const waiting = new Map([...affected].map((x) => [x, inside.filter((e) => e.from === x).length]));
+  const ready = [...affected].filter((x) => waiting.get(x) === 0), order = [];
+  while (ready.length) {
+    ready.sort((a, b) => base.get(a).level - base.get(b).level || a.localeCompare(b));
+    const x = ready.shift();
+    order.push(x);
+    for (const e of inside.filter((y) => y.to === x)) {
+      waiting.set(e.from, waiting.get(e.from) - 1);
+      if (waiting.get(e.from) === 0) ready.push(e.from);
+    }
+  }
+  for (const x of affected) if (!order.includes(x)) order.push(x);
+  return order;
+}
+
+function renderDetails() {
+  const d = $("details");
+  const n = state.selected && model.nodes.get(state.selected);
+  if (state.showFindings || !n) {
+    const pkgs = DATA.nodes.filter((x) => x.kind === "package");
+    const tiers = ["used", "docs-only", "unused"].map((t) => [t, pkgs.filter((p) => p.tier === t).length]);
+    d.innerHTML = `<h2>${state.showFindings ? "Findings" : "Packages"}</h2>
+      <div class="muted">${pkgs.length} packages, ${DATA.edges.length} dependencies, ${DATA.refs.length} references.
+        Regenerate with <code>just package-graph</code>; gate with <code>just package-graph-check</code>.</div>
+      ${state.showFindings ? "" : `<h4>Repos scanned</h4><table>${DATA.repos.map((r) => `<tr><th>${esc(r.name)}</th><td>${r.packages} packages</td></tr>`).join("")}</table>
+      <h4>Usage</h4><table>${tiers.map(([t, c]) => `<tr><th><i class="dot t-${t}"></i> ${t}</th><td>${c}</td></tr>`).join("")}</table>
+      <h4>Publishing registries</h4><table>${Object.entries(DATA.registries).map(([r, repo]) => `<tr><th>${esc(repo)}</th><td><code>${esc(r)}</code></td></tr>`).join("")}</table>`}
+      <h4>Findings (${DATA.findings.length})</h4>
+      ${DATA.findings.length ? DATA.findings.map(findingHtml).join("") : '<div class="muted">none</div>'}`;
+    return;
+  }
+  const fs = findingsOf.get(n.id) || [];
+  const deps = model.deps.get(n.id), users = model.users.get(n.id);
+  const edgeRow = (e, other) => `<tr><td>${link(other)}</td><td>${e.kind}</td><td>${e.pin ? `<code class="${pinBad(e) ? "sev-error" : ""}">${esc(e.pin)}</code>` : ""}</td></tr>`;
+  let html = "";
+  if (n.kind === "package") {
+    const order = impactOrder(n.id);
+    html = `<h2>${esc(n.name)} <span class="muted">${esc(n.version)}</span></h2>
+      <div><code>${esc(n.repo)}:${esc(n.path)}</code></div>
+      <div class="muted"><i class="dot t-${n.tier}"></i> ${n.tier} · ${n.files} .k files${n.generated ? " · generated schema" : ""} · level ${n.level}</div>
+      ${fs.length ? `<h4>Findings</h4>${fs.map(findingHtml).join("")}` : ""}
+      <h4>Depends on (${deps.length})</h4>
+      ${deps.length ? `<table>${deps.map((e) => edgeRow(e, e.to)).join("")}</table>` : '<div class="muted">nothing</div>'}
+      <h4>Dependents (${users.filter((e) => e.kind !== "use").length})</h4>
+      ${users.some((e) => e.kind !== "use") ? `<table>${users.filter((e) => e.kind !== "use").map((e) => edgeRow(e, e.from)).join("")}</table>` : '<div class="muted">none</div>'}
+      <h4>Used by files (${(refsOf.get(n.id) || []).filter((r) => r.kind !== "docs").length}, docs ${(refsOf.get(n.id) || []).filter((r) => r.kind === "docs").length})</h4>
+      ${refsHtml((refsOf.get(n.id) || []).filter((r) => r.kind !== "docs"))}
+      ${(refsOf.get(n.id) || []).some((r) => r.kind === "docs") ? `<details class="group"><summary class="muted">docs references</summary>${refsHtml((refsOf.get(n.id) || []).filter((r) => r.kind === "docs"))}</details>` : ""}
+      <h4>Impact: bump and publish order (${order.length})</h4>
+      <ol>${order.map((x) => `<li>${link(x)}${base.get(x).version ? ` <span class="muted">${esc(base.get(x).version)}</span>` : ""}</li>`).join("")}</ol>
+      <div class="muted">With every consumer file: <code>just package-impact ${esc(dupName(n) ? n.id : n.name)}</code></div>`;
+  } else if (n.kind === "external") {
+    const pins = [...new Set(users.map((e) => e.pin))];
+    html = `<h2>${esc(n.name.split("/").pop())}</h2><div><code>${esc(n.name)}</code></div>
+      <div class="muted">external module · ${pins.length > 1 ? `<span class="sev-warn">pinned at ${pins.length} versions</span>` : `pinned at ${esc(pins[0])}`}</div>
+      <h4>Dependents (${users.length})</h4><table>${users.map((e) => edgeRow(e, e.from)).join("")}</table>
+      <div class="muted">Bumping it: <code>just package-impact ${esc(n.name.split("/").pop())}</code></div>`;
+  } else {
+    const byPkg = new Map();
+    for (const r of n.refs) {
+      if (!byPkg.has(r.pkg)) byPkg.set(r.pkg, []);
+      byPkg.get(r.pkg).push(r);
+    }
+    html = `<h2>${esc(n.name)}</h2><div class="muted">files in this repo that use KCL packages</div>
+      <h4>Packages used (${byPkg.size})</h4>
+      ${[...byPkg].map(([pkg, rs]) => `<details class="group"><summary>${link(pkg)} <span class="muted">${rs.length}</span></summary><ul>
+        ${rs.map((r) => `<li><code>${esc(r.path)}:${r.line}</code>${r.tag ? ` <code class="${r.tag !== base.get(pkg).version ? "sev-warn" : ""}">${esc(r.tag)}</code>` : ""} <span class="muted">${r.kind}</span></li>`).join("")}
+      </ul></details>`).join("")}`;
+  }
+  d.innerHTML = html;
+}
+
+function writeHash() {
+  history.replaceState(null, "", state.selected ? `#${encodeURIComponent(state.selected)}` : location.pathname + location.search);
+}
+
+function select(id, center) {
+  state.showFindings = false;
+  state.selected = id === state.selected && !center ? null : id;
+  writeHash();
+  render(false);
+  if (center && state.selected) centerOn(state.selected);
+}
+
+// --------------------------------------------------------------- pan/zoom ---
+
+function applyView() {
+  const v = state.view;
+  $("viewport").setAttribute("transform", `translate(${v.x},${v.y}) scale(${v.k})`);
+}
+
+function fitView(pos) {
+  const pts = [...pos.values()];
+  if (!pts.length) return;
+  const w = Math.max(...pts.map((p) => p.x)) + NODE_W, h = Math.max(...pts.map((p) => p.y)) + NODE_H;
+  const box = $("graph").getBoundingClientRect();
+  const k = Math.max(0.2, Math.min(1.2, (box.width - 60) / w, (box.height - 80) / h));
+  state.view = { k, x: Math.max(20, (box.width - w * k) / 2), y: Math.max(20, (box.height - h * k) / 2) };
+}
+
+function centerOn(id) {
+  const g = document.querySelector(`#nodes g[data-node="${CSS.escape(id)}"]`);
+  if (!g) return;
+  const m = /translate\(([-\d.]+),([-\d.]+)\)/.exec(g.getAttribute("transform"));
+  const box = $("graph").getBoundingClientRect();
+  state.view.k = Math.max(state.view.k, 0.8);
+  state.view.x = box.width / 2 - (+m[1] + NODE_W / 2) * state.view.k;
+  state.view.y = box.height / 2 - (+m[2] + NODE_H / 2) * state.view.k;
+  applyView();
+}
+
+(() => {
+  const g = $("graph");
+  let drag = null;
+  g.addEventListener("mousedown", (e) => {
+    if (e.target.closest(".node") || e.target.closest("button")) return;
+    drag = { x: e.clientX - state.view.x, y: e.clientY - state.view.y, moved: false };
+    g.classList.add("dragging");
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!drag) return;
+    state.view.x = e.clientX - drag.x; state.view.y = e.clientY - drag.y; drag.moved = true;
+    applyView();
+  });
+  window.addEventListener("mouseup", () => {
+    if (drag && !drag.moved && state.selected) { state.selected = null; writeHash(); render(false); }
+    drag = null; g.classList.remove("dragging");
+  });
+  g.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const r = g.getBoundingClientRect(), v = state.view;
+    const k = Math.max(0.1, Math.min(3, v.k * Math.exp(-e.deltaY * 0.0015)));
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    v.x = px - (px - v.x) * (k / v.k); v.y = py - (py - v.y) * (k / v.k); v.k = k;
+    applyView();
+  }, { passive: false });
+})();
+
+// ------------------------------------------------------------------ wiring ---
+
+const repoSel = $("repo");
+repoSel.innerHTML = `<option value="">every repo</option>` +
+  DATA.repos.map((r) => `<option value="${esc(r.name)}">${esc(r.name)} (${r.packages})</option>`).join("");
+const errors = DATA.findings.filter((f) => f.severity === "error").length;
+$("findings-btn").textContent = `${errors} errors · ${DATA.findings.length - errors} warnings`;
+$("findings-btn").classList.toggle("bad", errors > 0);
+$("findings-btn").addEventListener("click", () => { state.showFindings = !state.showFindings; renderDetails(); });
+
+repoSel.addEventListener("change", () => { state.repo = repoSel.value; render(true); });
+$("tier").addEventListener("change", (e) => { state.tier = e.target.value; render(true); });
+$("search").addEventListener("input", (e) => {
+  state.search = e.target.value;
+  render(false);
+  const hit = visibleNodes().find(matches);
+  if (hit) centerOn(hit.id);
+});
+for (const key of ["consumers", "docs", "isolated", "externals"]) {
+  $(key).addEventListener("change", (e) => { state[key] = e.target.checked; buildModel(); render(true); });
+}
+$("focus").addEventListener("click", () => {
+  if (!state.selected) return;
+  state.focus = state.selected; $("focus").hidden = true; $("unfocus").hidden = false; render(true);
+});
+$("unfocus").addEventListener("click", () => {
+  state.focus = null; $("focus").hidden = false; $("unfocus").hidden = true; render(true);
+});
+$("fit").addEventListener("click", () => render(true));
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a.link");
+  if (!a) return;
+  const id = a.dataset.node;
+  // A node hidden by the filters is shown by clearing them.
+  if (!visibleNodes().some((n) => n.id === id)) {
+    state.repo = ""; state.tier = ""; state.focus = null; repoSel.value = ""; $("tier").value = "";
+    if (base.get(id)?.kind === "package" && !state.isolated) { state.isolated = true; $("isolated").checked = true; }
+    if (base.get(id)?.kind === "external" && !state.externals) { state.externals = true; $("externals").checked = true; buildModel(); }
+    $("focus").hidden = false; $("unfocus").hidden = true;
+    render(true);
+  }
+  select(id, true);
+});
+window.addEventListener("resize", () => render(true));
+
+buildModel();
+const initial = decodeURIComponent(location.hash.slice(1));
+if (initial && model.nodes.has(initial)) {
+  state.selected = initial;
+  if (isolated(model.nodes.get(initial))) { state.isolated = true; $("isolated").checked = true; }
+}
+render(true);
+if (state.selected) centerOn(state.selected);
+</script>
+</body>
+</html>
