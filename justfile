@@ -472,13 +472,23 @@ seed-vm-providers:
     just provider azure-network ghcr.io/crossplane-contrib/provider-azure-network:v2.6.0 network
     tools/providers.sh seed kubevirt
 
-# Velero is an operator, like cnpg: the backup Composition composes
-# velero.io/v1 Schedule / BackupStorageLocation directly and provider-helm
-# (seeded with the redis providers) installs the chart. Keep the ref in step
-# with the chart version pinned in backup/xrd/providerconfigs.yaml.
-# Bootstrap/refresh the schema package used by the backup Composition.
+# Velero is an operator, like cnpg: the velero backend composes velero.io/v1
+# Schedule / BackupStorageLocation directly and provider-helm (seeded with the
+# redis providers) installs the chart. Keep the ref in step with the chart
+# version pinned in backup/xrd/providerconfigs.yaml. The cloud backends are
+# ordinary providers: AWS Backup (+ aws-iam for its service role, shared with
+# `seed-iam-providers`), Backup for GKE, and Azure Backup for AKS (+ the
+# containerservice and authorization families it wires the cluster with,
+# shared with `seed-cluster-providers` / `seed-iam-providers`).
+# Bootstrap/refresh the schema packages used by the backup Composition.
 seed-backup-providers:
     just provider-repo velero vmware-tanzu/velero v1.18.2 velero config/crd/v1/bases
+    just provider aws-backup             ghcr.io/crossplane-contrib/provider-aws-backup:v2.6.0             backup
+    just provider aws-iam                ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0                iam
+    just provider gcp-gke                ghcr.io/crossplane-contrib/provider-gcp-gke:v2.6.0                gke
+    just provider azure-dataprotection   ghcr.io/crossplane-contrib/provider-azure-dataprotection:v2.6.0   dataprotection
+    just provider azure-containerservice ghcr.io/crossplane-contrib/provider-azure-containerservice:v2.6.0 containerservice
+    just provider azure-authorization    ghcr.io/crossplane-contrib/provider-azure-authorization:v2.6.0    authorization
 
 # Neither of these is a Crossplane provider: the application Composition
 # composes gateway.networking.k8s.io/v1 HTTPRoute and networking.istio.io/v1

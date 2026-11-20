@@ -49,6 +49,16 @@ providers:
     tag: v2.6.0
     modules: [apigateway]
 
+  - name: aws-backup
+    cloud: aws
+    service: backup
+    image: ghcr.io/crossplane-contrib/provider-aws-backup
+    tag: v2.6.0
+    modules: [backup]
+    notes: >-
+      AWS Backup for EKS: the backup aws backend composes Vault + Plan +
+      Selection, with the service role it runs as from aws-iam.
+
   - name: aws-codeartifact
     cloud: aws
     service: codeartifact
@@ -112,11 +122,13 @@ providers:
     service: iam
     image: ghcr.io/crossplane-contrib/provider-aws-iam
     tag: v2.6.0
-    modules: [cluster, iam, serverless, workflow, workload-identity]
+    modules: [backup, cluster, iam, serverless, workflow, workload-identity]
     notes: >-
       Shared: EKS clusters cannot exist without their IAM roles, and Lambda
       and Step Functions need an execution role, so cluster, serverless and
-      workflow compose IAM too.
+      workflow compose IAM too. The backup aws backend composes the AWS Backup
+      service role (a custom one: the service-linked role cannot create EKS
+      access entries).
 
   - name: aws-kms
     cloud: aws
@@ -316,6 +328,16 @@ providers:
     tag: v2.6.0
     modules: [dns]
 
+  - name: gcp-gke
+    cloud: gcp
+    service: gke
+    image: ghcr.io/crossplane-contrib/provider-gcp-gke
+    tag: v2.6.0
+    modules: [backup]
+    notes: >-
+      Backup for GKE: one BackupBackupPlan per BackupPlan XR (the family's
+      only kind). The GKE cluster itself is in gcp-container.
+
   - name: gcp-kms
     cloud: gcp
     service: kms
@@ -399,13 +421,14 @@ providers:
     service: authorization
     image: ghcr.io/crossplane-contrib/provider-azure-authorization
     tag: v2.6.0
-    modules: [iam, workload-identity, organization]
+    modules: [backup, iam, workload-identity, organization]
     notes: >-
       Azure splits the identity (managedidentity) from its role assignments
       (authorization), so the iam Composition needs both. The organization
       module composes two more kinds from this family:
       ManagementGroupPolicyAssignment and the management-group scoped
-      RoleAssignment.
+      RoleAssignment. The backup azure backend composes RoleAssignments and
+      the AKS TrustedAccessRoleBinding Azure Backup needs.
 
   - name: azure-cdn
     cloud: azure
@@ -444,7 +467,21 @@ providers:
     service: containerservice
     image: ghcr.io/crossplane-contrib/provider-azure-containerservice
     tag: v2.6.0
-    modules: [cluster]
+    modules: [backup, cluster]
+    notes: >-
+      The backup azure backend composes the AKS backup extension
+      (KubernetesClusterExtension) and observes the cluster read-only for its
+      identity.
+
+  - name: azure-dataprotection
+    cloud: azure
+    service: dataprotection
+    image: ghcr.io/crossplane-contrib/provider-azure-dataprotection
+    tag: v2.6.0
+    modules: [backup]
+    notes: >-
+      Azure Backup for AKS: BackupVault, BackupPolicyKubernetesCluster and
+      BackupInstanceKubernetesCluster for the backup azure backend.
 
   - name: azure-dbforpostgresql
     cloud: azure

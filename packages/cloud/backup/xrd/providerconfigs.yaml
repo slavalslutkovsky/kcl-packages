@@ -12,9 +12,12 @@
 # XRs belong (see xrd.yaml: Velero reads Schedules and locations only from its
 # own namespace, and a namespaced XR composes only into its own namespace).
 #
-# There is no cloud ProviderConfig here because no Crossplane provider talks to
-# a cloud for a backup: the object-store plugin inside the Velero pod does,
-# authenticated per location by spec.destination.credentialsSecret.
+# No cloud ProviderConfig ships here. A velero backup needs none: the
+# object-store plugin inside the Velero pod talks to the cloud, authenticated
+# per location by spec.destination.credentialsSecret. The aws, gcp and azure
+# backends need real cloud credentials — add a ClusterProviderConfig named
+# `default` for each provider family you use (`credentials.source: Secret`, or
+# IRSA / Workload Identity) before applying their examples.
 apiVersion: helm.m.crossplane.io/v1beta1
 kind: ClusterProviderConfig
 metadata:

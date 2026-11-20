@@ -27,7 +27,15 @@ ttl_hours = lambda days: int -> str {
 render = lambda oxr {
     _spec = oxr.spec
     _name = oxr.metadata.name
+    # The XRD no longer requires destination (aws and gcp write to their own
+    # vault), but Velero has no local storage mode: a plan without one would
+    # render a location pointing nowhere and look healthy until the first run.
+    assert _spec?.destination, "backup-velero: spec.destination is required — Velero has no local storage mode, so a plan with no bucket never lands a backup"
     _dest = _spec.destination
+    # The azure plugin addresses a container through its storage account and
+    # refuses a location that names neither; failing here beats a location
+    # stuck Unavailable.
+    assert _dest.provider != "azure" or (_dest?.storageAccount and _dest?.resourceGroup), "backup-velero: destination.storageAccount and destination.resourceGroup are required with provider azure — Velero's azure plugin reads both from the location's config"
 
     # Tri-state: absent must mean the XRD default, and `or` would turn an
     # explicit false into it.
@@ -45,13 +53,18 @@ render = lambda oxr {
     # Velero's `config` is a provider-specific free map of strings. The aws
     # plugin reads `region`, and `s3Url` points it at an S3-compatible server
     # instead of AWS — which then needs path-style addressing, because those
-    # servers serve every bucket off one host and have no per-bucket DNS.
+    # servers serve every bucket off one host and have no per-bucket DNS. The
+    # azure plugin reads `storageAccount` and `resourceGroup`.
     _config = {
         if _dest?.region:
             region = _dest.region
         if _dest?.s3Url:
             s3Url = _dest.s3Url
             s3ForcePathStyle = "true"
+        if _dest?.storageAccount:
+            storageAccount = _dest.storageAccount
+        if _dest?.resourceGroup:
+            resourceGroup = _dest.resourceGroup
     }
 
     # A snapshot location talks to the cloud's volume-snapshot API, never to
