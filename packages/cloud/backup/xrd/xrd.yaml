@@ -21,66 +21,175 @@ spec:
               description: |
                 Portable scheduled backup of Kubernetes workloads and the
                 volumes behind them. Every field below is a COMMON parameter
-                mapped onto each backend's native resources (Velero Schedule +
-                BackupStorageLocation + VolumeSnapshotLocation). Fields a
-                backend cannot express are documented as ignored rather than
-                silently dropped.
+                mapped onto each backend's native resources. Fields a backend
+                cannot express are documented as ignored rather than silently
+                dropped; a field whose absence would make a backup quietly
+                capture LESS than asked fails the render instead.
 
-                This XR backs up what is INSIDE the cluster to an object store
-                that already exists. It does not create the bucket — compose a
-                Bucket XR for that and point `destination.bucket` at it — and
-                it does not restore: a restore is a human decision made against
-                a specific backup, so it stays a `velero restore create` away
-                rather than a field on a declarative plan.
+                Four backends, picked by the composition selector:
+                  velero  Velero Schedule + BackupStorageLocation (+
+                          VolumeSnapshotLocation), run by an in-cluster
+                          operator, writing to a bucket in `destination`.
+                          Works on any cluster, including self-hosted ones.
+                  aws     AWS Backup: Vault + Plan + Selection of one EKS
+                          cluster, with the IAM service role it runs as.
+                  gcp     Backup for GKE: one BackupPlan bound to a GKE
+                          cluster; backups land in Google-managed storage.
+                  azure   Azure Backup for AKS: Backup vault + Kubernetes
+                          backup policy + backup instance, plus the AKS
+                          backup extension, trusted access and the role
+                          assignments that wire them together.
 
-                WHERE TO CREATE IT: in the namespace the backup operator runs
-                in (`velero`). Velero only reconciles Schedules, storage
-                locations and snapshot locations in its own namespace, and a
-                namespaced XR may only compose resources into its own
-                namespace — so a plan filed anywhere else renders objects
-                nothing will ever read. What gets backed up is chosen by
-                `includedNamespaces`, never by where the plan lives.
+                The cloud backends back up the managed cluster named by
+                `cluster`; velero backs up the cluster it runs in and ignores
+                `cluster`. None of them restores: a restore is a human
+                decision made against a specific backup (`velero restore
+                create`, `aws backup start-restore-job`, `gcloud beta
+                container backup-restore restores create`, or the Azure
+                portal/CLI), never a field on a declarative plan.
+
+                WHERE TO CREATE IT: velero plans belong in the namespace the
+                operator runs in (`velero`) — Velero only reconciles
+                Schedules and locations in its own namespace, and a
+                namespaced XR composes only into its own. The cloud backends
+                compose namespaced Crossplane managed resources and may live
+                in any namespace.
               properties:
                 schedule:
                   type: string
-                  description: Cron expression in the cluster's timezone saying when a backup runs; e.g. "0 2 * * *" for nightly at 02:00. Velero Schedule.spec.schedule (it also accepts the @every/@daily shorthands).
+                  description: >-
+                    Five-field cron expression saying when a backup runs, e.g.
+                    "0 2 * * *" for nightly at 02:00 (also @hourly, @daily,
+                    @weekly, @monthly). velero: Schedule.spec.schedule, in the
+                    Velero server's timezone. gcp: backupSchedule.cronSchedule
+                    verbatim. aws: rewritten to AWS's six-field
+                    `cron(m h dom mon dow year)` in UTC. azure: Azure Backup
+                    for AKS only runs every 4, 6, 8 or 12 hours or daily, so
+                    only "m h * * *" and "m */N * * *" (N in 4, 6, 8, 12)
+                    translate; any other expression fails the render.
                 retentionDays:
                   type: integer
                   default: 30
                   minimum: 1
-                  description: How long each backup is kept before Velero deletes it and its volume snapshots. Becomes Velero's template.ttl, whose coarsest unit is the hour, so this is multiplied out (30 -> "720h"). Changing it applies to backups taken from then on; already-created backups keep the TTL they were born with.
+                  description: >-
+                    How long each backup is kept before it is deleted.
+                    velero: template.ttl in hours (30 -> "720h"). aws: rule
+                    lifecycle.deleteAfter. gcp: retentionPolicy.backupRetainDays.
+                    azure: the policy's default retention rule (P<n>D in the
+                    operational store). Already-created backups keep the
+                    retention they were born with.
                 includedNamespaces:
                   type: array
                   items: {type: string}
                   default: []
-                  description: Namespaces whose objects go into the backup. Empty (the default) means EVERY namespace — Velero spells that as the field being absent, so an empty list is not emitted. Velero template.includedNamespaces.
+                  description: >-
+                    Namespaces whose objects go into the backup. Empty (the
+                    default) means EVERY namespace. velero:
+                    template.includedNamespaces. gcp:
+                    backupConfig.selectedNamespaces (allNamespaces when empty).
+                    azure: backupDatasourceParameters.includedNamespaces.
+                    aws: ignored — AWS Backup protects the whole EKS cluster,
+                    so the backup is a superset of what was asked.
                 includedResources:
                   type: array
                   items: {type: string}
-                  description: Resource types to back up, as plural names or fully-qualified kinds (pods, deployments.apps). Unset means every type the API server serves. Velero template.includedResources.
+                  description: >-
+                    Resource types to back up, as plural names or
+                    fully-qualified kinds (pods, deployments.apps). Unset
+                    means every type. velero: template.includedResources.
+                    azure: includedResourceTypes. aws, gcp: ignored (every
+                    type is backed up — a superset).
                 excludedResources:
                   type: array
                   items: {type: string}
-                  description: Resource types to leave out, applied after includedResources. The usual entries are noise that is regenerated on restore (events, events.events.k8s.io). Velero template.excludedResources.
+                  description: >-
+                    Resource types to leave out, applied after
+                    includedResources (events, events.events.k8s.io are the
+                    usual entries). velero: template.excludedResources.
+                    azure: excludedResourceTypes. gcp: only `secrets` is
+                    honoured, as backupConfig.includeSecrets=false; other
+                    entries are ignored. aws: ignored.
                 labelSelector:
                   type: object
                   additionalProperties:
                     type: string
-                  description: Narrows what is backed up to objects carrying ALL of these labels. Velero template.labelSelector.matchLabels. Volumes are pulled in through the pods that mount them, so a selector that misses a pod also misses its PVC.
+                  description: >-
+                    Narrows what is backed up to objects carrying ALL of these
+                    labels. velero: template.labelSelector.matchLabels.
+                    azure: labelSelectors ("k=v"). aws, gcp: ignored (a
+                    superset is backed up).
                 snapshotVolumes:
                   type: boolean
                   default: true
-                  description: Take CSI/cloud volume snapshots alongside the object metadata. Velero template.snapshotVolumes, plus a VolumeSnapshotLocation for the snapshots to land in. Needs a CSI driver with a VolumeSnapshotClass (or a cloud volume plugin); without one the backup still captures metadata and the volume data is lost.
+                  description: >-
+                    Back up volume data alongside the object metadata.
+                    velero: template.snapshotVolumes plus a
+                    VolumeSnapshotLocation (needs a CSI VolumeSnapshotClass or
+                    a cloud volume plugin). gcp: backupConfig.includeVolumeData.
+                    azure: volumeSnapshotEnabled. aws: ignored — AWS Backup
+                    always protects the EBS/EFS/S3 storage behind the
+                    cluster's persistent volumes.
                 defaultVolumesToFsBackup:
                   type: boolean
                   default: false
-                  description: 'Copy volume CONTENTS file-by-file (Velero''s built-in Kopia uploader) instead of asking the storage layer for a snapshot. Velero template.defaultVolumesToFsBackup. This is the knob that makes a self-hosted cluster backupable: local-path, hostPath and NFS volumes have no CSI snapshot support at all, so a snapshot-based plan there backs up nothing but metadata. It is slower and it reads through the pod, so it needs the node-agent DaemonSet running; in exchange it works on any storage. Turning it on suppresses the VolumeSnapshotLocation, since there are no snapshots to place.'
+                  description: 'velero only. Copy volume CONTENTS file-by-file (Velero''s built-in Kopia uploader) instead of asking the storage layer for a snapshot. Velero template.defaultVolumesToFsBackup. This is the knob that makes a self-hosted cluster backupable: local-path, hostPath and NFS volumes have no CSI snapshot support at all, so a snapshot-based plan there backs up nothing but metadata. It is slower and it reads through the pod, so it needs the node-agent DaemonSet running; in exchange it works on any storage. Turning it on suppresses the VolumeSnapshotLocation, since there are no snapshots to place. The cloud backends snapshot through the storage layer and ignore it.'
+                cluster:
+                  type: object
+                  description: |
+                    The managed cluster a cloud backend protects. REQUIRED by
+                    aws, gcp and azure; ignored by velero, which backs up the
+                    cluster its own server runs in.
+
+                    `id` is the provider's own identifier, and the backends
+                    parse what they need out of it (region, project,
+                    subscription, resource group, name), so one string is
+                    enough on aws and gcp. A KubernetesCluster XR publishes it
+                    as status.id on gcp and azure; on aws that status.id is
+                    the bare cluster name, so pass the ARN instead.
+                  properties:
+                    id:
+                      type: string
+                      description: >-
+                        aws: the EKS cluster ARN
+                        (arn:aws:eks:<region>:<account>:cluster/<name>).
+                        gcp: the GKE cluster's full name
+                        (projects/<project>/locations/<location>/clusters/<name>).
+                        azure: the AKS ARM id
+                        (/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.ContainerService/managedClusters/<name>).
+                    region:
+                      type: string
+                      description: >-
+                        Azure only, and required there: the location the
+                        Backup vault, policy and instance are created in (an
+                        ARM id carries no location). Use the cluster's own.
+                        aws and gcp read the region out of `id`.
+                    snapshotResourceGroup:
+                      type: string
+                      description: >-
+                        Azure only: resource group the AKS backup writes its
+                        disk snapshots into, and which the vault and the
+                        cluster are granted access to. Defaults to the
+                        cluster's own resource group.
+                  required: [id]
+                encryptionKmsKeyId:
+                  type: string
+                  description: >-
+                    Customer-managed key the backups are encrypted with.
+                    aws: the Vault's kmsKeyArn. gcp:
+                    backupConfig.encryptionKey.gcpKmsEncryptionKey (a full
+                    projects/.../cryptoKeys/... name). velero, azure: ignored
+                    — the bucket's own encryption (a Bucket XR's
+                    encryptionKmsKeyId) applies, and the Azure Backup vault
+                    is platform-key encrypted.
                 destination:
                   type: object
                   description: |
-                    The object store backups are written to. REQUIRED: Velero
-                    has no local storage mode, and a plan with nowhere to write
-                    is a plan that silently does nothing.
+                    The object store backups are written to. REQUIRED by
+                    velero (it has no local storage mode) and by azure (the
+                    AKS backup extension stages backups in a blob container
+                    before the vault picks them up). Ignored by aws and gcp:
+                    AWS Backup writes to the Vault this plan composes, Backup
+                    for GKE to Google-managed storage.
 
                     This XR does NOT create the bucket. In the usual flow a
                     Bucket XR owns it and `bucket` here is that XR's name (its
@@ -91,19 +200,25 @@ spec:
                     provider:
                       type: string
                       enum: [aws, gcp, azure]
-                      description: Which Velero object-store plugin writes the backups. The values are Velero's own plugin names, so they pass through to BackupStorageLocation.spec.provider unchanged. `aws` also covers every S3-compatible server — see s3Url.
+                      description: Which Velero object-store plugin writes the backups. The values are Velero's own plugin names, so they pass through to BackupStorageLocation.spec.provider unchanged. `aws` also covers every S3-compatible server — see s3Url. The azure backend requires `azure`.
                     bucket:
                       type: string
-                      description: Bucket the backups are written to; must already exist. Velero objectStorage.bucket.
+                      description: Bucket (on Azure, blob container) the backups are written to; must already exist. Velero objectStorage.bucket; azure configuration.backupStorageLocation.bucket on the AKS backup extension.
                     prefix:
                       type: string
-                      description: Key prefix inside the bucket, so several clusters can share one. Velero objectStorage.prefix. Unset means the bucket root.
+                      description: Key prefix inside the bucket, so several clusters can share one. Velero objectStorage.prefix. Unset means the bucket root. Ignored by azure.
                     region:
                       type: string
                       description: Region of the bucket. Velero config.region — read by the aws plugin (and by the azure plugin for its snapshots); the gcp plugin discovers the location itself and ignores it.
+                    storageAccount:
+                      type: string
+                      description: Azure storage account holding `bucket`. Required whenever provider is azure — Velero's azure plugin (config.storageAccount) and the AKS backup extension both address a container through its account.
+                    resourceGroup:
+                      type: string
+                      description: Resource group of `storageAccount` (Velero config.resourceGroup; the AKS extension's backupStorageLocation.config.resourceGroup). The azure backend defaults it to the cluster's resource group; velero requires it with provider azure.
                     credentialsSecret:
                       type: object
-                      description: Secret holding the cloud credentials file, in THIS XR's namespace (Velero resolves a location's credential against its own namespace). Velero BackupStorageLocation.spec.credential. Unset means the Velero server's ambient identity — IRSA, Workload Identity, or the cluster-wide `cloud-credentials` Secret the chart mounts.
+                      description: velero only. Secret holding the cloud credentials file, in THIS XR's namespace (Velero resolves a location's credential against its own namespace). Velero BackupStorageLocation.spec.credential. Unset means the Velero server's ambient identity — IRSA, Workload Identity, or the cluster-wide `cloud-credentials` Secret the chart mounts.
                       properties:
                         name:
                           type: string
@@ -115,49 +230,60 @@ spec:
                       required: [name]
                     s3Url:
                       type: string
-                      description: 'Explicit S3 endpoint, for an S3-compatible server rather than AWS itself — an in-cluster RustFS (http://rustfs.rustfs.svc.cluster.local:9000, which is what a self-hosted plan points at), MinIO, Ceph RGW, R2. Velero config.s3Url; setting it also sets config.s3ForcePathStyle, because those servers address buckets by path and have no per-bucket DNS. Meaningful only with provider aws.'
+                      description: 'velero only. Explicit S3 endpoint, for an S3-compatible server rather than AWS itself — an in-cluster RustFS (http://rustfs.rustfs.svc.cluster.local:9000, which is what a self-hosted plan points at), MinIO, Ceph RGW, R2. Velero config.s3Url; setting it also sets config.s3ForcePathStyle, because those servers address buckets by path and have no per-bucket DNS. Meaningful only with provider aws.'
                   required: [provider, bucket]
                 paused:
                   type: boolean
                   default: false
-                  description: Stop taking new backups without deleting the plan or anything already in the bucket. Velero Schedule.spec.paused. Existing backups still expire on their own TTL while paused.
+                  description: >-
+                    Stop taking new backups without deleting the plan or any
+                    backup already taken; existing backups still expire on
+                    their own retention. velero: Schedule.spec.paused. gcp:
+                    backupSchedule.paused. aws: the Selection is withdrawn
+                    (recovery points stay in the vault). azure: not
+                    expressible — Azure stops protection only by deleting the
+                    backup instance — so true fails the render.
                 deletionPolicy:
                   type: string
                   enum: [Delete, Orphan]
                   default: Delete
-                  description: 'What happens to the backing resources when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them). Ignored by the velero backend, which composes plain velero.io CRs rather than Crossplane managed resources, so there are no managementPolicies to set — the Schedule and the location are owned by the XR and go with it. Note what neither value touches: the backups already in the bucket. They are Backup objects with their own TTL and outlive the plan either way; empty the bucket (or delete the Backup objects, which makes Velero empty it) to actually reclaim the storage.'
+                  description: 'What happens to the backing resources when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them) on the aws, gcp and azure backends. Ignored by velero, which composes plain velero.io CRs rather than Crossplane managed resources — the Schedule and the location are owned by the XR and go with it. Backups already taken are a separate matter. velero: Backup objects outlive the plan on their own TTL. aws: the API refuses to delete a vault that still holds recovery points, so with Delete the Vault stays stuck until they expire or are deleted. gcp: likewise, a Backup for GKE plan cannot be deleted while it holds backups. azure: deleting the backup instance is "stop protection and delete data" (recovery points are soft-deleted, then purged) — use Orphan to keep them.'
                 tags:
                   type: object
                   additionalProperties:
                     type: string
-                  description: Key/value metadata stamped onto every Backup the plan creates (Velero template.metadata.labels), so `velero backup get -l team=platform` filters by them. Not applied to the objects inside the backup.
+                  description: >-
+                    Key/value metadata. velero: template.metadata.labels on
+                    each Backup. aws: tags on the Vault and Plan plus
+                    recoveryPointTags on every recovery point. gcp: labels on
+                    the BackupPlan. azure: tags on the Backup vault. Never
+                    applied to the objects inside the backup.
               required:
                 - schedule
-                - destination
             status:
               type: object
               properties:
                 ready:
                   type: boolean
-                  description: True once the plan is actually capable of taking a backup — the schedule accepted AND the storage location reachable. Either half alone is a plan that silently never lands anything.
+                  description: True once the plan is actually capable of taking a backup. velero — the schedule accepted AND the storage location reachable; aws, gcp, azure — every composed managed resource Ready.
                 provider:
                   type: string
-                  description: Backend that fulfilled the claim (velero).
+                  description: Backend that fulfilled the claim (velero | aws | gcp | azure).
                 phase:
                   type: string
-                  description: Schedule phase reported by the backend (Velero New | Enabled | FailedValidation).
+                  description: State reported by the backend (Velero New | Enabled | FailedValidation; Backup for GKE CLUSTER_PENDING | PROVISIONING | READY | FAILED | DEACTIVATED | DELETING; Azure the backup instance's protection status). Absent on aws, which reports none.
                 storageLocation:
                   type: string
-                  description: Name of the BackupStorageLocation this plan writes through; the argument to `velero backup-location get`.
+                  description: Where this plan writes — the BackupStorageLocation (velero), the backup vault (aws, azure) or the Backup for GKE plan (gcp).
                 storageLocationPhase:
                   type: string
                   description: Whether the backend could reach the bucket (Velero Available | Unavailable).
                 lastBackup:
                   type: string
-                  description: Timestamp of the most recent backup the schedule started. Absent until the first one runs.
+                  description: Timestamp of the most recent backup the schedule started (velero only). Absent until the first one runs.
                 message:
                   type: string
-                  description: Why the plan is not ready — the storage location's own message, or the schedule's validation errors. Absent when healthy.
+                  description: Why the plan is not ready — the storage location's own message, the schedule's validation errors, or the first composed resource that is not Ready. Absent when healthy.
       additionalPrinterColumns:
         - name: READY
           type: boolean

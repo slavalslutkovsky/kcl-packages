@@ -195,10 +195,11 @@ function extractImageCrds(
   }
   const crdsDir = join(destDir, 'crds');
   mkdirSync(crdsDir, { recursive: true });
-  execSync(
-    `yq '${select}' "${pkgYaml}" | yq -s '"${crdsDir}/" + .metadata.name + ".yaml"'`,
-    { stdio: 'inherit' }
-  );
+  // Split relative to crdsDir: newer yq (seen on v4.54) rejects split paths outside its cwd.
+  execSync(`yq '${select}' "${pkgYaml}" | yq -s '.metadata.name + ".yaml"'`, {
+    cwd: crdsDir,
+    stdio: 'inherit',
+  });
 
   return readdirSync(crdsDir)
     .filter((f) => /\.ya?ml$/i.test(f))
