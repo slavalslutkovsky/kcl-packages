@@ -1,6 +1,6 @@
 [cluster]
 name = "kcl-manager"        # not kcl-e2e: `just e2e-down` must never touch this one
-workers = 1
+workers = 2
 db_workers = 1
 ingress = true
 

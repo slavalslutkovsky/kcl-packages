@@ -7,3 +7,4 @@ version = "0.1.5"
 gcp-compute = { path = "../../../providers/gcp-compute" }
 gcp-servicenetworking = { path = "../../../providers/gcp-servicenetworking" }
 k8s = "1.32.4"
+network-xrd = { path = "../xrd", version = "0.1.0" }

@@ -8,8 +8,12 @@ reservation (and, opt-in, its servicenetworking peering), and an ingress
 firewall rule standing in for AWS's intra-VPC security group. Typed against the
 vendored `gcp-compute` and `gcp-servicenetworking` schema packages
 ([../../../providers/gcp-compute](../../../providers/gcp-compute),
-[../../../providers/gcp-servicenetworking](../../../providers/gcp-servicenetworking)). The
-`network-gcp` Composition runs it through `function-kcl` from
+[../../../providers/gcp-servicenetworking](../../../providers/gcp-servicenetworking)),
+and its input against the `network-xrd` package generated from the XRD
+([../xrd](../xrd), `just xrd-schema network`): `spec` is converted to
+`NetworkSpec`, so XRD defaults, enums and required fields apply in the render
+too. Regenerate it after changing `xrd.yaml`. The `network-gcp` Composition
+runs it through `function-kcl` from
 `oci://docker.io/yurikrupnik/network-gcp`, followed by `function-auto-ready`.
 
 `NetworkHub` spokes reference the network this XR publishes as
