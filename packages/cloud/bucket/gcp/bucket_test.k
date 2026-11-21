@@ -7,161 +7,161 @@ import runtime
 
 # Build a minimal observed composite XR with the given spec.
 _build = lambda _spec {
-    {metadata.name = "demo", spec = _spec}
+  {metadata.name = "demo", spec = _spec}
 }
 
 # The single GCS Bucket forProvider block from a render() of the given spec.
 _fp = lambda _spec {
-    bucket.render(_build(_spec))[0].spec.forProvider
+  bucket.render(_build(_spec))[0].spec.forProvider
 }
 
 # True if any native lifecycle rule has the given serialized action type.
 _has_action = lambda _rules, _t {
-    len([_r for _r in _rules if _r["action"]["type"] == _t]) > 0
+  len([_r for _r in _rules if _r["action"]["type"] == _t]) > 0
 }
 
 # ---- render: shape ----------------------------------------------------------
 
 # Minimal spec (region only): GCS expresses everything inline -> exactly one MR.
 test_render = lambda {
-    items = bucket.render(_build({region = "us-central1"}))
-    assert len(items) == 1, "GCS render must emit exactly one Bucket"
-    assert items[0].apiVersion == "storage.gcp.m.upbound.io/v1beta1", "wrong apiVersion"
-    assert items[0].kind == "Bucket", "wrong kind"
-    assert items[0].metadata.annotations["krm.kcl.dev/composition-resource-name"] == "managed", "must be the managed resource"
-    assert items[0].spec.forProvider.location == "us-central1", "region -> forProvider.location"
+  items = bucket.render(_build({region = "us-central1"}))
+  assert len(items) == 1, "GCS render must emit exactly one Bucket"
+  assert items[0].apiVersion == "storage.gcp.m.upbound.io/v1beta1", "wrong apiVersion"
+  assert items[0].kind == "Bucket", "wrong kind"
+  assert items[0].metadata.annotations["krm.kcl.dev/composition-resource-name"] == "managed", "must be the managed resource"
+  assert items[0].spec.forProvider.location == "us-central1", "region -> forProvider.location"
 }
 
 # ---- render: storage class --------------------------------------------------
 
 # archive -> ARCHIVE and a SetStorageClass lifecycle transition is injected.
 test_storage_class = lambda {
-    fp = _fp({region = "us-central1", storageClass = "archive"})
-    assert fp.storageClass == "ARCHIVE", "archive -> ARCHIVE"
-    assert _has_action(fp.lifecycleRule, "SetStorageClass"), "non-standard tier must add SetStorageClass rule"
-    # standard tier maps through but injects no lifecycle transition.
-    fp2 = _fp({region = "us-central1", storageClass = "standard"})
-    assert fp2.storageClass == "STANDARD", "standard -> STANDARD"
-    assert fp2?.lifecycleRule == Undefined, "standard tier must not inject a lifecycle rule"
-    # full tier map.
-    assert _fp({region = "us-central1", storageClass = "nearline"}).storageClass == "NEARLINE", "nearline -> NEARLINE"
-    assert _fp({region = "us-central1", storageClass = "cold"}).storageClass == "COLDLINE", "cold -> COLDLINE"
+  fp = _fp({region = "us-central1", storageClass = "archive"})
+  assert fp.storageClass == "ARCHIVE", "archive -> ARCHIVE"
+  assert _has_action(fp.lifecycleRule, "SetStorageClass"), "non-standard tier must add SetStorageClass rule"
+  # standard tier maps through but injects no lifecycle transition.
+  fp2 = _fp({region = "us-central1", storageClass = "standard"})
+  assert fp2.storageClass == "STANDARD", "standard -> STANDARD"
+  assert fp2?.lifecycleRule == Undefined, "standard tier must not inject a lifecycle rule"
+  # full tier map.
+  assert _fp({region = "us-central1", storageClass = "nearline"}).storageClass == "NEARLINE", "nearline -> NEARLINE"
+  assert _fp({region = "us-central1", storageClass = "cold"}).storageClass == "COLDLINE", "cold -> COLDLINE"
 }
 
 # ---- render: versioning -----------------------------------------------------
 test_versioning = lambda {
-    assert _fp({region = "us-central1"}).versioning.enabled == True, "versioning defaults to enabled"
-    assert _fp({region = "us-central1", versioning = False}).versioning.enabled == False, "versioning=false -> disabled"
+  assert _fp({region = "us-central1"}).versioning.enabled == True, "versioning defaults to enabled"
+  assert _fp({region = "us-central1", versioning = False}).versioning.enabled == False, "versioning=false -> disabled"
 }
 
 # ---- render: public access / uniform access ---------------------------------
 test_block_public_access = lambda {
-    assert _fp({region = "us-central1"}).publicAccessPrevention == "enforced", "default blockPublicAccess -> enforced"
-    assert _fp({region = "us-central1", blockPublicAccess = True}).publicAccessPrevention == "enforced", "true -> enforced"
-    assert _fp({region = "us-central1", blockPublicAccess = False}).publicAccessPrevention == "inherited", "false -> inherited"
+  assert _fp({region = "us-central1"}).publicAccessPrevention == "enforced", "default blockPublicAccess -> enforced"
+  assert _fp({region = "us-central1", blockPublicAccess = True}).publicAccessPrevention == "enforced", "true -> enforced"
+  assert _fp({region = "us-central1", blockPublicAccess = False}).publicAccessPrevention == "inherited", "false -> inherited"
 }
 
 test_uniform_access = lambda {
-    assert _fp({region = "us-central1"}).uniformBucketLevelAccess == True, "uniformAccess defaults true"
-    assert _fp({region = "us-central1", uniformAccess = False}).uniformBucketLevelAccess == False, "uniformAccess=false maps through"
+  assert _fp({region = "us-central1"}).uniformBucketLevelAccess == True, "uniformAccess defaults true"
+  assert _fp({region = "us-central1", uniformAccess = False}).uniformBucketLevelAccess == False, "uniformAccess=false maps through"
 }
 
 # ---- render: encryption -----------------------------------------------------
 test_encryption = lambda {
-    fp = _fp({region = "us-central1", encryptionKmsKeyId = "projects/p/locations/l/keyRings/r/cryptoKeys/k"})
-    assert fp.encryption.defaultKmsKeyName == "projects/p/locations/l/keyRings/r/cryptoKeys/k", "kms key -> defaultKmsKeyName"
-    # no key -> no encryption block.
-    assert _fp({region = "us-central1"})?.encryption == Undefined, "no kms key -> no encryption block"
+  fp = _fp({region = "us-central1", encryptionKmsKeyId = "projects/p/locations/l/keyRings/r/cryptoKeys/k"})
+  assert fp.encryption.defaultKmsKeyName == "projects/p/locations/l/keyRings/r/cryptoKeys/k", "kms key -> defaultKmsKeyName"
+  # no key -> no encryption block.
+  assert _fp({region = "us-central1"})?.encryption == Undefined, "no kms key -> no encryption block"
 }
 
 # ---- render: retention ------------------------------------------------------
 test_retention = lambda {
-    fp = _fp({region = "us-central1", retention = {days = 7, mode = "compliance"}})
-    assert fp.retentionPolicy.retentionPeriod == 7 * 86400, "days -> seconds"
-    assert fp.retentionPolicy.isLocked == True, "compliance -> locked"
-    fp2 = _fp({region = "us-central1", retention = {days = 3, mode = "governance"}})
-    assert fp2.retentionPolicy.retentionPeriod == 3 * 86400, "days -> seconds (governance)"
-    assert fp2.retentionPolicy.isLocked == False, "governance -> not locked"
+  fp = _fp({region = "us-central1", retention = {days = 7, mode = "compliance"}})
+  assert fp.retentionPolicy.retentionPeriod == 7 * 86400, "days -> seconds"
+  assert fp.retentionPolicy.isLocked == True, "compliance -> locked"
+  fp2 = _fp({region = "us-central1", retention = {days = 3, mode = "governance"}})
+  assert fp2.retentionPolicy.retentionPeriod == 3 * 86400, "days -> seconds (governance)"
+  assert fp2.retentionPolicy.isLocked == False, "governance -> not locked"
 }
 
 # ---- render: deletion policy ------------------------------------------------
 test_deletion_policy = lambda {
-    mr = bucket.render(_build({region = "us-central1", deletionPolicy = "Orphan"}))[0]
-    assert mr.spec.managementPolicies == ["Observe", "Create", "Update", "LateInitialize"], "Orphan -> orphan management policies"
-    # Delete (default) does not set the orphan list; the provider schema default ["*"] applies.
-    mr2 = bucket.render(_build({region = "us-central1"}))[0]
-    assert mr2.spec.managementPolicies == ["*"], "Delete default -> provider default management policies"
+  mr = bucket.render(_build({region = "us-central1", deletionPolicy = "Orphan"}))[0]
+  assert mr.spec.managementPolicies == ["Observe", "Create", "Update", "LateInitialize"], "Orphan -> orphan management policies"
+  # Delete (default) does not set the orphan list; the provider schema default ["*"] applies.
+  mr2 = bucket.render(_build({region = "us-central1"}))[0]
+  assert mr2.spec.managementPolicies == ["*"], "Delete default -> provider default management policies"
 }
 
 # ---- render: tags -----------------------------------------------------------
 test_tags = lambda {
-    tags = {env = "prod", team = "core"}
-    assert _fp({region = "us-central1", tags = tags}).labels == tags, "tags -> forProvider.labels"
-    assert _fp({region = "us-central1"})?.labels == Undefined, "no tags -> no labels"
+  tags = {env = "prod", team = "core"}
+  assert _fp({region = "us-central1", tags = tags}).labels == tags, "tags -> forProvider.labels"
+  assert _fp({region = "us-central1"})?.labels == Undefined, "no tags -> no labels"
 }
 
 # ---- render: lifecycle rules + cors -----------------------------------------
 test_lifecycle_rules = lambda {
-    # No storageClass tier here, so the only native rules come from lifecycleRules.
-    fp = _fp({region = "us-central1", lifecycleRules = [
-        {id = "expire", expirationDays = 30}
-        {id = "tier", transitionDays = 60, transitionStorageClass = "cold"}
-    ]})
-    rules = fp.lifecycleRule
-    assert len(rules) == 2, "two abstract rules -> two native rules"
-    assert rules[0]["action"]["type"] == "Delete", "expirationDays -> Delete action"
-    assert rules[0].condition.age == 30, "Delete rule keeps the expiration age"
-    assert rules[1]["action"]["type"] == "SetStorageClass", "transition -> SetStorageClass action"
-    assert rules[1]["action"].storageClass == "COLDLINE", "transition tier mapped to COLDLINE"
-    assert rules[1].condition.age == 60, "SetStorageClass rule keeps the transition age"
+  # No storageClass tier here, so the only native rules come from lifecycleRules.
+  fp = _fp({region = "us-central1", lifecycleRules = [
+    {id = "expire", expirationDays = 30}
+    {id = "tier", transitionDays = 60, transitionStorageClass = "cold"}
+  ]})
+  rules = fp.lifecycleRule
+  assert len(rules) == 2, "two abstract rules -> two native rules"
+  assert rules[0]["action"]["type"] == "Delete", "expirationDays -> Delete action"
+  assert rules[0].condition.age == 30, "Delete rule keeps the expiration age"
+  assert rules[1]["action"]["type"] == "SetStorageClass", "transition -> SetStorageClass action"
+  assert rules[1]["action"].storageClass == "COLDLINE", "transition tier mapped to COLDLINE"
+  assert rules[1].condition.age == 60, "SetStorageClass rule keeps the transition age"
 }
 
 test_cors = lambda {
-    fp = _fp({region = "us-central1", cors = [
-        {origins = ["https://app.example.com"], methods = ["GET", "PUT"], headers = ["X-Foo"], maxAgeSeconds = 120}
-    ]})
-    assert fp.cors[0].origin == ["https://app.example.com"], "cors origins -> origin"
-    assert fp.cors[0].method == ["GET", "PUT"], "cors methods -> method"
-    assert fp.cors[0].responseHeader == ["X-Foo"], "cors headers -> responseHeader"
-    assert fp.cors[0].maxAgeSeconds == 120, "cors maxAgeSeconds maps through"
+  fp = _fp({region = "us-central1", cors = [
+    {origins = ["https://app.example.com"], methods = ["GET", "PUT"], headers = ["X-Foo"], maxAgeSeconds = 120}
+  ]})
+  assert fp.cors[0].origin == ["https://app.example.com"], "cors origins -> origin"
+  assert fp.cors[0].method == ["GET", "PUT"], "cors methods -> method"
+  assert fp.cors[0].responseHeader == ["X-Foo"], "cors headers -> responseHeader"
+  assert fp.cors[0].maxAgeSeconds == 120, "cors maxAgeSeconds maps through"
 }
 
 # ---- status -----------------------------------------------------------------
 
 # Pre-creation: no observed composed resources.
 test_status_pending = lambda {
-    dxr = bucket.status(_build({region = "us-central1"}), {})
-    assert dxr.apiVersion == "cloud.example.org/v1alpha1", "dxr keeps composite apiVersion"
-    assert dxr.kind == "Bucket", "dxr keeps composite kind"
-    assert dxr.status.ready == False, "not ready before creation"
-    assert dxr.status.provider == "gcp", "provider gcp"
-    assert dxr.status["cloud-url"].startswith("https://console.cloud.google.com/storage/browser/"), "console url prefix"
-    assert dxr.status.endpoint == "demo.storage.googleapis.com", "endpoint derived from name"
+  dxr = bucket.status(_build({region = "us-central1"}), {})
+  assert dxr.apiVersion == "cloud.example.org/v1alpha1", "dxr keeps composite apiVersion"
+  assert dxr.kind == "Bucket", "dxr keeps composite kind"
+  assert dxr.status.ready == False, "not ready before creation"
+  assert dxr.status.provider == "gcp", "provider gcp"
+  assert dxr.status["cloud-url"].startswith("https://console.cloud.google.com/storage/browser/"), "console url prefix"
+  assert dxr.status.endpoint == "demo.storage.googleapis.com", "endpoint derived from name"
 }
 
 # Observed: provider has reconciled the bucket.
 test_status_ready = lambda {
-    ocds = {
-        managed = {
-            Resource = {
-                status = {
-                    atProvider = {
-                        url = "gs://demo"
-                        selfLink = "https://www.googleapis.com/storage/v1/b/demo"
-                        id = "demo"
-                        location = "US-CENTRAL1"
-                        storageClass = "ARCHIVE"
-                    }
-                }
-            }
+  ocds = {
+    managed = {
+      Resource = {
+        status = {
+          atProvider = {
+            url = "gs://demo"
+            selfLink = "https://www.googleapis.com/storage/v1/b/demo"
+            id = "demo"
+            location = "US-CENTRAL1"
+            storageClass = "ARCHIVE"
+          }
         }
+      }
     }
-    dxr = bucket.status(_build({region = "us-central1"}), ocds)
-    assert dxr.status.ready == True, "ready once observed with an id"
-    assert dxr.status.url == "gs://demo", "url from atProvider"
-    assert dxr.status.selfLink == "https://www.googleapis.com/storage/v1/b/demo", "selfLink from atProvider"
-    assert dxr.status.id == "demo", "id from atProvider"
-    assert dxr.status.region == "US-CENTRAL1", "region from atProvider.location"
+  }
+  dxr = bucket.status(_build({region = "us-central1"}), ocds)
+  assert dxr.status.ready == True, "ready once observed with an id"
+  assert dxr.status.url == "gs://demo", "url from atProvider"
+  assert dxr.status.selfLink == "https://www.googleapis.com/storage/v1/b/demo", "selfLink from atProvider"
+  assert dxr.status.id == "demo", "id from atProvider"
+  assert dxr.status.region == "US-CENTRAL1", "region from atProvider.location"
 }
 
 # ---- render: import ---------------------------------------------------------
@@ -169,88 +169,89 @@ test_status_ready = lambda {
 # makes Crossplane read-only, manage hands writes over and lets deletionPolicy
 # decide the policies as for a created bucket.
 test_import = lambda {
-    obs = bucket.render(_build({region = "us-central1", import = {existingName = "legacy-9c1", source = "pulumi", address = "urn:pulumi:prod::infra::gcp:storage/bucket:Bucket::legacy"}}))[0]
-    assert obs.metadata.annotations["crossplane.io/external-name"] == "legacy-9c1", "existingName -> external-name"
-    assert obs.metadata.annotations["cloud.example.org/imported-from"] == "pulumi", "source recorded"
-    assert obs.metadata.annotations["cloud.example.org/import-address"].startswith("urn:pulumi:"), "address recorded"
-    assert obs.spec.managementPolicies == ["Observe"], "import defaults to observe-only"
-    man = bucket.render(_build({region = "us-central1", deletionPolicy = "Orphan", import = {existingName = "legacy-9c1", mode = "manage"}}))[0]
-    assert man.metadata.annotations["crossplane.io/external-name"] == "legacy-9c1", "still pinned in manage mode"
-    assert man.spec.managementPolicies == ["Observe", "Create", "Update", "LateInitialize"], "manage + Orphan -> orphan policies"
-    man2 = bucket.render(_build({region = "us-central1", import = {existingName = "legacy-9c1", mode = "manage"}}))[0]
-    assert man2.spec.managementPolicies == ["*"], "manage + Delete -> provider default policies"
-    plain = bucket.render(_build({region = "us-central1"}))[0]
-    assert plain.metadata.annotations?["crossplane.io/external-name"] == Undefined, "no import -> nothing pinned"
+  obs = bucket.render(_build({region = "us-central1", import = {existingName = "legacy-9c1", source = "pulumi", address = "urn:pulumi:prod::infra::gcp:storage/bucket:Bucket::legacy"}}))[0]
+  assert obs.metadata.annotations["crossplane.io/external-name"] == "legacy-9c1", "existingName -> external-name"
+  assert obs.metadata.annotations["cloud.example.org/imported-from"] == "pulumi", "source recorded"
+  assert obs.metadata.annotations["cloud.example.org/import-address"].startswith("urn:pulumi:"), "address recorded"
+  assert obs.spec.managementPolicies == ["Observe"], "import defaults to observe-only"
+  man = bucket.render(_build({region = "us-central1", deletionPolicy = "Orphan", import = {existingName = "legacy-9c1", mode = "manage"}}))[0]
+  assert man.metadata.annotations["crossplane.io/external-name"] == "legacy-9c1", "still pinned in manage mode"
+  assert man.spec.managementPolicies == ["Observe", "Create", "Update", "LateInitialize"], "manage + Orphan -> orphan policies"
+  man2 = bucket.render(_build({region = "us-central1", import = {existingName = "legacy-9c1", mode = "manage"}}))[0]
+  assert man2.spec.managementPolicies == ["*"], "manage + Delete -> provider default policies"
+  plain = bucket.render(_build({region = "us-central1"}))[0]
+  assert plain.metadata.annotations?["crossplane.io/external-name"] == Undefined, "no import -> nothing pinned"
 }
 
 test_status_mode = lambda {
-    assert bucket.status(_build({region = "us-central1"}), {}).status.mode == "created", "no import -> created"
-    obs = bucket.status(_build({region = "us-central1", import = {existingName = "legacy-9c1"}}), {})
-    assert obs.status.mode == "observe", "import defaults to observe"
-    assert obs.status.bucketName == "legacy-9c1", "adopted bucket reports its existing name before it is observed"
-    assert obs.status.endpoint == "legacy-9c1.storage.googleapis.com", "endpoint follows the existing name"
-    assert bucket.status(_build({region = "us-central1", import = {existingName = "x", mode = "manage"}}), {}).status.mode == "managed", "manage -> managed"
+  assert bucket.status(_build({region = "us-central1"}), {}).status.mode == "created", "no import -> created"
+  obs = bucket.status(_build({region = "us-central1", import = {existingName = "legacy-9c1"}}), {})
+  assert obs.status.mode == "observe", "import defaults to observe"
+  assert obs.status.bucketName == "legacy-9c1", "adopted bucket reports its existing name before it is observed"
+  assert obs.status.endpoint == "legacy-9c1.storage.googleapis.com", "endpoint follows the existing name"
+  assert bucket.status(_build({region = "us-central1", import = {existingName = "x", mode = "manage"}}), {}).status.mode == "managed", "manage -> managed"
 }
 
 # ---- access: CI pipelines and ticket systems -----------------------------------
-
 _pool = "iam.googleapis.com/projects/42/locations/global/workloadIdentityPools"
 
 # Grants of an access spec, as (role, member) pairs.
 _grants = lambda _spec {
-    [[_i.spec.forProvider.role, _i.spec.forProvider.member] for _i in bucket.render_access(_build({region = "eu", federation.gcpProjectNumber = "42"} | _spec), {})]
+  [[_i.spec.forProvider.role, _i.spec.forProvider.member] for _i in bucket.render_access(_build({region = "eu", federation.gcpProjectNumber = "42"} | _spec), {})]
 }
 
 # One member per pool, per repository or per subject; role picks an object-level GCS role.
 test_access_members_and_roles = lambda {
-    assert _grants({access = [{client = "github", owner = "acme", role = "write"}]}) == [["roles/storage.objectUser", "principalSet://${_pool}/github-actions-pool/*"]]
-    assert _grants({access = [{client = "gitlab", ticket = "jira", repositories = ["g/a", "g/b"]}]}) == [
-        ["roles/storage.objectViewer", "principalSet://${_pool}/jira-gitlab/attribute.project_path/g/a"]
-        ["roles/storage.objectViewer", "principalSet://${_pool}/jira-gitlab/attribute.project_path/g/b"]
-    ], "read is the default; the ticket entry names its own pool"
-    assert _grants({access = [{client = "github", owner = "acme", subjects = ["repo:acme/app:ref:refs/heads/main"], role = "admin"}]}) == [["roles/storage.objectAdmin", "principal://${_pool}/github-actions-pool/subject/repo:acme/app:ref:refs/heads/main"]]
-    assert bucket.render_access(_build({region = "eu"}), {}) == [], "no access, no grants"
+  assert _grants({access = [{client = "github", owner = "acme", role = "write"}]}) == [["roles/storage.objectUser", "principalSet://${_pool}/github-actions-pool/*"]]
+  assert _grants({access = [{client = "gitlab", ticket = "jira", repositories = ["g/a", "g/b"]}]}) == [
+    ["roles/storage.objectViewer", "principalSet://${_pool}/jira-gitlab/attribute.project_path/g/a"]
+    ["roles/storage.objectViewer", "principalSet://${_pool}/jira-gitlab/attribute.project_path/g/b"]
+  ], "read is the default; the ticket entry names its own pool"
+  assert _grants({access = [{client = "github", owner = "acme", subjects = ["repo:acme/app:ref:refs/heads/main"], role = "admin"}]}) == [["roles/storage.objectAdmin", "principal://${_pool}/github-actions-pool/subject/repo:acme/app:ref:refs/heads/main"]]
+  assert bucket.render_access(_build({region = "eu"}), {}) == [], "no access, no grants"
 }
 
 # Names come from the entry and the member, not the list position.
 test_access_names_stable_under_reordering = lambda {
-    _a = [{client = "github", owner = "acme"}, {client = "gitlab", owner = "g"}]
-    _names = lambda _l {
-        sorted([_i.metadata.annotations["krm.kcl.dev/composition-resource-name"] for _i in bucket.render_access(_build({region = "eu", federation.gcpProjectNumber = "42", access = _l}), {})])
-    }
-    assert _names(_a) == _names([_a[1], _a[0]])
-    _got = _names(_a)
-    assert all _n in _got {
-        _n.startswith("access-github-actions-pool-") or _n.startswith("access-gitlab-ci-pool-")
-    }
+  _a = [{client = "github", owner = "acme"}, {client = "gitlab", owner = "g"}]
+  _names = lambda _l {
+    sorted([_i.metadata.annotations["krm.kcl.dev/composition-resource-name"] for _i in bucket.render_access(_build({region = "eu", federation.gcpProjectNumber = "42", access = _l}), {})])
+  }
+  assert _names(_a) == _names([_a[1], _a[0]])
+  _got = _names(_a)
+  assert all _n in _got {
+    _n.startswith("access-github-actions-pool-") or _n.startswith("access-gitlab-ci-pool-")
+  }
 }
 
 # Grants bind to the composed bucket, or by name to an adopted one being managed.
 test_access_bucket_binding_and_policies = lambda {
-    _m = bucket.render_access(_build({region = "eu", federation.gcpProjectNumber = "42", deletionPolicy = "Orphan", access = [{client = "github", owner = "acme"}]}), {})[0]
-    assert _m.spec.forProvider.bucketSelector.matchControllerRef == True
-    assert _m.spec.managementPolicies == ["Observe", "Create", "Update", "LateInitialize"], "Orphan keeps the grant"
-    _i = bucket.render_access(_build({region = "eu", federation.gcpProjectNumber = "42", $import = {existingName = "legacy", mode = "manage"}, access = [{client = "github", owner = "acme"}]}), {})[0]
-    assert _i.spec.forProvider.bucket == "legacy"
+  _m = bucket.render_access(_build({region = "eu", federation.gcpProjectNumber = "42", deletionPolicy = "Orphan", access = [{client = "github", owner = "acme"}]}), {})[0]
+  assert _m.spec.forProvider.bucketSelector.matchControllerRef == True
+  assert _m.spec.managementPolicies == ["Observe", "Create", "Update", "LateInitialize"], "Orphan keeps the grant"
+  _i = bucket.render_access(_build({region = "eu", federation.gcpProjectNumber = "42", $import = {existingName = "legacy", mode = "manage"}, access = [{client = "github", owner = "acme"}]}), {})[0]
+  assert _i.spec.forProvider.bucket == "legacy"
 }
 
 test_access_failures = lambda {
-    _err = lambda _spec {
-        runtime.catch(lambda {
-            bucket.render_access(_build({region = "eu"} | _spec), {})
-        })
-    }
-    assert "gcpProjectNumber is required" in _err({access = [{client = "github", owner = "acme"}]})
-    assert "not GCP fields" in _err({federation = {gcpProjectNumber = "42", awsAccountId = "111122223333"}})
-    assert "import.mode observe" in _err({federation.gcpProjectNumber = "42", $import = {existingName = "legacy"}, access = [{client = "github", owner = "acme"}]})
-    assert "shared by every GitHub Actions user" in _err({federation.gcpProjectNumber = "42", access = [{client = "github"}]})
+  _err = lambda _spec {
+    runtime.catch(lambda {
+      bucket.render_access(_build({region = "eu"} | _spec), {})
+    })
+  }
+  assert "gcpProjectNumber is required" in _err({access = [{client = "github", owner = "acme"}]})
+  assert "not GCP fields" in _err({
+    federation = {gcpProjectNumber = "42", awsAccountId = "111122223333"}
+  })
+  assert "import.mode observe" in _err({federation.gcpProjectNumber = "42", $import = {existingName = "legacy"}, access = [{client = "github", owner = "acme"}]})
+  assert "shared by every GitHub Actions user" in _err({federation.gcpProjectNumber = "42", access = [{client = "github"}]})
 }
 
 # status.access names what each pipeline authenticates as.
 test_status_access = lambda {
-    _s = bucket.status(_build({region = "eu", federation.gcpProjectNumber = "42", access = [{client = "github", owner = "acme", role = "write"}]}), {}).status
-    assert _s.access == [{name = "github-actions-pool", role = "write", members = ["principalSet://${_pool}/github-actions-pool/*"]}]
-    assert "access" not in bucket.status(_build({region = "eu"}), {}).status
+  _s = bucket.status(_build({region = "eu", federation.gcpProjectNumber = "42", access = [{client = "github", owner = "acme", role = "write"}]}), {}).status
+  assert _s.access == [{name = "github-actions-pool", role = "write", members = ["principalSet://${_pool}/github-actions-pool/*"]}]
+  assert "access" not in bucket.status(_build({region = "eu"}), {}).status
 }
 
 test_render()
@@ -273,3 +274,20 @@ test_access_names_stable_under_reordering()
 test_access_bucket_binding_and_policies()
 test_access_failures()
 test_status_access()
+
+# spec.providerConfigName: the Bucket and every access member point at the
+# namespaced ProviderConfig; awsPermissionsBoundary is rejected like the other
+# non-GCP federation fields.
+test_provider_config_ref = lambda {
+  _s = {region = "eu", providerConfigName = "client-gcp", federation.gcpProjectNumber = "42", access = [{client = "github", owner = "acme"}]}
+  items = bucket.render(_build(_s)) + bucket.render_access(_build(_s), {})
+  assert len(items) > 1, "bucket plus access members"
+  _wrong = [_i.kind for _i in items if _i.spec?.providerConfigRef?.kind != "ProviderConfig" or _i.spec?.providerConfigRef?.name != "client-gcp"]
+  assert _wrong == [], "providerConfigRef missing or wrong on: ${_wrong}"
+  assert bucket.render(_build({region = "eu"}))[0].spec?.providerConfigRef == Undefined, "unset -> provider default"
+  _err = runtime.catch(lambda {
+    bucket.render_access(_build({region = "eu", federation = {gcpProjectNumber = "42", awsPermissionsBoundary = "arn:aws:iam::111122223333:policy/b"}}), {})
+  })
+  assert "not GCP fields" in _err, _err
+}
+test_provider_config_ref()

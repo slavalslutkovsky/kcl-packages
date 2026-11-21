@@ -29,7 +29,7 @@ workers = 3                  # worker node count
 db_workers = 1              # tainted db-dedicated workers
 ingress = true        # binds host ports 80/443 on the control plane
 #kcl_package = "oci://docker.io/yurikrupnik/cluster"
-#kcl_tag = "0.0.6"
+#kcl_tag = "0.1.5"
 
 [cluster.kcl_args]      # MUST sit directly after [cluster]'s scalar keys
 oidc_bucket = "my-oidc-bucket"
@@ -400,6 +400,30 @@ wave = 4
 [[deps]]
 name = "organization-examples"
 manifest = "packages/cloud/organization/xrd/examples/"
+wave = 5
+
+# The `mgmt` module: the infra repo's `mgmt` Pulumi stack (project, identities,
+# private GKE cluster, Cloud SQL, registry, DNS) as one XR. GCP only, and like
+# organization it needs an organization-level credential, so the example
+# exists to be rendered and diffed, not reconciled on a kind cluster.
+[[deps]]
+name = "mgmt-xrd"
+manifest = "packages/cloud/mgmt/xrd/xrd.yaml"
+wave = 2
+
+[[deps]]
+name = "mgmt-providers"
+manifest = "packages/cloud/mgmt/xrd/providers.yaml"
+wave = 3
+
+[[deps]]
+name = "mgmt-composition-gcp"
+manifest = "packages/cloud/mgmt/gcp/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "mgmt-examples"
+manifest = "packages/cloud/mgmt/xrd/examples/"
 wave = 5
 
 # The `component` module: one namespaced XR per deployable component, composed

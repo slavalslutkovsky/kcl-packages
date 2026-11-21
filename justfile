@@ -129,6 +129,13 @@ epics values="packages/epics/examples/values.yaml" data="packages/epics/examples
 epics-report values="packages/epics/examples/values.yaml" data="packages/epics/examples/epics.json" env="":
     kcl run packages/epics -D values={{ values }} -D data={{ data }} -D report=true {{ if env != "" { "-D env=" + env } else { "" } }} -q
 
+# The infra repo's mgmt Pulumi stack as data (packages/pulumi-mgmt): every
+# resource apps/mgmt declares, with its Pulumi type token, logical name and
+# typed Args, rendered from the stack file the program applies. `format` is
+# yaml or json; `output` a file (default stdout).
+pulumi-mgmt stack="../infra/apps/mgmt/Pulumi.prod.yaml" format="yaml" output="":
+    kcl run packages/pulumi-mgmt -D values={{ stack }} --format {{ format }} {{ if output != "" { "-o " + output } else { "" } }}
+
 # The portal side of the same values files: entities, not manifests. Piping
 # either of these into `kubectl apply` is a mistake — backstage.io/v1alpha1 is
 # not a Kubernetes API. See docs/backstage.md.
@@ -155,6 +162,17 @@ manager-phase type values="packages/manager/examples/values.yaml" env="":
 # Render the paid-feature records the gated Compositions read.
 entitlements values="":
     kcl run packages/platform/entitlement {{ if values != "" { "-D values=" + values } else { "" } }} -q
+
+# A tenant whose buckets are billed to its own AWS account: a namespaced
+# ProviderConfig per account (assume-role into the client's role) plus the
+# admission policy that makes Bucket spec.providerConfigName mandatory there.
+# `output=client` renders the CloudFormation template the client deploys
+# instead; `namespace` narrows that to one tenant. Only renders, never applies.
+#   just tenant-accounts accounts.yaml | kubectl apply -f -
+#   just tenant-accounts accounts.yaml client tenant-a > tenant-a.cfn.yaml
+# Render client-account ProviderConfigs (or the client's CloudFormation).
+tenant-accounts values="" output="cluster" namespace="":
+    kcl run packages/platform/tenant-account {{ if values != "" { "-D values=" + values } else { "" } }} -D output={{ output }} {{ if namespace != "" { "-D namespace=" + namespace } else { "" } }} -q
 
 # ─── Move buckets out of Terraform / Pulumi ───────────────────────────────────
 #   just bucket-import terraform.tfstate                 one XR per bucket, observe mode
@@ -383,6 +401,8 @@ seed-providers:
     just provider aws-s3        ghcr.io/crossplane-contrib/provider-aws-s3:v2.6.0        s3
     just provider gcp-storage   ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0   storage
     just provider azure-storage ghcr.io/crossplane-contrib/provider-azure-storage:v2.6.0 storage
+    # the family's (Cluster)ProviderConfig, typed for platform/tenant-account
+    just provider aws-family    ghcr.io/crossplane-contrib/provider-family-aws:v2.6.0
 
 # A static page on a custom domain is three services per cloud, not one: the
 # object store, the CDN that is the only place TLS can terminate, and (on AWS)
@@ -508,13 +528,16 @@ seed-application-providers:
 # RedisInstance attaches to those), so the aws backend renders against three
 # schema packages. It shares aws-ec2 with `seed-vm-providers`, aws-rds with
 # `seed-postgres-providers` and aws-elasticache with `seed-redis-providers`.
+# The gcp backend adds servicenetworking for the private-service-access peering
+# (spec.servicePeering).
 # There is no in-cluster backend: a Kubernetes cluster already has a network.
 # Bootstrap/refresh the network providers used by the network Composition.
 seed-network-providers:
-    just provider aws-ec2         ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0         ec2
-    just provider aws-rds         ghcr.io/crossplane-contrib/provider-aws-rds:v2.6.0         rds
-    just provider aws-elasticache ghcr.io/crossplane-contrib/provider-aws-elasticache:v2.6.0 elasticache
-    just provider gcp-compute     ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0     compute
+    just provider aws-ec2               ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0               ec2
+    just provider aws-rds               ghcr.io/crossplane-contrib/provider-aws-rds:v2.6.0               rds
+    just provider aws-elasticache       ghcr.io/crossplane-contrib/provider-aws-elasticache:v2.6.0       elasticache
+    just provider gcp-compute           ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0           compute
+    just provider gcp-servicenetworking ghcr.io/crossplane-contrib/provider-gcp-servicenetworking:v2.6.0 servicenetworking
 
 # Each cloud files its hub under a different service, so there is no shared
 # family here: the Transit Gateway is ec2 (shared with `seed-network-providers`
@@ -527,6 +550,22 @@ seed-hubspoke-providers:
     just provider aws-ec2                   ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0                   ec2
     just provider azure-network             ghcr.io/crossplane-contrib/provider-azure-network:v2.6.0             network
     just provider gcp-networkconnectivity   ghcr.io/crossplane-contrib/provider-gcp-networkconnectivity:v2.6.0   networkconnectivity
+
+# The mgmt plane (the infra `mgmt` Pulumi stack as one XR) touches ten GCP
+# services. All but binaryauthorization and secretmanager are shared with other
+# modules' recipes (cluster, postgres, dns, kms, registry, bucket, iam, network).
+# Bootstrap/refresh the providers used by the mgmt Composition.
+seed-mgmt-providers:
+    just provider gcp-artifact            ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0            artifact
+    just provider gcp-binaryauthorization ghcr.io/crossplane-contrib/provider-gcp-binaryauthorization:v2.6.0 binaryauthorization
+    just provider gcp-cloudplatform       ghcr.io/crossplane-contrib/provider-gcp-cloudplatform:v2.6.0       cloudplatform
+    just provider gcp-compute             ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0             compute
+    just provider gcp-container           ghcr.io/crossplane-contrib/provider-gcp-container:v2.6.0           container
+    just provider gcp-dns                 ghcr.io/crossplane-contrib/provider-gcp-dns:v2.6.0                 dns
+    just provider gcp-kms                 ghcr.io/crossplane-contrib/provider-gcp-kms:v2.6.0                 kms
+    just provider gcp-secretmanager       ghcr.io/crossplane-contrib/provider-gcp-secretmanager:v2.6.0       secretmanager
+    just provider gcp-sql                 ghcr.io/crossplane-contrib/provider-gcp-sql:v2.6.0                 sql
+    just provider gcp-storage             ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0             storage
 
 # Lambda needs an execution role, so the serverless Composition shares the
 # aws-iam schema package with `seed-iam-providers`. The knative schema package
@@ -813,6 +852,12 @@ graph-check:
 # repos are checked out, so regenerate it from the workspace.
 package-graph:
     node tools/graph/src/package-graph.ts
+
+# The same page as a local server on 127.0.0.1:<port>: every load rescans the
+# repos, so a reload shows the current state and docs/packages/index.html is
+# left alone. The workspace's butler dashboard frames it (`[ui.kcl-packages]`).
+package-graph-serve port="4560":
+    node tools/graph/src/package-graph.ts serve {{ port }}
 
 # Dependency findings over the same scan; exits 1 on an error: a cycle, a path dep
 # with no kcl.mod, an oci pin older or newer than its source, or one package name

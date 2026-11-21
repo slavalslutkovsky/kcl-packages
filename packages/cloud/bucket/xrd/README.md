@@ -20,6 +20,7 @@ this schema before they reach the API server.
 | field | type | required | default | meaning |
 | --- | --- | :-: | --- | --- |
 | `region` | string | ✓ | | GCS location / S3 region |
+| `providerConfigName` | string | | | The cloud account the bucket is created in and billed to: a namespaced ProviderConfig in the XR's namespace, set as `providerConfigRef` on every composed resource. Unset: the provider default (`ClusterProviderConfig/default`, the platform's account). Rejected by rustfs. Client AWS accounts: [platform/tenant-account](../../../platform/tenant-account/README.md) |
 | `storageClass` | `standard` \| `nearline` \| `cold` \| `archive` | | `standard` | Abstract tier, mapped per cloud |
 | `versioning` | bool | | `true` | Keep noncurrent object versions |
 | `forceDestroy` | bool | | `false` | Delete contained objects when the bucket is destroyed |
@@ -36,7 +37,7 @@ this schema before they reach the API server.
 | `lifecycleRules` | list | | | Rules: `id` (required), `prefix` (default `""`), `expirationDays`, `transitionDays`, `transitionStorageClass` |
 | `import` | object | | | Adopt an existing bucket: `existingName` (required), `mode` `observe` (default) \| `manage`, `source` `terraform` \| `pulumi` \| `other`, `address`, `resourceGroup` (Azure only). See [docs/bucket-import.md](../../../../docs/bucket-import.md) |
 | `access` | list | | | Keyless access for CI pipelines and the ticket systems that start them: each entry is a [federation](../../federation/README.md) binding (`client` or `customClient`; `ticket` or `customTicket`; `owner`, `repositories`, `workflows`, `subjects`, `audiences`, `condition`, `host`, `issuerUri`, `pool`, `provider`) plus `role` `read` (default) \| `write` \| `admin` |
-| `federation` | object | | | Where `access` trusts tokens: `gcpProjectNumber` (GCP pools), `awsAccountId` (IAM OIDC providers), `azureResourceGroup` (access identities; default `import.resourceGroup`). Only the backend's own field may be set |
+| `federation` | object | | | Where `access` trusts tokens: `gcpProjectNumber` (GCP pools), `awsAccountId` (IAM OIDC providers), `awsPermissionsBoundary` (managed policy ARN capping every AWS access role, tagged onto it too), `azureResourceGroup` (access identities; default `import.resourceGroup`). Only the backend's own fields may be set |
 
 ### `access` per backend
 

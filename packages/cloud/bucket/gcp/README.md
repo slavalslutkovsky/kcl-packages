@@ -22,6 +22,7 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 | field | maps to (`forProvider.`) |
 | --- | --- |
 | `region` | `location` |
+| `providerConfigName` | `providerConfigRef: {kind: ProviderConfig, name: <it>}` on the Bucket and every `BucketIAMMember`: the namespaced ProviderConfig of the project billed. Unset: the provider default |
 | `storageClass` | `storageClass` (`STANDARD` / `NEARLINE` / `COLDLINE` / `ARCHIVE`); a non-`standard` tier also adds a `SetStorageClass` lifecycle rule at age 0 |
 | `versioning` | `versioning.enabled` |
 | `blockPublicAccess` | `publicAccessPrevention`: `enforced`, else `inherited` |
@@ -46,7 +47,7 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 [docs/bucket-import.md](../../../../docs/bucket-import.md).
 
 `access` fails the render without `federation.gcpProjectNumber`, with
-`federation.awsAccountId` / `azureResourceGroup`, or with `import.mode: observe`
+`federation.awsAccountId` / `awsPermissionsBoundary` / `azureResourceGroup`, or with `import.mode: observe`
 (a grant writes the bucket's IAM). `deletionPolicy: Orphan` applies to the
 grants too.
 

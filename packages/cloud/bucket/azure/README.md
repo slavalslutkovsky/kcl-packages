@@ -40,6 +40,7 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 | field | maps to |
 | --- | --- |
 | `region` | `Account.forProvider.location` |
+| `providerConfigName` | `providerConfigRef: {kind: ProviderConfig, name: <it>}` on the `Account`, the `ManagementPolicy` and every access resource: the namespaced ProviderConfig of the subscription billed. Unset: the provider default |
 | `storageClass` | `accessTier`: `standard` → `Hot`, `nearline` → `Cool`, `cold` and `archive` → `Cold` (Azure has no account-level Archive, hence the `ManagementPolicy`) |
 | `tags` | `Account.forProvider.tags` |
 | `deletionPolicy` | `Orphan` → `managementPolicies: [Observe, Create, Update, LateInitialize]`; `Delete` leaves the schema default `["*"]` |
@@ -50,7 +51,7 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 | `access[]` | the access resources above, one set per entry; validated by the [`federation`](../../federation) library. Azure trusts only the token's `sub` and `aud`, matched exactly: every entry needs `subjects` (at most 20, no duplicates); `audiences` default to the client's Azure audience (`api://AzureADTokenExchange` for GitHub) |
 | `access[].role` | `RoleAssignment.roleDefinitionName` (default `read`): blob data only, never account configuration, keys or IAM |
 | `federation.azureResourceGroup` | Resource Group of the access identities and credentials; defaults to `import.resourceGroup`, one of them is required with `access` |
-| `federation.gcpProjectNumber`, `federation.awsAccountId` | rejected — other clouds only |
+| `federation.gcpProjectNumber`, `federation.awsAccountId`, `federation.awsPermissionsBoundary` | rejected — other clouds only |
 
 Every other portable field — `versioning`, `forceDestroy`,
 `blockPublicAccess`, `uniformAccess`, `encryptionKmsKeyId`, `requesterPays`,

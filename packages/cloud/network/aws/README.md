@@ -57,7 +57,7 @@ Full schema: [../xrd/xrd.yaml](../xrd/xrd.yaml).
 | `databaseSubnetGroups` | `true` | RDS and ElastiCache subnet groups |
 | `deletionPolicy` | `Delete` | `Orphan` → `managementPolicies: [Observe, Create, Update, LateInitialize]` on every MR |
 | `tags` | `{}` | merged over a `Name` tag (`<mr-name>`) on every taggable MR; user tags win |
-| `serviceRange`, `privateGoogleAccess` | | ignored (GCP only) |
+| `serviceRange`, `servicePeering`, `privateGoogleAccess`, `subnets` | | ignored (GCP only) |
 
 Status written back to the XR (observed values keyed by composition resource
 name):
@@ -76,7 +76,7 @@ name):
 | `dbSubnetGroupName` / `cacheSubnetGroupName` | `<xr>-db` / `<xr>-cache` (observed id when present), only with `databaseSubnetGroups` |
 | `cloud-url` | VPC console link |
 
-`selfLink` and `serviceRange` are never set.
+`selfLink`, `serviceRange` and `subnets` are never set.
 
 ## Usage
 

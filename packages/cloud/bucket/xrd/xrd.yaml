@@ -26,6 +26,19 @@ spec:
                 region:
                   type: string
                   description: Cloud region/location for the Bucket (GCS location / S3 region).
+                providerConfigName:
+                  type: string
+                  pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                  description: |
+                    Cloud account the bucket is created in — and billed to. Names a
+                    namespaced ProviderConfig in this XR's namespace; every composed
+                    managed resource gets providerConfigRef {kind: ProviderConfig,
+                    name: <this>}, so a tenant can only reach the accounts configured
+                    in its own namespace (packages/platform/tenant-account renders
+                    them for client-owned AWS accounts). Unset keeps the provider
+                    default, the ClusterProviderConfig `default` — the platform's own
+                    account. Rejected by the rustfs backend, which always uses its
+                    in-cluster `rustfs` config.
                 storageClass:
                   type: string
                   enum: [standard, nearline, cold, archive]
@@ -269,6 +282,10 @@ spec:
                       type: string
                       pattern: '^[0-9]{12}$'
                       description: AWS-only — account whose IAM OIDC providers (one per issuer, created outside this XR) the roles trust.
+                    awsPermissionsBoundary:
+                      type: string
+                      pattern: '^arn:aws[a-z-]*:iam::[0-9]{12}:policy/.+$'
+                      description: AWS-only — managed policy ARN set as the permissionsBoundary of every access role. Required by an account whose provisioner role may only create boundary-capped roles (a client account from packages/platform/tenant-account with accessRoles); optional otherwise.
                     azureResourceGroup:
                       type: string
                       description: Azure-only — Resource Group for the access identities; defaults to import.resourceGroup.

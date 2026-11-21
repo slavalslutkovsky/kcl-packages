@@ -1,0 +1,67 @@
+# The infra mgmt stack's Pulumi.prod.yaml, as a Mgmt XR (placeholder
+# organization: swap the ids for the real ones). What the stack reads from the
+# organization, network and security stacks is spelled out:
+#   folders.*      organization stack *FolderId outputs
+#   network        network stack networkHosts.mgmt (or a Network XR's status:
+#                  selfLink, subnets[0].selfLink; see network-gcp-gke.yaml)
+#   devNetwork     networkHosts.dev
+#   keys.*         security stack gkeSecretsKeyId, cloudsqlKeyId, openbaoUnsealKeyId
+apiVersion: cloud.example.org/v1alpha1
+kind: Mgmt
+metadata:
+  namespace: default
+  name: mgmt
+spec:
+  region: me-west1                      # gcp:region
+  zone: me-west1-a                      # mgmt:zone
+  prefix: demo                          # org:prefix -> project demo-mgmt
+  billingAccount: 000000-000000-000000  # org:billingAccount
+  domain: example.com                   # org:orgDomain
+  folders:
+    platform: "100000000001"
+    dev: "100000000002"
+    staging: "100000000003"
+    network: "100000000004"
+    prod: "100000000005"
+  network:
+    hostProject: demo-net-mgmt
+    network: https://www.googleapis.com/compute/v1/projects/demo-net-mgmt/global/networks/mgmt
+    subnetwork: https://www.googleapis.com/compute/v1/projects/demo-net-mgmt/regions/me-west1/subnetworks/mgmt-me-west1
+    podsRange: pods
+    servicesRange: services
+  devNetwork:
+    hostProject: demo-net-dev
+    subnetwork: https://www.googleapis.com/compute/v1/projects/demo-net-dev/regions/me-west1/subnetworks/dev-me-west1
+  keys:
+    gkeSecrets: projects/demo-security/locations/me-west1/keyRings/platform/cryptoKeys/gke-secrets
+    cloudsql: projects/demo-security/locations/me-west1/keyRings/platform/cryptoKeys/cloudsql
+    openbaoUnseal: projects/demo-security/locations/me-west1/keyRings/platform/cryptoKeys/openbao-unseal
+  cluster:
+    nodeMachineType: e2-standard-4      # mgmt:nodeMachineType
+    minNodesPerZone: 3                  # mgmt:minNodesPerZone
+    maxNodesPerZone: 5                  # mgmt:maxNodesPerZone
+    ciMaxNodesPerZone: 4                # mgmt:ciMaxNodesPerZone
+  postgres:
+    enabled: true                       # mgmt:postgres
+    tier: db-custom-1-3840              # mgmt:postgresTier
+    databases:
+      - name: keycloak
+        passwordSecretRef: {name: mgmt-postgres-keycloak}
+      - name: events
+        passwordSecretRef: {name: mgmt-postgres-events}
+      - name: terran
+        passwordSecretRef: {name: mgmt-postgres-terran}
+      - name: todo
+        passwordSecretRef: {name: mgmt-postgres-todo}
+      - name: flagsmith
+        passwordSecretRef: {name: mgmt-postgres-flagsmith}
+  dns:
+    records:
+      - {id: mx, type: MX, rrdatas: ["1 smtp.google.com."]}
+      - {id: apex-txt, type: TXT, rrdatas: ['"v=spf1 include:_spf.google.com ~all"']}
+      - {id: www, name: www., type: CNAME, rrdatas: [example.com.]}
+  deletionPolicy: Orphan
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp

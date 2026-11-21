@@ -5,6 +5,8 @@
  * look at, a CI gate, and the order to act in.
  *
  *   node tools/graph/src/package-graph.ts                write docs/packages/index.html
+ *   node tools/graph/src/package-graph.ts serve [port]   serve that page on 127.0.0.1 (default 4560),
+ *                                                        rescanning on every load: reload = current
  *   node tools/graph/src/package-graph.ts check          print findings; exit 1 on any error
  *   node tools/graph/src/package-graph.ts impact <pkg>   bump/publish order downstream of <pkg>,
  *                                                        and the files that consume it
@@ -49,6 +51,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { basename, dirname, posix, relative, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 
@@ -147,7 +150,7 @@ interface Graph {
 // ------------------------------------------------------------------- args ---
 
 interface Args {
-  command: "page" | "check" | "impact" | "cypher";
+  command: "page" | "check" | "impact" | "cypher" | "serve";
   target: string | null;
   json: boolean;
   repos: Repo[];
@@ -169,7 +172,8 @@ function parseArgs(argv: string[]): Args {
     else positional.push(a);
   }
   const command = (positional[0] ?? "page") as Args["command"];
-  if (!["page", "check", "impact", "cypher"].includes(command)) throw new Error(`unknown command ${command}`);
+  if (!["page", "check", "impact", "cypher", "serve"].includes(command)) throw new Error(`unknown command ${command}`);
+  if (command === "serve" && positional[1] && !/^\d+$/.test(positional[1])) throw new Error(`serve wants a port, got ${positional[1]}`);
   if (command === "impact" && !positional[1]) throw new Error("impact wants a package: name, <repo>:<path> or a path");
   return { command, target: positional[1] ?? null, json, repos: explicit.length ? [{ name: SELF, dir: root }, ...explicit] : detectRepos() };
 }
@@ -652,16 +656,41 @@ function summary(graph: Graph): string {
   return `${pkgs.length} packages in ${graph.repos.map((r) => `${r.name} (${r.packages})`).join(", ")}; ${graph.edges.length} dependencies; ${graph.refs.length} references; ${tiers}`;
 }
 
+/** The page: the template with the graph inlined, `<` escaped so no string in the data can close the script element. */
+function page(graph: Graph): string {
+  const data = JSON.stringify(graph).replace(/</g, "\\u003c");
+  return readFileSync(templatePath, "utf8").replace("__GRAPH_DATA__", () => data);
+}
+
+/** Serve the page, rebuilt from the repos on every load; nothing is written. */
+function serve(repos: Repo[], port: number): void {
+  createServer((req, res) => {
+    const path = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (req.method !== "GET" || (path !== "/" && path !== "/index.html")) {
+      res.writeHead(404).end();
+      return;
+    }
+    try {
+      const graph = build(repos);
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }).end(page(graph));
+      console.log(`${new Date().toISOString()} ${summary(graph)}`);
+    } catch (e) {
+      res.writeHead(500, { "content-type": "text/plain; charset=utf-8" }).end(`package-graph: ${e instanceof Error ? e.message : e}\n`);
+    }
+  }).listen(port, "127.0.0.1", () => console.log(`serving the KCL package graph on http://127.0.0.1:${port}`));
+}
+
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
+  if (args.command === "serve") {
+    serve(args.repos, Number(args.target ?? 4560));
+    return;
+  }
   const graph = build(args.repos);
 
   if (args.command === "page") {
-    const template = readFileSync(templatePath, "utf8");
-    // `<` escaped so no string in the data can close the script element.
-    const data = JSON.stringify(graph).replace(/</g, "\\u003c");
     mkdirSync(dirname(outPath), { recursive: true });
-    writeFileSync(outPath, template.replace("__GRAPH_DATA__", () => data));
+    writeFileSync(outPath, page(graph));
     console.log(`wrote ${relative(root, outPath)}: ${summary(graph)}`);
     return;
   }

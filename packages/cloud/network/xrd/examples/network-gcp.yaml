@@ -8,7 +8,7 @@ spec:
   cidr: 10.0.0.0/16                # primary ipCidrRange of the one regional Subnetwork
   natGateway: true                 # Cloud Router + Cloud NAT (ALL_SUBNETWORKS_ALL_IP_RANGES, AUTO_ONLY)
   privateGoogleAccess: true        # Subnetwork privateIpGoogleAccess
-  serviceRange: 10.240.0.0/16      # VPC_PEERING GlobalAddress; the servicenetworking peering itself is out of band
+  serviceRange: 10.240.0.0/16      # VPC_PEERING GlobalAddress; servicePeering: true would also compose the servicenetworking peering
   allowInternalIngress: true       # ingress Firewall allowing all protocols from cidr
   deletionPolicy: Orphan           # Delete | Orphan — Orphan keeps the network, subnetwork, router, NAT and rules
   tags:                            # GlobalAddress labels only; Network, Subnetwork, Router, RouterNAT and Firewall take no labels

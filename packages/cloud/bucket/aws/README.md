@@ -37,7 +37,7 @@ provider-aws-iam; `<name>` is the entry's pool id, plus `-<provider>` when
 
 | resource | when | notes |
 | --- | --- | --- |
-| `Role` (`access-<name>`) | always | `crossplane.io/external-name` pinned to `<xr namespace>-<xr name>-<name>` (over 64 characters: its first 55 + `-` + 8 hex of its sha256); `assumeRolePolicy` = `sts:AssumeRoleWithWebIdentity` from `arn:aws:iam::<awsAccountId>:oidc-provider/<issuer host>` with `<host>:aud` (StringEquals) and `<host>:sub` (StringLike) from the federation library; `description` names the XR, client and ticket system; `tags` |
+| `Role` (`access-<name>`) | always | `crossplane.io/external-name` pinned to `<xr namespace>-<xr name>-<name>` (over 64 characters: its first 55 + `-` + 8 hex of its sha256); `assumeRolePolicy` = `sts:AssumeRoleWithWebIdentity` from `arn:aws:iam::<awsAccountId>:oidc-provider/<issuer host>` with `<host>:aud` (StringEquals) and `<host>:sub` (StringLike) from the federation library; `description` names the XR, client and ticket system; `tags`; with `federation.awsPermissionsBoundary`, `permissionsBoundary` plus the tag `cloud.example.org/permissions-boundary: <boundary ARN>` (set last, so `spec.tags` cannot override it) |
 | `RolePolicy` (`access-<name>-policy`) | once the bucket name is known: `import.existingName`, else the observed Bucket's `atProvider.id` (second pass) | inline policy on the pinned role, statements `Bucket` (`arn:aws:s3:::<bucket>`), `Objects` (`arn:aws:s3:::<bucket>/*`) and, with `encryptionKmsKeyId`, `Kms` on that key |
 
 Actions per `role` (object data only, never bucket configuration, bucket
@@ -59,6 +59,7 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 | field | maps to |
 | --- | --- |
 | `region` | `forProvider.region` on every resource |
+| `providerConfigName` | `providerConfigRef: {kind: ProviderConfig, name: <it>}` on every resource, access roles and policies included: the namespaced ProviderConfig of the account the bucket is created in and billed to ([platform/tenant-account](../../../platform/tenant-account) renders them for client accounts). Unset: no ref, the provider default `ClusterProviderConfig/default` |
 | `storageClass` | S3 has no bucket tier: a lifecycle transition — `nearline` → `STANDARD_IA` after 30 days, `cold` → `GLACIER_IR` after 90, `archive` → `DEEP_ARCHIVE` after 180; `standard` adds nothing |
 | `lifecycleRules[]` | lifecycle rules: `prefix` filter, `expirationDays`, and `transitionDays` + `transitionStorageClass` (`standard`/`nearline`/`cold`/`archive` → `STANDARD`/`STANDARD_IA`/`GLACIER_IR`/`DEEP_ARCHIVE`) |
 | `versioning`, `blockPublicAccess`, `uniformAccess`, `encryptionKmsKeyId`, `requesterPays`, `retention`, `cors`, `logging`, `website`, `tags`, `forceDestroy` | the companions above |
@@ -68,6 +69,7 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 | `import.source`, `import.address` | annotations `cloud.example.org/imported-from`, `cloud.example.org/import-address` |
 | `access[]` | the access resources above; the federation fields (client/owner/repositories/subjects/audiences/...) go through `packages/cloud/federation` `aws_trust`: AWS sees only `sub` and `aud`, so `ticket`, `workflows` or `condition` without explicit `subjects` fail the render |
 | `federation.awsAccountId` | account of the trusted IAM OIDC providers; required with `access` |
+| `federation.awsPermissionsBoundary` | `permissionsBoundary` and the boundary tag on every access `Role`; must be a policy of `awsAccountId`. Required in a client account whose provisioner role only creates capped roles (tenant-account `accessRoles`) |
 
 `import.resourceGroup` is ignored (Azure only). Adoption is walked through in
 [docs/bucket-import.md](../../../../docs/bucket-import.md).
@@ -75,8 +77,10 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 The render fails (`bucket-aws: ...`) when `access` is set without
 `federation.awsAccountId`, when `federation.gcpProjectNumber` or
 `federation.azureResourceGroup` is set, when `access` is combined with an
-observe-mode import (access writes IAM), and when `access` meets an
-`encryptionKmsKeyId` that is not a key ARN (the policy grants on the ARN).
+observe-mode import (access writes IAM), when `access` meets an
+`encryptionKmsKeyId` that is not a key ARN (the policy grants on the ARN), and
+when `federation.awsPermissionsBoundary` is a policy of another account than
+`federation.awsAccountId`.
 
 Status written back to the XR:
 

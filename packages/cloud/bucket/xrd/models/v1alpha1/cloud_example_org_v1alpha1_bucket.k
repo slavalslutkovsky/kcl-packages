@@ -80,6 +80,17 @@ schema CloudExampleOrgV1alpha1BucketSpec:
         Object lifecycle management rules (in addition to the storageClass tier mapping).
     logging : CloudExampleOrgV1alpha1BucketSpecLogging, default is Undefined, optional
         logging
+    providerConfigName : str, default is Undefined, optional
+        Cloud account the bucket is created in — and billed to. Names a
+        namespaced ProviderConfig in this XR's namespace; every composed
+        managed resource gets providerConfigRef {kind: ProviderConfig,
+        name: <this>}, so a tenant can only reach the accounts configured
+        in its own namespace (packages/platform/tenant-account renders
+        them for client-owned AWS accounts). Unset keeps the provider
+        default, the ClusterProviderConfig `default` — the platform's own
+        account. Rejected by the rustfs backend, which always uses its
+        in-cluster `rustfs` config.
+
     region : str, default is Undefined, required
         Cloud region/location for the Bucket (GCS location / S3 region).
     requesterPays : bool, default is Undefined, optional
@@ -108,6 +119,7 @@ schema CloudExampleOrgV1alpha1BucketSpec:
     $import?: CloudExampleOrgV1alpha1BucketSpecImport
     lifecycleRules?: [CloudExampleOrgV1alpha1BucketSpecLifecycleRulesItems0]
     logging?: CloudExampleOrgV1alpha1BucketSpecLogging
+    providerConfigName?: str
     region: str
 
     requesterPays?: bool = False
@@ -117,6 +129,9 @@ schema CloudExampleOrgV1alpha1BucketSpec:
     uniformAccess?: bool = True
     versioning?: bool = True
     website?: CloudExampleOrgV1alpha1BucketSpecWebsite
+
+    check:
+        _regex_match(str(providerConfigName), r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$") if providerConfigName
 
 schema CloudExampleOrgV1alpha1BucketSpecAccessItems0:
     r"""
@@ -359,17 +374,21 @@ schema CloudExampleOrgV1alpha1BucketSpecFederation:
     ----------
     awsAccountId : str, default is Undefined, optional
         AWS-only — account whose IAM OIDC providers (one per issuer, created outside this XR) the roles trust.
+    awsPermissionsBoundary : str, default is Undefined, optional
+        AWS-only — managed policy ARN set as the permissionsBoundary of every access role. Required by an account whose provisioner role may only create boundary-capped roles (a client account from packages/platform/tenant-account with accessRoles); optional otherwise.
     azureResourceGroup : str, default is Undefined, optional
         Azure-only — Resource Group for the access identities; defaults to import.resourceGroup.
     gcpProjectNumber : str, default is Undefined, optional
         GCP-only — number of the project holding the workload identity pools the access entries name.
     """
     awsAccountId?: str
+    awsPermissionsBoundary?: str
     azureResourceGroup?: str
     gcpProjectNumber?: str
 
     check:
         _regex_match(str(awsAccountId), r"^[0-9]{12}$") if awsAccountId
+        _regex_match(str(awsPermissionsBoundary), r"^arn:aws[a-z-]*:iam::[0-9]{12}:policy/.+$") if awsPermissionsBoundary
         _regex_match(str(gcpProjectNumber), r"^[0-9]+$") if gcpProjectNumber
 
 schema CloudExampleOrgV1alpha1BucketSpecImport:

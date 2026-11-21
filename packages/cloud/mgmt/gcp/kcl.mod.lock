@@ -1,0 +1,49 @@
+[dependencies]
+  [dependencies.gcp-artifact]
+    name = "gcp-artifact"
+    full_name = "gcp-artifact_0.0.1"
+    version = "0.0.1"
+  [dependencies.gcp-binaryauthorization]
+    name = "gcp-binaryauthorization"
+    full_name = "gcp-binaryauthorization_0.0.1"
+    version = "0.0.1"
+  [dependencies.gcp-cloudplatform]
+    name = "gcp-cloudplatform"
+    full_name = "gcp-cloudplatform_0.0.1"
+    version = "0.0.1"
+  [dependencies.gcp-compute]
+    name = "gcp-compute"
+    full_name = "gcp-compute_0.0.1"
+    version = "0.0.1"
+  [dependencies.gcp-container]
+    name = "gcp-container"
+    full_name = "gcp-container_0.0.1"
+    version = "0.0.1"
+  [dependencies.gcp-dns]
+    name = "gcp-dns"
+    full_name = "gcp-dns_0.0.1"
+    version = "0.0.1"
+  [dependencies.gcp-kms]
+    name = "gcp-kms"
+    full_name = "gcp-kms_0.0.1"
+    version = "0.0.1"
+  [dependencies.gcp-secretmanager]
+    name = "gcp-secretmanager"
+    full_name = "gcp-secretmanager_0.0.1"
+    version = "0.0.1"
+  [dependencies.gcp-sql]
+    name = "gcp-sql"
+    full_name = "gcp-sql_0.0.1"
+    version = "0.0.1"
+  [dependencies.gcp-storage]
+    name = "gcp-storage"
+    full_name = "gcp-storage_0.0.1"
+    version = "0.0.1"
+  [dependencies.k8s]
+    name = "k8s"
+    full_name = "k8s_1.32.4"
+    version = "1.32.4"
+    sum = "WrltC/mTXtdzmhBZxlvM71wJL5C/UZ/vW+bF3nFvNbM="
+    reg = "ghcr.io"
+    repo = "kcl-lang/k8s"
+    oci_tag = "1.32.4"

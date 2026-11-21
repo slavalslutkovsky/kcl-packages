@@ -26,8 +26,9 @@ spec:
                 native resources (AWS VPC + public/private Subnets + Internet
                 Gateway + NAT Gateway + Route Tables + Security Group + RDS and
                 ElastiCache subnet groups, GCP VPC Network + regional
-                Subnetwork + Cloud Router + Cloud NAT + Firewall + a reserved
-                range for private service access). Fields a backend cannot
+                Subnetworks + Cloud Router + Cloud NAT per region + Firewall +
+                a reserved range for private service access and, opt-in, its
+                servicenetworking peering). Fields a backend cannot
                 express are documented as ignored rather than silently dropped.
               properties:
                 region:
@@ -36,13 +37,13 @@ spec:
                 cidr:
                   type: string
                   default: 10.0.0.0/16
-                  description: 'IPv4 address space of the network. AWS becomes the VPC cidrBlock, which is then carved into subnets (see subnetPrefixLength); GCP becomes the primary IP range of the single regional Subnetwork (its VPC is custom-mode, so the network itself holds no range).'
+                  description: 'IPv4 address space of the network. AWS becomes the VPC cidrBlock, which is then carved into subnets (see subnetPrefixLength). GCP without subnets: the primary IP range of the single regional Subnetwork (its VPC is custom-mode, so the network itself holds no range). GCP with subnets: the address block every subnet primary and secondary range must lie inside (the render fails otherwise); no Subnetwork takes it whole.'
                 subnetPrefixLength:
                   type: integer
                   default: 20
                   minimum: 16
                   maximum: 28
-                  description: AWS-only — prefix length of each derived subnet. Subnets are carved from cidr in order, one private then one public per availability zone. Ignored by GCP, which uses cidr as one regional range.
+                  description: AWS-only — prefix length of each derived subnet. Subnets are carved from cidr in order, one private then one public per availability zone. Ignored by GCP, which uses cidr as one regional range or takes an explicit plan from subnets.
                 availabilityZones:
                   type: array
                   items: {type: string}
@@ -54,10 +55,43 @@ spec:
                 natGateway:
                   type: boolean
                   default: true
-                  description: Give private workloads outbound internet access. AWS creates one NAT Gateway (plus its Elastic IP) in the first public subnet and points the private route table at it; GCP creates a Cloud Router and a Cloud NAT covering the subnetwork.
+                  description: Give private workloads outbound internet access. AWS creates one NAT Gateway (plus its Elastic IP) in the first public subnet and points the private route table at it; GCP creates a Cloud Router and a Cloud NAT (ALL_SUBNETWORKS_ALL_IP_RANGES, so secondary ranges egress too) in every region that has a subnetwork.
+                subnets:
+                  type: array
+                  description: 'GCP-only — explicit address plan: one regional Subnetwork per entry instead of a single one over cidr, each with optional named secondary ranges (GKE pods/services). With subnets set, cidr becomes the address block; every range must be an aligned IPv4 CIDR (host bits clear) inside it, no two ranges (primaries, secondaries, serviceRange) may overlap, and names must be unique, or the render fails. Published per subnet as status.subnets. Ignored by AWS, which carves its subnets from cidr (see subnetPrefixLength).'
+                  items:
+                    type: object
+                    required: [cidr]
+                    properties:
+                      name:
+                        type: string
+                        description: GCP subnetwork name (pinned as its external name). Default <xr-name>-<region>.
+                      region:
+                        type: string
+                        description: Region of this subnetwork. Default spec.region.
+                      cidr:
+                        type: string
+                        description: Primary IPv4 range (nodes and VMs).
+                      secondaryRanges:
+                        type: object
+                        additionalProperties:
+                          type: string
+                        description: Secondary ranges by name, e.g. {pods = 10.10.32.0/19, services = 10.10.16.0/22} for a GKE ipAllocationPolicy.
+                      privateGoogleAccess:
+                        type: boolean
+                        description: Subnetwork privateIpGoogleAccess. Default spec.privateGoogleAccess.
+                      flowLogSampling:
+                        type: number
+                        minimum: 0
+                        maximum: 1
+                        description: VPC flow-log sampling rate. Unset leaves flow logs as GCP / the org policy has them; 0 turns them explicitly off (enableFlowLogs false); above 0 enables them with 5-minute aggregation and all metadata.
                 serviceRange:
                   type: string
-                  description: 'GCP-only — CIDR reserved for private service access, i.e. the range Google-managed services (Cloud SQL private IP, Memorystore) get their addresses from. Creates a VPC_PEERING GlobalAddress with that range and publishes it as status.serviceRange. NOTE the VPC peering itself (servicenetworking.googleapis.com) is NOT managed here: provider-gcp ships no ServiceNetworkingConnection resource, so the peering is a one-time out-of-band step per network. Ignored by AWS, where subnet groups play this role.'
+                  description: 'GCP-only — CIDR reserved for private service access, i.e. the range Google-managed services (Cloud SQL private IP, Memorystore) get their addresses from. Creates a VPC_PEERING GlobalAddress with that range and publishes it as status.serviceRange. The servicenetworking.googleapis.com peering that consumes it is composed only with servicePeering. Ignored by AWS, where subnet groups play this role.'
+                servicePeering:
+                  type: boolean
+                  default: false
+                  description: 'GCP-only — also compose the servicenetworking Connection peering the serviceRange reservation to servicenetworking.googleapis.com, without which no managed service can use the range. Needs serviceRange; no effect without it. Off by default because networks created before this field did the peering out of band, and a second CreateConnection would fight it. Ignored by AWS.'
                 privateGoogleAccess:
                   type: boolean
                   default: true
@@ -113,7 +147,7 @@ spec:
                 privateSubnetIds:
                   type: array
                   items: {type: string}
-                  description: Subnets with no inbound route from the internet (AWS), or the single regional subnetwork (GCP).
+                  description: Subnets with no inbound route from the internet (AWS), or every observed subnetwork in spec.subnets order (GCP; the single regional subnetwork without subnets).
                 securityGroupIds:
                   type: array
                   items: {type: string}
@@ -124,6 +158,29 @@ spec:
                 cacheSubnetGroupName:
                   type: string
                   description: ElastiCache subnet group over the private subnets (AWS, when databaseSubnetGroups). Empty on GCP.
+                subnets:
+                  type: array
+                  description: GCP subnetworks in spec order (the single regional one without spec.subnets). id and selfLink appear only once the subnetwork is observed. Empty on AWS.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: GCP subnetwork name (without spec.subnets, known only once observed).
+                      region:
+                        type: string
+                      cidr:
+                        type: string
+                        description: Primary range.
+                      secondaryRanges:
+                        type: object
+                        additionalProperties:
+                          type: string
+                        description: Secondary ranges by name.
+                      id:
+                        type: string
+                      selfLink:
+                        type: string
                 serviceRange:
                   type: string
                   description: CIDR reserved for private service access (GCP, when serviceRange is set) — the range to hand to Cloud SQL private IP or Memorystore. Empty on AWS.

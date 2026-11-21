@@ -18,63 +18,68 @@ _orphan_policies = ["Observe", "Create", "Update", "LateInitialize"]
 # How Crossplane relates to the bucket, for status.mode:
 # created (Crossplane made it) | observe (adopted, read-only) | managed (adopted, Crossplane writes).
 mode_of = lambda oxr -> str {
-    _imp = oxr.spec?.$import
-    "created" if not _imp?.existingName else ("observe" if (_imp?.mode or "observe") == "observe" else "managed")
+  _imp = oxr.spec?.$import
+  "created" if not _imp?.existingName else ("observe" if (_imp?.mode or "observe") == "observe" else "managed")
 }
 
 render = lambda oxr {
-    _spec = oxr.spec
-    # Not silently ignored like the other unread fields: a pipeline relying on
-    # it would find no access, and no backend here can grant it.
-    assert not _spec?.access, "bucket-rustfs: spec.access is not expressible — RustFS federates OIDC server-wide (one identity provider whose token claims map to RustFS policy names), not per bucket, and no Crossplane provider manages its IAM; grant CI access with a RustFS policy on the server instead"
-    _del = _spec?.deletionPolicy or "Delete"
-    _imp = _spec?.$import
-    _existing = _imp?.existingName
-    _observe = _existing and (_imp?.mode or "observe") == "observe"
-    _mp = ["Observe"] if _observe else (_orphan_policies if _del == "Orphan" else Undefined)
-    _annos = lambda name: str -> {str:str} {
-        _a = {"krm.kcl.dev/composition-resource-name" = name}
-        if _existing:
-            _a |= {"crossplane.io/external-name" = _existing}
+  _spec = oxr.spec
 
-        if _imp?.source:
-            _a |= {"cloud.example.org/imported-from" = _imp.source}
+  # Not silently ignored like the other unread fields: a pipeline relying on
+  # it would find no access, and no backend here can grant it.
+  assert not _spec?.access, "bucket-rustfs: spec.access is not expressible — RustFS federates OIDC server-wide (one identity provider whose token claims map to RustFS policy names), not per bucket, and no Crossplane provider manages its IAM; grant CI access with a RustFS policy on the server instead"
 
-        if _imp?.address:
-            _a |= {"cloud.example.org/import-address" = _imp.address}
+  # Same reason: the caller asked for a specific (billed) account, and this
+  # backend can only ever write to the in-cluster server.
+  assert not _spec?.providerConfigName, "bucket-rustfs: spec.providerConfigName is not expressible — every RustFS bucket lives on the in-cluster server behind the fixed `rustfs` ProviderConfig; pick the aws, gcp or azure backend for a bucket in another account"
+  _del = _spec?.deletionPolicy or "Delete"
+  _imp = _spec?.$import
+  _existing = _imp?.existingName
+  _observe = _existing and (_imp?.mode or "observe") == "observe"
+  _mp = ["Observe"] if _observe else (_orphan_policies if _del == "Orphan" else Undefined)
+  _annos = lambda name: str -> {str:str} {
+    _a = {"krm.kcl.dev/composition-resource-name" = name}
+    if _existing:
+      _a |= {"crossplane.io/external-name" = _existing}
 
-        _a
-    }
+    if _imp?.source:
+      _a |= {"cloud.example.org/imported-from" = _imp.source}
 
-    _items: [any] = [backend.Bucket {
-        metadata.annotations = _annos("managed")
-        if _mp:
-            spec.managementPolicies = _mp
-        spec.providerConfigRef.kind = "ProviderConfig"
-        spec.providerConfigRef.name = "rustfs"
-        spec.forProvider.region = "us-east-1"
+    if _imp?.address:
+      _a |= {"cloud.example.org/import-address" = _imp.address}
+
+    _a
+  }
+
+  _items: [any] = [backend.Bucket {
+    metadata.annotations = _annos("managed")
+    if _mp:
+      spec.managementPolicies = _mp
+    spec.providerConfigRef.kind = "ProviderConfig"
+    spec.providerConfigRef.name = "rustfs"
+    spec.forProvider.region = "us-east-1"
+  }]
+  _sc = _spec?.storageClass
+  if _sc and _sc in _transition:
+    _t = _transition[_sc]
+    _items += [lifecycle.BucketLifecycleConfiguration {
+      metadata.annotations = _annos("lifecycle")
+      if _mp:
+        spec.managementPolicies = _mp
+      spec.providerConfigRef.kind = "ProviderConfig"
+      spec.providerConfigRef.name = "rustfs"
+      spec.forProvider.region = "us-east-1"
+      if _existing:
+        spec.forProvider.bucket = _existing
+      else:
+        spec.forProvider.bucketSelector.matchControllerRef = True
+      spec.forProvider.$rule = [{
+        id = "storage-class"
+        status = "Enabled"
+        $filter = [{}]
+        transition = [{days = _t.days, storageClass = _t.storageClass}]
+      }]
     }]
-    _sc = _spec?.storageClass
-    if _sc and _sc in _transition:
-        _t = _transition[_sc]
-        _items += [lifecycle.BucketLifecycleConfiguration {
-            metadata.annotations = _annos("lifecycle")
-            if _mp:
-                spec.managementPolicies = _mp
-            spec.providerConfigRef.kind = "ProviderConfig"
-            spec.providerConfigRef.name = "rustfs"
-            spec.forProvider.region = "us-east-1"
-            if _existing:
-                spec.forProvider.bucket = _existing
-            else:
-                spec.forProvider.bucketSelector.matchControllerRef = True
-            spec.forProvider.$rule = [{
-                id = "storage-class"
-                status = "Enabled"
-                $filter = [{}]
-                transition = [{days = _t.days, storageClass = _t.storageClass}]
-            }]
-        }]
 
-    _items
+  _items
 }

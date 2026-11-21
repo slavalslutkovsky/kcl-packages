@@ -1,0 +1,363 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: mgmts.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: Mgmt
+    plural: mgmts
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                The management plane of one GCP organization, as one XR: the
+                infra repo's `mgmt` Pulumi stack (apps/mgmt/index.ts) expressed
+                as Crossplane managed resources. One XR composes
+
+                  - the `<prefix>-mgmt` project, its APIs and its Shared VPC
+                    attachment to the mgmt network host
+                  - the grants GKE's and Google APIs' service agents need on
+                    that host and on the security stack's KMS keys
+                  - the platform identities (gke-nodes, crossplane,
+                    crossplane-prod, external-secrets, grafana, openbao,
+                    ci-builder), their folder/project/key grants and their
+                    Workload Identity bindings
+                  - a private zonal GKE Standard cluster (DNS endpoint only,
+                    CMEK Secrets, Binary Authorization) with an on-demand
+                    `default` pool and a spot `ci` pool
+                  - optionally a Cloud SQL Postgres instance and its databases
+                  - Artifact Registry `ci`, the nx cache bucket, the org
+                    domain's public DNS zone, the main-gateway address and the
+                    flux-github-app Secret Manager container
+
+                What the Pulumi stack reads from other stacks (organization
+                folders, network host, security keys) is passed in here as
+                plain ids: `folders`, `network`, `devNetwork`, `keys`. The
+                Network XR's status (selfLink, subnets[].selfLink) and the
+                Kms XR's key ids are what fills them.
+              properties:
+                region:
+                  type: string
+                  description: Region of the cluster's zone, the Cloud SQL instance, the registry, the bucket, the gateway address and the secret replica (gcp:region).
+                zone:
+                  type: string
+                  description: Zone of the zonal GKE cluster (mgmt:zone). Default <region>-a.
+                prefix:
+                  type: string
+                  default: shl
+                  pattern: '^[a-z][a-z0-9-]{1,20}$'
+                  description: Organization prefix (org:prefix). The project is <prefix>-mgmt unless projectId says otherwise; the Binary Authorization allowlist trusts <region>-docker.pkg.dev/<prefix>-artifacts.
+                projectId:
+                  type: string
+                  pattern: '^[a-z][-a-z0-9]{4,28}[a-z0-9]$'
+                  description: GCP project id of the management project. Default <prefix>-mgmt.
+                projectDeletionPolicy:
+                  type: string
+                  enum: [PREVENT, ABANDON, DELETE]
+                  default: PREVENT
+                  description: What deleting the Project MR does to the GCP project. PREVENT (the Pulumi stack's setting) makes the delete fail; switch to ABANDON or DELETE first.
+                billingAccount:
+                  type: string
+                  pattern: '^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$'
+                  description: Billing account the project is linked to (org:billingAccount).
+                domain:
+                  type: string
+                  pattern: '^[a-z0-9.-]+\.[a-z]{2,}$'
+                  description: Organization domain (org:orgDomain). Groups are <name>@<domain>; the public DNS zone serves it.
+                folders:
+                  type: object
+                  description: Numeric folder ids from the organization stack. Only platform is required; each other folder adds the Crossplane grants on it.
+                  properties:
+                    platform:
+                      type: string
+                      description: Folder the mgmt project lives in.
+                    dev:
+                      type: string
+                      description: crossplane@ gets the project lifecycle, platform and Shared VPC Admin roles here.
+                    staging:
+                      type: string
+                      description: Same grants as dev.
+                    network:
+                      type: string
+                      description: crossplane@ gets Shared VPC Admin here (to attach dev/staging projects to the dev host).
+                    prod:
+                      type: string
+                      description: crossplane-prod@ gets the project lifecycle and platform roles here.
+                  required: [platform]
+                network:
+                  type: object
+                  description: The mgmt Shared VPC host (network stack networkHosts.mgmt, or a Network XR's status).
+                  properties:
+                    hostProject:
+                      type: string
+                      description: Host project id (e.g. shl-net-mgmt).
+                    region:
+                      type: string
+                      description: Region of the subnetwork. Default spec.region.
+                    network:
+                      type: string
+                      description: Network self link; GKE's network and Cloud SQL's private network.
+                    subnetwork:
+                      type: string
+                      description: Subnetwork self link (or bare name) the cluster's nodes live in.
+                    podsRange:
+                      type: string
+                      default: pods
+                      description: Secondary range name for pods.
+                    servicesRange:
+                      type: string
+                      default: services
+                      description: Secondary range name for services.
+                  required: [hostProject, network, subnetwork]
+                devNetwork:
+                  type: object
+                  description: The dev Shared VPC host's subnetwork (networkHosts.dev). crossplane@ gets compute.networkUser on it, so the dev clusters it composes can use the subnet.
+                  properties:
+                    hostProject:
+                      type: string
+                    region:
+                      type: string
+                      description: Default spec.region.
+                    subnetwork:
+                      type: string
+                      description: Subnetwork self link or bare name.
+                  required: [hostProject, subnetwork]
+                keys:
+                  type: object
+                  description: Cloud KMS key ids from the security stack (projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>), in spec.region.
+                  properties:
+                    gkeSecrets:
+                      type: string
+                      description: Application-layer Secrets encryption key of the cluster. The GKE service agent gets encrypter/decrypter on it.
+                    cloudsql:
+                      type: string
+                      description: CMEK key of the Cloud SQL instance. The Cloud SQL service agent gets encrypter/decrypter on it. Required with postgres.enabled.
+                    openbaoUnseal:
+                      type: string
+                      description: OpenBao auto-unseal key; openbao@ gets encrypter/decrypter and viewer on it.
+                  required: [gkeSecrets]
+                groups:
+                  type: object
+                  description: Google group local parts; @<domain> is appended.
+                  properties:
+                    admin:
+                      type: string
+                      default: gcp-organization-admins
+                      description: container.admin on the project, accessor of flux-github-app (mgmt:adminGroup).
+                    developer:
+                      type: string
+                      default: gcp-devops
+                      description: container.clusterViewer on the project (mgmt:developerGroup).
+                    gkeSecurity:
+                      type: string
+                      default: gke-security-groups
+                      description: Google Groups for RBAC parent group.
+                cluster:
+                  type: object
+                  description: The GKE cluster and its two node pools.
+                  properties:
+                    name:
+                      type: string
+                      default: mgmt
+                    deletionProtection:
+                      type: boolean
+                      default: true
+                      description: GKE deletionProtection. Deleting the cluster takes an update to false first.
+                    nodeMachineType:
+                      type: string
+                      default: e2-standard-4
+                    minNodesPerZone:
+                      type: integer
+                      default: 3
+                      minimum: 0
+                    maxNodesPerZone:
+                      type: integer
+                      default: 5
+                      minimum: 1
+                    ciMachineType:
+                      type: string
+                      default: e2-standard-4
+                    ciMaxNodesPerZone:
+                      type: integer
+                      default: 4
+                      minimum: 1
+                    monitoringPackages:
+                      type: array
+                      items:
+                        type: string
+                        enum: [POD, DEPLOYMENT, STATEFULSET, DAEMONSET, HPA, STORAGE, JOBSET, CADVISOR, KUBELET, APISERVER, SCHEDULER, CONTROLLER_MANAGER]
+                      description: GKE metric packages on top of SYSTEM_COMPONENTS. Default POD, DEPLOYMENT, STATEFULSET, CADVISOR, KUBELET.
+                serviceAccounts:
+                  type: object
+                  description: Kubernetes service accounts bound to the Google service accounts through Workload Identity.
+                  properties:
+                    crossplane:
+                      type: string
+                      default: crossplane-gcp
+                      description: KSA in crossplane-system (mgmt:crossplaneKsa).
+                    externalSecrets:
+                      type: string
+                      default: external-secrets
+                      description: KSA in external-secrets (mgmt:esoKsa).
+                postgres:
+                  type: object
+                  description: Cloud SQL Postgres (mgmt:postgres) - ENTERPRISE, zonal, SSD, backups + PITR, deletion-protected, private IP on network.network, CMEK keys.cloudsql. The host network needs Private Service Access.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                    instanceName:
+                      type: string
+                      description: Cloud SQL instance name (its external-name). Default <cluster.name>-postgres. Set it to an existing instance's name to adopt it.
+                    tier:
+                      type: string
+                      default: db-custom-1-3840
+                      description: mgmt:postgresTier.
+                    databaseVersion:
+                      type: string
+                      default: POSTGRES_18
+                    diskSizeGb:
+                      type: integer
+                      default: 20
+                      minimum: 10
+                    databases:
+                      type: array
+                      description: Databases on the instance. A user is composed only when passwordSecretRef is set; Cloud SQL cannot generate a password.
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                          user:
+                            type: string
+                            description: Database user. Default the database name.
+                          passwordSecretRef:
+                            type: object
+                            description: Secret in this XR's namespace holding the user's password.
+                            properties:
+                              name:
+                                type: string
+                              key:
+                                type: string
+                                default: password
+                            required: [name]
+                        required: [name]
+                dns:
+                  type: object
+                  description: The org domain's public zone (DNSSEC on), the main-gateway regional address and the records. A wildcard A record to the gateway address is always added.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                    records:
+                      type: array
+                      description: Extra records (mail, verification). name is relative to the domain, "" for the apex, with a trailing dot otherwise (www.).
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                            pattern: '^[a-z0-9-]+$'
+                            description: Stable key of the record inside the XR (dns-<id>); renaming it recreates the record.
+                          name:
+                            type: string
+                            default: ""
+                          type:
+                            type: string
+                            enum: [A, AAAA, CNAME, MX, TXT, NS, SRV, CAA]
+                          ttl:
+                            type: integer
+                            default: 3600
+                          rrdatas:
+                            type: array
+                            items: {type: string}
+                        required: [id, type, rrdatas]
+                additionalApis:
+                  type: array
+                  items: {type: string}
+                  description: APIs enabled on the project on top of the built-in mgmt list.
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Delete
+                  description: What happens to the backing resources when this XR is deleted; maps to Crossplane managementPolicies (Orphan keeps them).
+                providerConfigName:
+                  type: string
+                  pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                  description: Namespaced ProviderConfig every composed managed resource uses. It needs organization-level rights (project creation, folder IAM, Shared VPC). Unset keeps the provider default.
+              required:
+                - region
+                - billingAccount
+                - domain
+                - folders
+                - network
+                - keys
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the cluster reports a DNS endpoint and every node pool exists.
+                provider:
+                  type: string
+                projectId:
+                  type: string
+                projectNumber:
+                  type: string
+                clusterName:
+                  type: string
+                location:
+                  type: string
+                dnsEndpoint:
+                  type: string
+                  description: The cluster's DNS endpoint host (the only control-plane endpoint).
+                workloadPool:
+                  type: string
+                serviceAccounts:
+                  type: object
+                  additionalProperties: {type: string}
+                  description: Google service account emails by role (nodes, crossplane, crossplaneProd, externalSecrets, grafana, openbao, ciBuilder).
+                dnsNameServers:
+                  type: array
+                  items: {type: string}
+                  description: Name servers to delegate the domain to at the registrar.
+                gatewayAddress:
+                  type: string
+                postgresConnectionName:
+                  type: string
+                postgresPrivateIp:
+                  type: string
+                clusterIdentity:
+                  type: object
+                  additionalProperties: {type: string}
+                  description: The tier-0 facts gitops substitutes (flux-system/cluster-identity), as the Pulumi stack exports them.
+                getCredentials:
+                  type: string
+                pending:
+                  type: array
+                  items: {type: string}
+                  description: Composed resources held back until what they need exists (project number, grants, cluster).
+                cloud-url:
+                  type: string
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROJECT
+          type: string
+          jsonPath: .status.projectId
+        - name: CLUSTER
+          type: string
+          jsonPath: .status.clusterName
+        - name: ENDPOINT
+          type: string
+          jsonPath: .status.dnsEndpoint

@@ -5,4 +5,5 @@ version = "0.1.5"
 
 [dependencies]
 gcp-compute = { path = "../../../providers/gcp-compute" }
+gcp-servicenetworking = { path = "../../../providers/gcp-servicenetworking" }
 k8s = "1.32.4"

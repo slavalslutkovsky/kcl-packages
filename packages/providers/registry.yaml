@@ -42,6 +42,21 @@ version: 1
 
 providers:
   # ── aws ─────────────────────────────────────────────────────────────────────
+  - name: aws-family
+    cloud: aws
+    image: ghcr.io/crossplane-contrib/provider-family-aws
+    tag: v2.6.0
+    install: none
+    modules: [tenant-account]
+    notes: >-
+      The aws family provider: no managed resources, only the aws.m.upbound.io
+      (Cluster)ProviderConfig every aws sub-provider authenticates through.
+      Typed here for platform/tenant-account, which renders one namespaced
+      ProviderConfig per client account (an assume-role chain into the
+      client's role). Nothing is installed from this row: Crossplane pulls the
+      family in as a dependency of each sub-provider (provider-aws-s3, ...).
+      `kcl import` buckets the v1beta1 schemas under models/unknown/.
+
   - name: aws-apigatewayv2
     cloud: aws
     service: apigatewayv2
@@ -274,11 +289,23 @@ providers:
     service: artifact
     image: ghcr.io/crossplane-contrib/provider-gcp-artifact
     tag: v2.6.0
-    modules: [registry, package-registry]
+    modules: [registry, package-registry, mgmt]
     notes: >-
       Artifact Registry ships in the `artifact` family (CRD group
       artifact.gcp.m.upbound.io, kind RegistryRepository) — there is no
       provider-gcp-artifactregistry image.
+
+  - name: gcp-binaryauthorization
+    cloud: gcp
+    service: binaryauthorization
+    image: ghcr.io/crossplane-contrib/provider-gcp-binaryauthorization
+    tag: v2.6.0
+    modules: [mgmt]
+    notes: >-
+      Binary Authorization: the mgmt Composition composes the project's
+      singleton Policy (audit-only default rule, the artifacts registry
+      allowlisted) that its GKE cluster evaluates with
+      PROJECT_SINGLETON_POLICY_ENFORCE.
 
   - name: gcp-cloudbuild
     cloud: gcp
@@ -292,7 +319,7 @@ providers:
     service: cloudplatform
     image: ghcr.io/crossplane-contrib/provider-gcp-cloudplatform
     tag: v2.6.0
-    modules: [iam, workload-identity, organization]
+    modules: [iam, workload-identity, organization, mgmt]
     notes: >-
       GCP has no standalone iam provider — service accounts and IAM members
       live in cloudplatform. The resource-hierarchy kinds the organization
@@ -312,21 +339,21 @@ providers:
     service: compute
     image: ghcr.io/crossplane-contrib/provider-gcp-compute
     tag: v2.6.0
-    modules: [network, vm, landing, instancetemplate]
+    modules: [network, vm, landing, instancetemplate, mgmt]
 
   - name: gcp-container
     cloud: gcp
     service: container
     image: ghcr.io/crossplane-contrib/provider-gcp-container
     tag: v2.6.0
-    modules: [cluster]
+    modules: [cluster, mgmt]
 
   - name: gcp-dns
     cloud: gcp
     service: dns
     image: ghcr.io/crossplane-contrib/provider-gcp-dns
     tag: v2.6.0
-    modules: [dns]
+    modules: [dns, mgmt]
 
   - name: gcp-gke
     cloud: gcp
@@ -343,7 +370,7 @@ providers:
     service: kms
     image: ghcr.io/crossplane-contrib/provider-gcp-kms
     tag: v2.6.0
-    modules: [kms]
+    modules: [kms, mgmt]
 
   - name: gcp-networkconnectivity
     cloud: gcp
@@ -384,19 +411,42 @@ providers:
     tag: v2.6.0
     modules: [redis]
 
+  - name: gcp-secretmanager
+    cloud: gcp
+    service: secretmanager
+    image: ghcr.io/crossplane-contrib/provider-gcp-secretmanager
+    tag: v2.6.0
+    modules: [mgmt]
+    notes: >-
+      Secret Manager: the mgmt Composition composes the flux-github-app Secret
+      container and its accessor grant; the version holding the GitHub App
+      JSON is added out of band, so its payload never passes through an XR.
+
+  - name: gcp-servicenetworking
+    cloud: gcp
+    service: servicenetworking
+    image: ghcr.io/crossplane-contrib/provider-gcp-servicenetworking
+    tag: v2.6.0
+    modules: [network]
+    notes: >-
+      Private Service Access: the Connection kind peers a network's reserved
+      VPC_PEERING range to servicenetworking.googleapis.com, which is what lets
+      Cloud SQL and Memorystore take private IPs from it. The network
+      Composition composes it next to the GlobalAddress reservation.
+
   - name: gcp-sql
     cloud: gcp
     service: sql
     image: ghcr.io/crossplane-contrib/provider-gcp-sql
     tag: v2.6.0
-    modules: [postgres]
+    modules: [postgres, mgmt]
 
   - name: gcp-storage
     cloud: gcp
     service: storage
     image: ghcr.io/crossplane-contrib/provider-gcp-storage
     tag: v2.6.0
-    modules: [bucket, landing]
+    modules: [bucket, landing, mgmt]
 
   - name: gcp-workflows
     cloud: gcp
