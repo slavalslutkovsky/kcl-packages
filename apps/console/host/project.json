@@ -1,0 +1,33 @@
+{
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "name": "console-host",
+  "projectType": "application",
+  "sourceRoot": "apps/console/host/src",
+  "tags": ["lang:ts", "area:console"],
+  "targets": {
+    "serve": {
+      "executor": "nx:run-commands",
+      "continuous": true,
+      "options": { "cwd": "{projectRoot}", "command": "pnpm dev" }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["default"],
+      "outputs": ["{projectRoot}/dist"],
+      "options": { "cwd": "{projectRoot}", "command": "pnpm build" }
+    },
+    "preview": {
+      "executor": "nx:run-commands",
+      "continuous": true,
+      "dependsOn": ["build"],
+      "options": { "cwd": "{projectRoot}", "command": "pnpm serve" }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["default"],
+      "options": { "cwd": "{projectRoot}", "command": "pnpm typecheck" }
+    }
+  }
+}

@@ -4,7 +4,8 @@
   "private": true,
   "workspaces": [
     "packages/*",
-    "tools/*"
+    "tools/*",
+    "apps/console/*"
   ],
   "devDependencies": {
     "@grpc/grpc-js": "^1.14.5",

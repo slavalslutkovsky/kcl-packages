@@ -1138,6 +1138,20 @@ pkgreg-install version="v0.1.0": pkgreg-image registry
         -l pkg.crossplane.io/function=function-package-registry --ignore-not-found
     echo "function-package-registry {{ version }} installed"
 
+# ─── console (multi-cloud micro frontends, apps/console) ──────────────────────
+#
+# A Module Federation host (:4200) with one remote per packages/cloud domain
+# (bucket :4201), over the `kcl-console` API (:8095). apps/console/README.md.
+
+#   just console-api --source k8s,aws --timeout-secs 10
+# Serve /api/buckets: Bucket XRs in the current kubecontext + the aws/gcloud/az CLIs.
+console-api *args:
+    cargo run --manifest-path rust/Cargo.toml -q -p kcl-console -- {{ args }}
+
+# Host and every remote with hot reload (run `just console-api` alongside).
+console-dev:
+    pnpm nx run-many -t serve -p console-host console-bucket
+
 # ─── KclModule operator (kube-rs) ─────────────────────────────────────────────
 #
 # The same `kclx` binary and the same `kcl_render::Engine`, wearing four more

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/kcl-agent", "crates/kcl-operator", "crates/kcl-render", "crates/kclx"]
+members = ["crates/kcl-agent", "crates/kcl-console", "crates/kcl-operator", "crates/kcl-render", "crates/kclx"]
 resolver = "3"
 
 [workspace.package]

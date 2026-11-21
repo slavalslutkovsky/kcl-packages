@@ -1,0 +1,24 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: BackupPlan
+metadata:
+  # The aws backend composes namespaced Crossplane MRs, so any namespace works.
+  namespace: default
+  # Also the AWS Backup vault's name: 2-50 letters, digits, '-' and '_'.
+  name: nightly
+spec:
+  schedule: "30 1 * * 1-5"        # -> cron(30 1 ? * 2-6 *) in UTC: AWS counts SUN=1
+  retentionDays: 30               # -> rule lifecycle.deleteAfter
+  cluster:
+    # The EKS cluster ARN (a KubernetesCluster XR's status.id once observed);
+    # its region places the vault, plan and selection.
+    id: arn:aws:eks:us-east-1:123456789012:cluster/prod
+  # encryptionKmsKeyId: arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab  # -> vault kmsKeyArn
+  includedNamespaces: []          # ignored: AWS Backup always takes the whole cluster
+  paused: false                   # true withdraws the Selection; plan, vault and recovery points stay
+  deletionPolicy: Delete          # Orphan keeps the vault, plan, selection and role in AWS
+  tags:                           # on the vault, the plan and every recovery point
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws             # the flag: picks the backend (aws)

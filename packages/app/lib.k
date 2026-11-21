@@ -1004,6 +1004,12 @@ _generate_resources = lambda w: Workload -> [appsv1.Deployment] {
             }
         }
         _deployment(w)
+        _service(w)
+        _hpa(w)
+        _monitor(w)
+        _pdb(w)
+        _scaler(w)
+        _sa(w)
     ]
 }
 

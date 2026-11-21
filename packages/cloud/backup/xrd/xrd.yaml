@@ -62,7 +62,9 @@ spec:
                     "0 2 * * *" for nightly at 02:00 (also @hourly, @daily,
                     @weekly, @monthly). velero: Schedule.spec.schedule, in the
                     Velero server's timezone. gcp: backupSchedule.cronSchedule
-                    verbatim. aws: rewritten to AWS's six-field
+                    in UTC (shorthands expanded to five fields; Backup for GKE
+                    caps retention at 360 runs, so retentionDays must fit
+                    the schedule's interval). aws: rewritten to AWS's six-field
                     `cron(m h dom mon dow year)` in UTC. azure: Azure Backup
                     for AKS only runs every 4, 6, 8 or 12 hours or daily, so
                     only "m h * * *" and "m */N * * *" (N in 4, 6, 8, 12)
@@ -143,9 +145,9 @@ spec:
                     `id` is the provider's own identifier, and the backends
                     parse what they need out of it (region, project,
                     subscription, resource group, name), so one string is
-                    enough on aws and gcp. A KubernetesCluster XR publishes it
-                    as status.id on gcp and azure; on aws that status.id is
-                    the bare cluster name, so pass the ARN instead.
+                    enough on aws and gcp. A KubernetesCluster XR publishes
+                    exactly this string as its status.id on all three clouds
+                    (the EKS ARN, the GKE full name, the AKS ARM id).
                   properties:
                     id:
                       type: string
@@ -265,7 +267,7 @@ spec:
               properties:
                 ready:
                   type: boolean
-                  description: True once the plan is actually capable of taking a backup. velero — the schedule accepted AND the storage location reachable; aws, gcp, azure — every composed managed resource Ready.
+                  description: True once the plan is actually capable of taking a backup. velero — the schedule accepted AND the storage location reachable; aws, azure — every composed managed resource Ready; gcp — the plan Ready AND its state READY (a plan waiting on the cluster's backup agent is Ready to Crossplane yet takes no backups).
                 provider:
                   type: string
                   description: Backend that fulfilled the claim (velero | aws | gcp | azure).

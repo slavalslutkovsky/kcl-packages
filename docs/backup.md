@@ -3,10 +3,13 @@
 Two layers, one destination:
 
 - **`BackupPlan`** — the portable capability. One XR carries a cron, a
-  retention, a filter and a bucket, and the `velero` backend turns it into the
-  three Velero objects that together are a working plan. This is the layer that
-  backs up *workloads*: namespaces, their objects, and the volumes their pods
-  mount — including the disks behind a `VirtualMachine`.
+  retention and a filter, and four backends turn it into a working plan:
+  `velero` (an in-cluster operator writing to a bucket — any cluster,
+  including self-hosted ones) and the cloud-managed services `aws` (AWS
+  Backup for EKS), `gcp` (Backup for GKE) and `azure` (Azure Backup for AKS).
+  This is the layer that backs up *workloads*: namespaces, their objects, and
+  the volumes their pods mount — including the disks behind a
+  `VirtualMachine`.
 - **`PostgresInstance.spec.backup`** — native backup for the one workload that
   must not be snapshotted from the outside. CloudNativePG runs base backups and
   WAL archiving itself (`barmanObjectStore`), so an in-cluster database gets
@@ -16,10 +19,13 @@ Two layers, one destination:
 
 Neither layer creates a bucket. Both point at one, and in the usual flow that
 bucket is a `Bucket` XR — one object per concern, so deleting a plan can never
-take the backups with it.
+take the backups with it. (The `aws` and `gcp` backends need no bucket at all:
+AWS Backup writes to the vault the plan composes, Backup for GKE to
+Google-managed storage.)
 
 ```
 kubectl -n velero  apply -f packages/cloud/backup/xrd/examples/backup-velero.yaml
+kubectl -n default apply -f packages/cloud/backup/xrd/examples/backup-aws.yaml    # or -gcp / -azure
 kubectl -n default apply -f packages/cloud/postgres/xrd/examples/postgres-cnpg.yaml
 ```
 
@@ -133,6 +139,62 @@ reclaim a byte of storage. To actually delete backups, delete the `Backup`
 objects (`velero backup delete`) and let Velero empty the bucket, or empty it
 yourself.
 
+## Cloud-managed backends
+
+`aws`, `gcp` and `azure` hand the same `BackupPlan` to the cloud's own backup
+service instead of an in-cluster operator. They back up the managed cluster
+named by `spec.cluster.id` — the provider's own id, which a `KubernetesCluster`
+XR publishes as `status.id` — and the backends parse region, project,
+subscription and resource group out of it.
+
+| | `aws` — AWS Backup for EKS | `gcp` — Backup for GKE | `azure` — Azure Backup for AKS |
+|---|---|---|---|
+| composes | `Vault`, `Plan`, `Selection` of the cluster ARN, service `Role` + 2 `RolePolicyAttachment`s | one `BackupBackupPlan` | `BackupVault`, `BackupPolicyKubernetesCluster`, `BackupInstanceKubernetesCluster`, the AKS backup `KubernetesClusterExtension`, a `TrustedAccessRoleBinding`, 7 `RoleAssignment`s, and the cluster itself Observe-only (for its identity) |
+| backups land in | the composed vault | Google-managed storage | the vault's operational store, staged through `destination`'s blob container |
+| `destination` | ignored | ignored | required (container + `storageAccount`) |
+| `schedule` | rewritten to `cron(m h dom mon dow *)`, UTC; at most hourly | cron, UTC; shorthands expanded | only daily or every 4/6/8/12 h; anything else fails |
+| `retentionDays` | `lifecycle.deleteAfter` | `backupRetainDays`, ≤ 365 and ≤ 360 × interval | `P<n>D`, ≤ 360 |
+| namespace / resource / label filters | ignored — whole cluster (a superset) | namespaces; `secrets` exclusion only | all of them |
+| `paused` | the Selection is withdrawn | `backupSchedule.paused` | fails the render |
+| `encryptionKmsKeyId` | vault `kmsKeyArn` | `encryptionKey` | ignored |
+| `ready` | every MR Ready | MR Ready **and** state `READY` | every MR Ready |
+
+Fields a backend ignores only ever make the backup capture *more* than asked.
+Anything that would make it capture less, or that the service cannot express
+(an untranslatable cron, a pause on Azure), fails the render with a
+`backup-<backend>:` message instead of composing something that looks right.
+
+Each needs things the XR does not own; the backend READMEs list them in full:
+
+- **aws** — EKS authentication mode `API` or `API_AND_CONFIG_MAP` (AWS Backup
+  reaches the cluster through an access entry; `cluster/aws` leaves the
+  `CONFIG_MAP` default), EKS opted in to AWS Backup in the region (account-wide
+  `RegionSettings`, so not composed per plan), CSI-provisioned volumes. The
+  role is a custom one because the service-linked role cannot create access
+  entries.
+- **gcp** — `gkebackup.googleapis.com` enabled and the cluster's
+  `gkeBackupAgentConfig` add-on on (`cluster/gcp` does not set it; until it is,
+  the plan sits in `CLUSTER_PENDING` and the XR stays not-ready).
+- **azure** — a system-assigned cluster identity, the CSI disk driver and
+  snapshot controller, `Microsoft.KubernetesConfiguration` and
+  `Microsoft.DataProtection` registered, and a ProviderConfig identity that may
+  create role assignments. The backend renders progressively: cluster, vault
+  and policy first; the extension, trusted access and role assignments as the
+  identities they need appear in observed status; the backup instance last,
+  only once everything it depends on is Ready (Azure checks permissions when
+  the instance is created). Changing filters, schedule or retention later
+  forces a replacement upstream that upjet refuses to perform, and replacing a
+  backup instance deletes its backups — treat those fields as create-time.
+
+Deleting is where the services differ most — see `deletionPolicy` in the XRD.
+An AWS vault or a Backup for GKE plan cannot be deleted while it holds
+backups, so `Delete` leaves the resource stuck until they expire; deleting an
+Azure backup instance stops protection *and deletes its data*. The azure
+example therefore ships with `deletionPolicy: Orphan`.
+
+Restores stay human here too: `aws backup start-restore-job`, `gcloud beta
+container backup-restore restores create`, or the Azure portal/CLI.
+
 ## The database is not a workload
 
 A PostgreSQL volume snapshot taken while the server is running is
@@ -170,20 +232,27 @@ what CNPG needs to bootstrap a recovery in a new cluster).
 | | why |
 |---|---|
 | **No `Restore` XR** | A restore is a decision about one specific backup at one specific moment — which backup, into which namespace, mapped how. Declaring it in git means a controller that re-runs it, and a restore that reconciles is a restore that overwrites a recovered cluster on the next sync. `velero restore create --from-backup <name>` stays a human command; `Backup` and `Restore` are listed as unused in `packages/providers/crds.yaml` so the decision is on record. |
-| **No cloud-managed backup services** | AWS Backup, GCP Backup for GKE and Azure Backup are per-cloud control planes with their own vaults, plans and IAM. A `BackupPlan` that meant three unrelated things depending on a label would be an abstraction over nothing. Velero writes the same format from any cluster to any bucket, which is what makes the XR portable. |
+| **Not one format across clouds** | The cloud backends are the clouds' own services, so their backups are restorable only by that service and only into that cloud's managed clusters. When portability matters — moving between clouds, or between a cloud and a self-hosted cluster — use `velero`, which writes the same format from any cluster to any bucket. |
 | **No VM-level snapshots beyond CSI** | A `VirtualMachine`'s disks are PVCs, so CSI snapshots (or file-level backup) already cover them. Hypervisor-level snapshots — KubeVirt `VirtualMachineSnapshot`, EBS snapshots taken outside Velero — are a second, uncoordinated copy of the same bytes with no Backup object to expire them. Add `kubevirt.io` kinds to `includedResources`, not a second snapshot mechanism. |
 | **No backup hooks** | Velero's `template.hooks` run `exec` in a container before and after a backup, which is how you quiesce a filesystem. Real, and out of scope for a portable field set: the command is per-application, not per-plan. Patch the composed `Schedule` or open the field when a second consumer needs it. |
 | **No Velero dashboard, no `Backup` authoring** | `Backup` objects are what Velero's controller creates from a Schedule; authoring them here would fight the controller. `velero backup get` / `kubectl -n velero get backups` is the read path. |
 
 ## Installing it
 
-`providerconfigs.yaml` installs the operator as a pinned Helm `Release` through
-provider-helm, the same way the CloudNativePG one does:
+`providers.yaml` installs the cloud providers (`provider-aws-backup` +
+`provider-aws-iam`, `provider-gcp-gke`, `provider-azure-dataprotection` +
+`provider-azure-containerservice` + `provider-azure-authorization`) and
+provider-helm; install only the ones whose backends you use. The cloud
+backends need a `default` ClusterProviderConfig per family with real
+credentials, which the module does not ship.
+
+`providerconfigs.yaml` installs the Velero operator as a pinned Helm `Release`
+through provider-helm, the same way the CloudNativePG one does:
 
 - **Chart 12.2.0 installs Velero 1.18.2** — the version the schema package
   (`packages/providers/velero`) was generated from, and the `ref` of the
   `velero` row in `packages/providers/registry.yaml`. All three must agree;
-  `just seed-backup-providers` regenerates the schemas.
+  `just seed-backup-providers` regenerates the schemas (the cloud ones too).
 - **Plugins v1.14.2** (aws, gcp, azure) as init containers — that is the plugin
   line that pairs with Velero v1.18.x. Without one, a location parses and then
   reaches no bucket. Drop the ones you do not use.
@@ -198,17 +267,19 @@ provider-helm, the same way the CloudNativePG one does:
 
 | file | role |
 |---|---|
-| `packages/cloud/backup/xrd/xrd.yaml` | the `BackupPlan` API: schedule, retention, filters, destination, and what each maps to |
-| `packages/cloud/backup/xrd/providers.yaml` | why no Crossplane provider is involved, and the provider-helm that carries the operator install |
+| `packages/cloud/backup/xrd/xrd.yaml` | the `BackupPlan` API: schedule, retention, filters, cluster, destination, and what each backend does with each |
+| `packages/cloud/backup/xrd/providers.yaml` | the cloud providers per backend, and the provider-helm that carries the Velero install |
 | `packages/cloud/backup/xrd/providerconfigs.yaml` | the pinned Velero chart: plugins, node-agent, no chart-owned locations |
 | `packages/cloud/backup/xrd/functions.yaml` | function-kcl + function-auto-ready, pinned |
 | `packages/cloud/backup/xrd/examples/backup-velero.yaml` | the worked self-hosted case: local storage, file-level backup, in-cluster RustFS |
+| `packages/cloud/backup/xrd/examples/backup-{aws,gcp,azure}.yaml` | one plan per cloud-managed backend |
 | `packages/cloud/backup/velero/backup.k` | `render` (three objects) and `status` (the AND of two) |
-| `packages/cloud/backup/velero/backup_test.k` | BSL config for a plain bucket and an s3Url endpoint, the snapshot-location rule, ttl, pause, template selectors, both-halves readiness |
+| `packages/cloud/backup/velero/backup_test.k` | BSL config for a plain bucket, an s3Url endpoint and azure, the required destination, the snapshot-location rule, ttl, pause, template selectors, both-halves readiness |
 | `packages/cloud/backup/velero/composition.yaml` | the Composition, selected by `provider: velero` |
+| `packages/cloud/backup/{aws,gcp,azure}/` | the cloud backends: `backup.k`, `backup_test.k`, `composition.yaml` (selected by `provider: aws\|gcp\|azure`) and a README with the full field mapping and prerequisites |
 | `packages/cloud/postgres/xrd/xrd.yaml` | `spec.backup`, and `snapshotRetentionDays` as CNPG's `retentionPolicy` |
 | `packages/cloud/postgres/cnpg/postgres.k` | `destination_path` / `barman_object_store` — the scheme and credential block per provider |
 | `packages/cloud/postgres/cnpg/postgres_test.k` | `test_backup_*` — unset renders as before, s3/gcs/azure destinations, ambient identity, retention |
-| `packages/providers/velero/` | generated KCL schemas for the `velero.io` CRDs (`just seed-backup-providers`) |
-| `packages/providers/registry.yaml` | the `velero` row: source ref `v1.18.2`, `install: none`, `modules: [backup]` |
-| `packages/providers/crds.yaml` | which Velero kinds are rendered and which are deliberately not |
+| `packages/providers/velero/`, `aws-backup/`, `gcp-gke/`, `azure-dataprotection/` | generated KCL schemas (`just seed-backup-providers`) |
+| `packages/providers/registry.yaml` | the `velero` row (source ref `v1.18.2`, `install: none`) and the cloud provider rows, all with `modules: [backup]` |
+| `packages/providers/crds.yaml` | which kinds each backend renders and which are deliberately not |

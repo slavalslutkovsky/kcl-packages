@@ -2407,6 +2407,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "kcl-console"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "futures",
+ "k8s-openapi",
+ "kube",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kcl-driver"
 version = "0.12.5"
 source = "git+https://github.com/kcl-lang/kcl#8867ec75a64beb038964b7db849d7e67dfdc002e"
