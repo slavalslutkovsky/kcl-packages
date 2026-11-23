@@ -134,6 +134,12 @@ class TestForgejo(unittest.TestCase):
         self.assertTrue(got["ready"])
         self.assertEqual("apps/demo@2", got["id"])
 
+    def test_new_format_endpoints(self):
+        formats = ["rubygems", "composer", "conan", "swift", "helm"]
+        got = forgejo.status(spec(formats=formats), {})
+        api = "http://demo-http.apps.svc.cluster.local:3000/api/packages/packages"
+        self.assertEqual({fmt: f"{api}/{fmt}" for fmt in formats}, got["endpoints"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -151,6 +151,27 @@ class TestGcp(unittest.TestCase):
         # The one repository that does exist is still worth publishing.
         self.assertEqual(["oci"], list(got["endpoints"]))
 
+    def test_rubygems_and_helm(self):
+        res = gcp.render(spec(formats=["rubygems", "helm"], immutableTags=True))
+        self.assertEqual("RUBY", for_provider(res, "repo-rubygems")["format"])
+        self.assertEqual("demo-rubygems", external_name(res, "repo-rubygems"))
+        self.assertNotIn("dockerConfig", for_provider(res, "repo-rubygems"))
+        # Charts are OCI artifacts: their own DOCKER repository, tag rules included.
+        helm = for_provider(res, "repo-helm")
+        self.assertEqual("DOCKER", helm["format"])
+        self.assertEqual({"immutableTags": True}, helm["dockerConfig"])
+        self.assertEqual("demo-helm", external_name(res, "repo-helm"))
+
+        observed = {f"repo-{fmt}": observed_repo(fmt) for fmt in ("rubygems", "helm")}
+        got = gcp.status(spec(formats=["rubygems", "helm"]), observed)
+        self.assertEqual(
+            {
+                "rubygems": "https://us-central1-ruby.pkg.dev/my-project/demo-rubygems",
+                "helm": "oci://us-central1-docker.pkg.dev/my-project/demo-helm",
+            },
+            got["endpoints"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

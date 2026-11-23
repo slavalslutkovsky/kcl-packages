@@ -5,6 +5,12 @@ no IAM: one namespaced Release installs the zot chart into the XR's own
 namespace, and a client that pushes to ECR/Artifact Registry/ACR pushes here
 unchanged.
 
+zot implements only the OCI distribution spec, and a Helm 3 chart is an OCI
+artifact (https://zotregistry.dev/latest/user-guides/user-guide-datapath/), so
+`helm` is served by the same registry: its endpoint is the `oci://` reference
+`helm push` takes, under `<xr name>/charts` so chart and image names never
+collide. The registry is plain HTTP inside the cluster (`--plain-http`).
+
 The Release is typed against function/models/helm; the chart VALUES are not —
 `spec.forProvider.values` is x-kubernetes-preserve-unknown-fields, because a
 chart's value schema is the chart's, not the provider's.
@@ -19,11 +25,12 @@ NAME = "zot"
 
 API_VERSION = "helm.m.crossplane.io/v1beta1"
 
-SUPPORTED = frozenset({"oci"})
+SUPPORTED = frozenset({"oci", "helm"})
 
 UNSUPPORTED_HINT = (
-    "zot is an OCI-only registry; use the forgejo backend for an in-cluster "
-    "registry that also serves language packages."
+    "zot is an OCI-only registry (it serves helm charts as OCI artifacts); use "
+    "the forgejo backend for an in-cluster registry that also serves language "
+    "packages."
 )
 
 # Pinned so a re-render never silently upgrades a running registry.
@@ -181,13 +188,17 @@ def status(spec: Spec, observed: dict[str, dict]) -> dict:
     """
     at = at_provider(observed, "managed")
     host = f"{service_host(spec)}:{REGISTRY_PORT}"
+    endpoints = {
+        "oci": f"{host}/{spec.name}",
+        "helm": f"oci://{host}/{spec.name}/charts",
+    }
 
     out: dict = {
         "provider": NAME,
         "ready": str(at.get("state") or "") == "deployed",
         "registryName": spec.name,
         "region": spec.region,
-        "endpoints": {"oci": f"{host}/{spec.name}"},
+        "endpoints": {fmt: endpoints[fmt] for fmt in spec.formats},
         "cloud-url": f"kubernetes://{spec.namespace}/statefulset/{spec.name}",
     }
     if spec.htpasswd_secret:

@@ -1,9 +1,15 @@
-"""Azure backend: one Container Registry, OCI only.
+"""Azure backend: one Container Registry, OCI only (helm charts included).
 
 Ported verbatim from packages/cloud/registry/azure/registry.k. ACR is a single
 resource: the registry carries its own retention, replication, anonymous-pull
 and encryption settings, so this backend composes exactly one MR. A registry
 name must be 5-50 alphanumeric characters, which the XR name has to satisfy.
+
+ACR stores Helm 3 charts as OCI artifacts
+(https://learn.microsoft.com/azure/container-registry/container-registry-helm-repos),
+so `helm` composes the same registry: its endpoint is the `oci://` reference
+`helm push` takes, under `<xr name>/charts` so chart and image names never
+collide.
 
 Typed against the generated models in function/models/azure_containerregistry.
 """
@@ -15,12 +21,12 @@ NAME = "azure"
 
 API_VERSION = "containerregistry.azure.m.upbound.io/v1beta1"
 
-SUPPORTED = frozenset({"oci"})
+SUPPORTED = frozenset({"oci", "helm"})
 
 UNSUPPORTED_HINT = (
-    "Azure Container Registry is OCI-only and Azure has no ARM-managed "
-    "language package registry (Azure Artifacts is Azure DevOps); use gcp, "
-    "aws or forgejo for language formats."
+    "Azure Container Registry is OCI-only (it serves helm charts as OCI "
+    "artifacts) and Azure has no ARM-managed language package registry "
+    "(Azure Artifacts is Azure DevOps)."
 )
 
 
@@ -121,8 +127,12 @@ def status(spec: Spec, observed: dict[str, dict]) -> dict:
     }
     if login:
         # ACR is the host; the repository namespace under it is created on
-        # first push. Report the path the XR owns by convention.
-        out["endpoints"] = {"oci": f"{login}/{spec.name}"}
+        # first push. Report the paths the XR owns by convention.
+        endpoints = {
+            "oci": f"{login}/{spec.name}",
+            "helm": f"oci://{login}/{spec.name}/charts",
+        }
+        out["endpoints"] = {fmt: endpoints[fmt] for fmt in spec.formats}
     if resource_id:
         out["id"] = resource_id
     return out

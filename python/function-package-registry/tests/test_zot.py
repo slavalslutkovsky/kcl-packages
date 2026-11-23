@@ -140,6 +140,14 @@ class TestZot(unittest.TestCase):
         self.assertEqual("apps/demo@1", got["id"])
         self.assertEqual("creds", got["authSecret"])
 
+    def test_helm_endpoint_is_an_oci_reference(self):
+        got = zot.status(spec(formats=["helm"]), {})
+        # Only the requested formats: a helm-only XR advertises no image endpoint.
+        self.assertEqual(
+            {"helm": "oci://demo.apps.svc.cluster.local:5000/demo/charts"},
+            got["endpoints"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -121,6 +121,18 @@ class TestAzure(unittest.TestCase):
             got["cloud-url"],
         )
 
+    def test_helm_endpoint_is_an_oci_reference(self):
+        login = {"loginServer": "r.azurecr.io"}
+        observed = {"managed": {"status": {"atProvider": login}}}
+        got = azure.status(spec(formats=["oci", "helm"]), observed)
+        self.assertEqual(
+            {
+                "oci": "r.azurecr.io/demoregistry",
+                "helm": "oci://r.azurecr.io/demoregistry/charts",
+            },
+            got["endpoints"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

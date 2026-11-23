@@ -1,0 +1,20 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: PackageRegistry
+metadata:
+  namespace: default
+  name: my-gems
+spec:
+  region: us-central1            # Artifact Registry location
+  formats:                       # one RUBY repository: my-gems-rubygems
+    - rubygems
+  scanOnPush: true               # vulnerabilityScanningConfig INHERITED (follows the project setting)
+  keepLastImages: 20             # cleanup policy: KEEP the 20 most recent gem versions
+  tags:
+    team: platform
+  # RUBY is a Preview Artifact Registry format. Publish with
+  #   gem push <gem> --host https://us-central1-ruby.pkg.dev/<project>/my-gems-rubygems
+  # (status.endpoints.rubygems once the repository exists).
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp            # the flag: picks the backend (aws | gcp | azure | zot | forgejo)

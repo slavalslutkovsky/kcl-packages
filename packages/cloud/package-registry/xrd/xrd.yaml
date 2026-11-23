@@ -20,28 +20,42 @@ spec:
               type: object
               description: |
                 Portable POLYGLOT package registry: one private namespace that
-                serves OCI container images AND language package managers
-                (npm, pip, Maven, Go, Cargo, NuGet, generic files). Every field
-                below is a COMMON parameter mapped onto each backend's native
+                serves OCI container images, Helm charts AND language package
+                managers (npm, pip, Maven, Go, Cargo, NuGet, RubyGems,
+                Composer, Conan, Swift, generic files). Every field below
+                is a COMMON parameter mapped onto each backend's native
                 resources; a field a backend cannot express is documented as
                 ignored rather than silently dropped.
 
                 Which backend serves which format is fixed, and asking a
                 backend for a format it cannot serve FAILS the render with a
-                named error — it is never a silently missing repository:
+                named error that also says which backends do serve it — it is
+                never a silently missing repository:
 
-                  backend | oci npm pypi maven go cargo nuget generic
-                  gcp     |  x   x   x    x    x    -     -     x
-                  aws     |  x   x   x    x    -    x     x     x
-                  azure   |  x   -   -    -    -    -     -     -
-                  zot     |  x   -   -    -    -    -     -     -
-                  forgejo |  x   x   x    x    x    x     x     x
+                  backend | oci helm npm pypi maven go cargo nuget rubygems composer conan swift generic
+                  gcp     |  x   x    x   x    x    x    -     -      x        -       -     -     x
+                  aws     |  x   x    x   x    x    -    x     x      x        -       -     x     x
+                  azure   |  x   x    -   -    -    -    -     -      -        -       -     -     -
+                  zot     |  x   x    -   -    -    -    -     -      -        -       -     -     -
+                  forgejo |  x   x    x   x    x    x    x     x      x        x       x     x     x
 
-                gcp is one Artifact Registry repository per format; aws is ECR
-                for oci plus ONE CodeArtifact domain and repository for every
-                language format (CodeArtifact repositories are polyglot);
-                azure is one Container Registry; zot and forgejo are one
-                in-cluster Helm release each.
+                gcp is one Artifact Registry repository per format (rubygems is
+                the Preview RUBY format); aws is ECR for oci plus ONE
+                CodeArtifact domain and repository for every language format
+                (CodeArtifact repositories are polyglot); azure is one
+                Container Registry; zot and forgejo are one in-cluster Helm
+                release each.
+
+                `helm` is served as OCI artifacts wherever that is how the
+                backend stores charts, and its endpoint is then the `oci://`
+                reference `helm push` takes: a second DOCKER repository
+                `<xr name>-helm` on gcp, `<xr name>/charts` inside the one
+                registry on azure and zot, and on aws an ECR repository
+                creation template (CREATE_ON_PUSH, prefix `<xr name>/charts`)
+                because an ECR repository holds a single chart named after it —
+                ECR creates `<xr name>/charts/<chart>` on first push, and those
+                repositories outlive the XR. forgejo serves helm from its native
+                Helm chart repository (`helm repo add` / `helm cm-push`).
 
                 The registry is named after the XR (metadata.name), so the name
                 must satisfy the strictest backend you target: ACR accepts only
@@ -58,8 +72,8 @@ spec:
                   default: [oci]
                   items:
                     type: string
-                    enum: [oci, npm, pypi, maven, go, cargo, nuget, generic]
-                  description: Package formats this registry serves. `oci` is container images; the rest are language package managers. gcp cannot serve cargo or nuget, aws cannot serve go, and azure and zot serve oci only — a format outside the chosen backend's set fails the render. Each format gets its own repository on gcp; on aws every language format shares one CodeArtifact repository; on forgejo they all share one instance.
+                    enum: [oci, npm, pypi, maven, go, cargo, nuget, generic, rubygems, composer, conan, swift, helm]
+                  description: Package formats this registry serves. `oci` is container images, `helm` is Helm charts (OCI artifacts on gcp, aws, azure and zot; Forgejo's chart repository on forgejo); the rest are language package managers. gcp serves oci, helm, npm, pypi, maven, go, rubygems and generic; aws serves everything but go, composer and conan; azure and zot serve oci and helm only; forgejo serves every format — a format outside the chosen backend's set fails the render. Each format gets its own repository on gcp; on aws every language format shares one CodeArtifact repository; on forgejo they all share one instance.
                 resourceGroup:
                   type: string
                   description: Azure-only — the existing resource group the Container Registry is created in. Required by the azure backend, ignored elsewhere.
@@ -77,26 +91,26 @@ spec:
                 immutableTags:
                   type: boolean
                   default: false
-                  description: Reject overwriting an existing tag. ECR imageTagMutability=IMMUTABLE (oci only) / Artifact Registry dockerConfig.immutableTags (the DOCKER repository only). Ignored by the azure and zot backends, which have no registry-wide tag immutability, by the forgejo backend, and by every language format (CodeArtifact, npm, PyPI and Maven releases are already immutable by protocol).
+                  description: Reject overwriting an existing tag. ECR imageTagMutability=IMMUTABLE (oci, and the helm chart repository creation template) / Artifact Registry dockerConfig.immutableTags (the DOCKER repositories — oci and helm — only). Ignored by the azure and zot backends, which have no registry-wide tag immutability, by the forgejo backend, and by every language format (CodeArtifact, npm, PyPI and Maven releases are already immutable by protocol).
                 scanOnPush:
                   type: boolean
                   default: true
-                  description: Scan pushed artifacts for vulnerabilities. ECR imageScanningConfiguration.scanOnPush (oci only) / Artifact Registry vulnerabilityScanningConfig on every repository (INHERITED, i.e. follow the project setting, vs DISABLED) / zot CVE search extension. Ignored by the azure backend, where scanning is a Microsoft Defender subscription setting, by CodeArtifact and by the forgejo backend, which have no scanner.
+                  description: Scan pushed artifacts for vulnerabilities. ECR imageScanningConfiguration.scanOnPush (oci only; chart repositories ECR creates on push follow the account's registry scanning setting) / Artifact Registry vulnerabilityScanningConfig on every repository (INHERITED, i.e. follow the project setting, vs DISABLED) / zot CVE search extension. Ignored by the azure backend, where scanning is a Microsoft Defender subscription setting, by CodeArtifact and by the forgejo backend, which have no scanner.
                 publicAccess:
                   type: boolean
                   default: false
-                  description: Allow unauthenticated reads. ECR repository policy granting * pull actions / Artifact Registry IAM member allUsers:roles/artifactregistry.reader per repository / ACR anonymousPullEnabled / zot anonymous read policy / Forgejo REQUIRE_SIGNIN_VIEW=false. Publishing always requires credentials. CodeArtifact always requires IAM authentication and ignores it.
+                  description: Allow unauthenticated reads. ECR repository policy granting * pull actions (also set on the helm chart creation template) / Artifact Registry IAM member allUsers:roles/artifactregistry.reader per repository / ACR anonymousPullEnabled / zot anonymous read policy / Forgejo REQUIRE_SIGNIN_VIEW=false. Publishing always requires credentials. CodeArtifact always requires IAM authentication and ignores it.
                 untaggedRetentionDays:
                   type: integer
                   minimum: 1
-                  description: Delete untagged container images this many days after they were pushed. ECR lifecycle policy rule / Artifact Registry cleanup policy (DELETE, tagState UNTAGGED) on the DOCKER repository only / ACR retentionPolicyInDays (forces Premium) / zot retention (deleteUntagged + delay). Ignored by CodeArtifact (no retention rules) and by the forgejo backend (retention is a per-owner setting, not a chart value). Omit to keep everything forever.
+                  description: Delete untagged container images and charts this many days after they were pushed. ECR lifecycle policy rule (oci, and the helm chart creation template) / Artifact Registry cleanup policy (DELETE, tagState UNTAGGED) on the DOCKER repositories (oci and helm) only / ACR retentionPolicyInDays (forces Premium) / zot retention (deleteUntagged + delay). Ignored by CodeArtifact (no retention rules) and by the forgejo backend (retention is a per-owner setting, not a chart value). Omit to keep everything forever.
                 keepLastImages:
                   type: integer
                   minimum: 1
-                  description: Keep only this many most-recently-pushed versions. ECR lifecycle policy rule (imageCountMoreThan, oci only) / Artifact Registry cleanup policy (KEEP, mostRecentVersions) on every format / zot retention keepTags.mostRecentlyPushedCount. Ignored by the azure backend (no version-count retention), by CodeArtifact and by the forgejo backend.
+                  description: Keep only this many most-recently-pushed versions. ECR lifecycle policy rule (imageCountMoreThan; oci, and per chart repository through the helm creation template) / Artifact Registry cleanup policy (KEEP, mostRecentVersions) on every format / zot retention keepTags.mostRecentlyPushedCount. Ignored by the azure backend (no version-count retention), by CodeArtifact and by the forgejo backend.
                 encryptionKeyId:
                   type: string
-                  description: Customer-managed encryption key for artifacts at rest. ECR SSE-KMS key ARN and CodeArtifact domain encryptionKey / Artifact Registry kmsKeyName / ACR Key Vault key id (azure additionally needs encryptionIdentityClientId). Ignored by the self-hosted backends, where disk encryption is the storage class's job. Omit for the provider-managed key.
+                  description: Customer-managed encryption key for artifacts at rest. ECR SSE-KMS key ARN and CodeArtifact domain encryptionKey / Artifact Registry kmsKeyName / ACR Key Vault key id (azure additionally needs encryptionIdentityClientId). On aws it cannot be combined with `helm` and fails the render — an ECR repository creation template applies a KMS key only through an IAM creation role this XRD does not model. Ignored by the self-hosted backends, where disk encryption is the storage class's job. Omit for the provider-managed key.
                 encryptionIdentityClientId:
                   type: string
                   description: Azure-only — client id of the user-assigned managed identity ACR uses to reach the Key Vault key. Required alongside encryptionKeyId on the azure backend (ACR customer-managed keys cannot use the registry's system identity), ignored elsewhere.
@@ -115,7 +129,7 @@ spec:
                 forceDestroy:
                   type: boolean
                   default: false
-                  description: Delete the registry even when it still contains artifacts. ECR forceDelete. The other backends always delete their content with the registry and ignore it.
+                  description: Delete the registry even when it still contains artifacts. ECR forceDelete (the oci repository; chart repositories ECR created on push are not the XR's and are never deleted with it). The other backends always delete their content with the registry and ignore it.
                 deletionPolicy:
                   type: string
                   enum: [Delete, Orphan]
@@ -125,7 +139,7 @@ spec:
                   type: object
                   additionalProperties:
                     type: string
-                  description: Key/value labels applied to the registry. ECR and CodeArtifact tags / Artifact Registry labels / ACR tags / zot pod labels. Ignored by the forgejo backend.
+                  description: Key/value labels applied to the registry. ECR and CodeArtifact tags / Artifact Registry labels / ACR tags / zot pod labels. Ignored by the forgejo backend and by the chart repositories ECR creates on push for helm (template resource tags need an IAM creation role).
               required:
                 - region
             status:
@@ -147,7 +161,7 @@ spec:
                   type: object
                   additionalProperties:
                     type: string
-                  description: Per-format registry endpoint (docker login host / npm registry / pip index / …), keyed by spec.formats value. A key appears only once its endpoint is known.
+                  description: Per-format registry endpoint (docker login host / npm registry / pip index / `oci://` reference for `helm push`, or the `helm repo add` URL on forgejo / …), keyed by spec.formats value. A key appears only once its endpoint is known.
                 cloud-url:
                   type: string
                   description: Cloud-console URL for the registry.

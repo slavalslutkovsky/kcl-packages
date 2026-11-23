@@ -1,0 +1,12 @@
+# Runner and action mappings for examples/workflow.yml. GitHub's setup-*
+# actions install a tool into the runner for the steps after them; Tekton
+# steps are separate containers, so the faithful translation is a runner
+# image that already has the tool, and the action is dropped.
+runners:
+  ubuntu-latest: docker.io/oven/bun:1.2
+actions:
+  actions/checkout:
+    kind: checkout
+  oven-sh/setup-bun:
+    kind: drop
+    reason: the runner image docker.io/oven/bun:1.2 carries bun

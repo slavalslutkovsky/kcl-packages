@@ -97,6 +97,29 @@ class TestRunFunction(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, len(fatals(rsp)))
         self.assertIn("unknown format 'brew'", fatals(rsp)[0])
 
+    async def test_unsupported_format_names_the_backends_that_serve_it(self):
+        rsp = await self.runner.RunFunction(
+            request(backend="gcp", formats=["oci", "composer", "swift"]), None
+        )
+        self.assertEqual(
+            [
+                "gcp backend composes oci, npm, pypi, maven, go, generic, rubygems, "
+                "helm; spec.formats asks for composer, swift. Artifact Registry has "
+                "no cargo, nuget, composer, conan or swift format. Served by: "
+                "composer -> forgejo; swift -> aws, forgejo."
+            ],
+            fatals(rsp),
+        )
+        self.assertEqual({}, dict(rsp.desired.resources))
+
+    async def test_helm_with_kms_on_aws_is_fatal(self):
+        rsp = await self.runner.RunFunction(
+            request(backend="aws", formats=["helm"], encryptionKeyId="arn:k"), None
+        )
+        self.assertEqual(1, len(fatals(rsp)))
+        self.assertIn("package-registry-aws: helm charts", fatals(rsp)[0])
+        self.assertEqual({}, dict(rsp.desired.resources))
+
     async def test_composes_one_resource_per_format(self):
         rsp = await self.runner.RunFunction(
             request(backend="gcp", formats=["oci", "npm"]), None

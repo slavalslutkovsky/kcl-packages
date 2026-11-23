@@ -1,0 +1,20 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: PackageRegistry
+metadata:
+  namespace: default
+  name: my-swift
+spec:
+  region: us-east-1
+  formats:                       # ONE CodeArtifact domain + repository serves both
+    - swift
+    - rubygems
+  encryptionKeyId: arn:aws:kms:us-east-1:111122223333:key/abcd-ef  # the CodeArtifact domain's encryptionKey
+  tags:
+    team: mobile
+  # Endpoints are /swift/my-swift/ (swift package-registry set) and
+  # /ruby/my-swift/ (gem push --host) on the domain's host — CodeArtifact calls
+  # the gem format `ruby`.
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws            # the flag: picks the backend (aws | gcp | azure | zot | forgejo)

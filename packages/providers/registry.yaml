@@ -928,3 +928,21 @@ providers:
       while skipping the profile-*.yaml siblings, which are not CRDs. istiod
       itself is a cluster add-on (`devkit up --istio`), not something this repo
       installs.
+
+  - name: tekton
+    cloud: kubernetes
+    service: 300-pipeline,300-pipelinerun,300-task,300-taskrun
+    repo: tektoncd/pipeline
+    ref: v1.16.0
+    crdPath: config/300-crds
+    scope: cluster
+    install: none
+    modules: [gha-tekton]
+    notes: >-
+      Operator CRDs, not a Crossplane provider: gha-tekton renders
+      tekton.dev/v1 Pipeline, Task and PipelineRun objects (the CRDs also
+      carry the deprecated v1beta1 version, which nothing here uses). `ref`
+      follows the Tekton Pipelines release gitops vendors
+      (platform/tekton/pipelines/upstream/release.yaml, v1.16.0). `service`
+      is the CRD filename prefix; StepAction, CustomRun, ResolutionRequest and
+      VerificationPolicy are left out because no translation produces them.

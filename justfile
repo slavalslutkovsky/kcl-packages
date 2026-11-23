@@ -1084,7 +1084,7 @@ pkgreg-models:
     tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
     # image|package dir|group|version|Kind:module[,Kind:module…]
     specs=(
-        "ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0|aws_ecr|ecr.aws.m.upbound.io|v1beta1|Repository:repository,LifecyclePolicy:lifecycle_policy,RepositoryPolicy:repository_policy"
+        "ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0|aws_ecr|ecr.aws.m.upbound.io|v1beta1|Repository:repository,LifecyclePolicy:lifecycle_policy,RepositoryPolicy:repository_policy,RepositoryCreationTemplate:repository_creation_template"
         "ghcr.io/crossplane-contrib/provider-aws-codeartifact:v2.6.0|aws_codeartifact|codeartifact.aws.m.upbound.io|v1beta1|Domain:domain,Repository:repository"
         "ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0|gcp_artifact|artifact.gcp.m.upbound.io|v1beta1|RegistryRepository:registry_repository,RegistryRepositoryIAMMember:registry_repository_iam_member"
         "ghcr.io/crossplane-contrib/provider-azure-containerregistry:v2.6.0|azure_containerregistry|containerregistry.azure.m.upbound.io|v1beta1|Registry:registry"
@@ -1138,18 +1138,22 @@ pkgreg-serve:
     cd python/function-package-registry && hatch run development
 
 #   just pkgreg-render forgejo --include-context
+#   just pkgreg-render aws-helm      # example package-registry-aws-helm.yaml on aws
 # The nx `render` target is bound to function-kcl and to a KCL `source:` line,
 # so it cannot render these Compositions — hence a recipe of its own.
 # Render one example against a locally served function (needs `just pkgreg-serve`).
-pkgreg-render backend="gcp" *args:
+pkgreg-render example="gcp" *args:
     #!/usr/bin/env bash
     set -euo pipefail
+    # The example's backend is its name up to the first dash.
+    example={{ example }}
+    backend=${example%%-*}
     mkdir -p tmp/pkgreg
     yq '(select(.metadata.name == "function-package-registry") | .metadata.annotations["render.crossplane.io/runtime"]) = "Development"' \
         packages/cloud/package-registry/xrd/functions.yaml > tmp/pkgreg/functions.yaml
     crossplane render \
-        packages/cloud/package-registry/xrd/examples/package-registry-{{ backend }}.yaml \
-        packages/cloud/package-registry/{{ backend }}/composition.yaml \
+        "packages/cloud/package-registry/xrd/examples/package-registry-$example.yaml" \
+        "packages/cloud/package-registry/$backend/composition.yaml" \
         tmp/pkgreg/functions.yaml --include-function-results {{ args }}
 
 # Build the function runtime image. The tag is the one the local cluster's

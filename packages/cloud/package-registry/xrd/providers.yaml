@@ -17,6 +17,9 @@
 # The `zot` and `forgejo` backends need no cloud provider: they install an
 # in-cluster registry through provider-helm using the ClusterProviderConfig in
 # providerconfigs.yaml.
+#
+# The oci and helm formats of the aws backend: an ECR Repository for images and
+# a RepositoryCreationTemplate (CREATE_ON_PUSH) for helm charts.
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
@@ -25,8 +28,8 @@ spec:
   package: ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0
 ---
 # The language formats of the aws backend: one CodeArtifact domain plus one
-# polyglot repository, which serves npm, pypi, maven, cargo, nuget and generic
-# under /<format>/<repository>/.
+# polyglot repository, which serves npm, pypi, maven, cargo, nuget, generic,
+# ruby and swift under /<format>/<repository>/.
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:

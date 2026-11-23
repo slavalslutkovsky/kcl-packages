@@ -238,8 +238,8 @@ name = "bucket-examples"
 manifest = "packages/cloud/bucket/xrd/examples/"
 wave = 5
 
-# The `package-registry` module: one polyglot registry (OCI containers plus
-# npm/pypi/maven/go/cargo/nuget/generic) on five backends, rendered by the
+# The `package-registry` module: one polyglot registry (OCI containers, Helm
+# charts and the language package managers) on five backends, rendered by the
 # PYTHON composition function in python/function-package-registry rather than
 # by function-kcl — `just pkgreg-install` puts it in the local registry and
 # the wave-2 crossplane-functions row above installs the Function object. The

@@ -2,7 +2,7 @@ import json
 import unittest
 
 from function.backends import aws
-from function.spec import Spec
+from function.spec import Spec, SpecError
 
 
 def spec(**extra):
@@ -167,6 +167,63 @@ class TestAws(unittest.TestCase):
         self.assertFalse(
             aws.status(spec(formats=["npm"]), {"ca-domain": at(arn="arn:d")})["ready"]
         )
+
+    def test_ruby_and_swift_share_the_codeartifact_repository(self):
+        res = aws.render(spec(formats=["rubygems", "swift"]))
+        self.assertEqual(["ca-domain", "ca-repository"], sorted(res))
+        observed = {"ca-domain": at(arn="arn:d", owner="111122223333")}
+        got = aws.status(spec(formats=["rubygems", "swift"]), observed)
+        host = "https://demo-111122223333.d.codeartifact.us-east-1.amazonaws.com"
+        # CodeArtifact names the gem endpoint `ruby`, not `rubygems`.
+        self.assertEqual(
+            {"rubygems": f"{host}/ruby/demo/", "swift": f"{host}/swift/demo/"},
+            got["endpoints"],
+        )
+
+    def test_helm_is_a_create_on_push_template(self):
+        helm = spec(
+            formats=["helm"],
+            immutableTags=True,
+            keepLastImages=5,
+            publicAccess=True,
+            tags={"team": "platform"},
+        )
+        res = aws.render(helm)
+        # No ECR repository and no CodeArtifact: charts get their repository
+        # from ECR on first push.
+        self.assertEqual(["ecr-helm-template"], sorted(res))
+        kind = wire(res, "ecr-helm-template")["kind"]
+        self.assertEqual("RepositoryCreationTemplate", kind)
+        self.assertEqual("demo/charts", external_name(res, "ecr-helm-template"))
+        template = for_provider(res, "ecr-helm-template")
+        self.assertEqual("demo/charts", template["prefix"])
+        self.assertEqual(["CREATE_ON_PUSH"], template["appliedFor"])
+        self.assertEqual("IMMUTABLE", template["imageTagMutability"])
+        rule = json.loads(template["lifecyclePolicy"])["rules"][0]
+        self.assertEqual(5, rule["selection"]["countNumber"])
+        self.assertEqual(aws.public_pull_policy(), template["repositoryPolicy"])
+        # Tags would need an IAM creation role the XRD does not model.
+        self.assertNotIn("resourceTags", template)
+
+    def test_helm_with_a_customer_managed_key_is_refused(self):
+        with self.assertRaises(SpecError) as ctx:
+            aws.render(spec(formats=["oci", "helm"], encryptionKeyId="arn:aws:kms:k"))
+        self.assertIn("encryptionKeyId", str(ctx.exception))
+
+    def test_helm_status(self):
+        observed = {
+            "ecr-helm-template": at(
+                id="demo/charts", registryId="111122223333", region="us-east-1"
+            )
+        }
+        got = aws.status(spec(formats=["helm"]), observed)
+        self.assertTrue(got["ready"])
+        self.assertEqual(
+            {"helm": "oci://111122223333.dkr.ecr.us-east-1.amazonaws.com/demo/charts"},
+            got["endpoints"],
+        )
+        self.assertEqual("demo/charts", got["id"])
+        self.assertFalse(aws.status(spec(formats=["helm"]), {})["ready"])
 
 
 if __name__ == "__main__":

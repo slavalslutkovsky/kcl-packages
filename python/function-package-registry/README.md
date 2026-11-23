@@ -21,16 +21,45 @@ function input:
 
 ## Backend support matrix
 
-| backend | oci | npm | pypi | maven | go | cargo | nuget | generic | composed resources |
-|---|---|---|---|---|---|---|---|---|---|
-| gcp | DOCKER | NPM | PYTHON | MAVEN | GO | — | — | GENERIC | one `RegistryRepository` per format (+ `RegistryRepositoryIAMMember` per format when public) |
-| aws | ECR | CA | CA | CA | — | CA | CA | CA | ECR `Repository` (+ `LifecyclePolicy`, `RepositoryPolicy`); one CodeArtifact `Domain` + one `Repository` for every language format |
-| azure | ACR | — | — | — | — | — | — | — | one `Registry` |
-| zot | yes | — | — | — | — | — | — | — | one provider-helm `Release` (zot chart) |
-| forgejo | yes | yes | yes | yes | yes | yes | yes | yes | one provider-helm `Release` (Forgejo chart) |
+| backend | oci | helm | npm | pypi | maven | go | cargo | nuget | rubygems | composer | conan | swift | generic | composed resources |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| gcp | DOCKER | DOCKER | NPM | PYTHON | MAVEN | GO | — | — | RUBY (Preview) | — | — | — | GENERIC | one `RegistryRepository` per format (+ `RegistryRepositoryIAMMember` per format when public) |
+| aws | ECR | ECR template | CA | CA | CA | — | CA | CA | CA (`ruby`) | — | — | CA | CA | ECR `Repository` (+ `LifecyclePolicy`, `RepositoryPolicy`); ECR `RepositoryCreationTemplate` for helm; one CodeArtifact `Domain` + one `Repository` for every language format |
+| azure | ACR | ACR (OCI) | — | — | — | — | — | — | — | — | — | — | — | one `Registry` |
+| zot | yes | yes (OCI) | — | — | — | — | — | — | — | — | — | — | — | one provider-helm `Release` (zot chart) |
+| forgejo | yes | chart repo | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | one provider-helm `Release` (Forgejo chart) |
+
+Sources: [Artifact Registry formats](https://cloud.google.com/artifact-registry/docs/supported-formats),
+[CodeArtifact formats](https://docs.aws.amazon.com/codeartifact/latest/ug/packages-overview.html),
+[ECR OCI artifacts](https://docs.aws.amazon.com/AmazonECR/latest/userguide/push-oci-artifact.html) and
+[creation templates](https://docs.aws.amazon.com/AmazonECR/latest/userguide/repository-creation-templates.html),
+[ACR Helm charts](https://learn.microsoft.com/azure/container-registry/container-registry-helm-repos),
+[zot](https://zotregistry.dev/latest/user-guides/user-guide-datapath/),
+[Forgejo packages](https://forgejo.org/docs/latest/user/packages/).
 
 A `spec.formats` entry a backend cannot serve is a `SEVERITY_FATAL` function
-result naming the format — never a silently dropped repository.
+result naming the format and the backends that do serve it — never a silently
+dropped repository.
+
+### helm
+
+Charts are served as OCI artifacts wherever that is how the backend stores
+them, and the `helm` endpoint is then the `oci://` reference `helm push` takes:
+
+- **gcp** — a second DOCKER repository, `<xr name>-helm`.
+- **azure**, **zot** — the same registry, under `<xr name>/charts` (zot is
+  plain HTTP in-cluster: `helm push --plain-http`).
+- **aws** — an ECR repository holds a single chart named after it, so helm
+  composes a `RepositoryCreationTemplate` (CREATE_ON_PUSH, prefix
+  `<xr name>/charts`): pushing `<chart>.tgz` to the endpoint makes ECR create
+  `<xr name>/charts/<chart>` with the template's tag mutability, lifecycle
+  and public-pull policy. Those repositories are ECR's, not the XR's — they
+  survive the XR. A template applies a KMS key or tags only through an IAM
+  creation role the XRD does not model, so `encryptionKeyId` with `helm` fails
+  the render and tags are not applied to chart repositories.
+- **forgejo** — Forgejo's native Helm chart repository: the endpoint is the
+  `helm repo add` URL, published to with `helm cm-push` or a POST to
+  `<endpoint>/api/charts`.
 
 ## Typed composed resources
 
@@ -67,6 +96,7 @@ just pkgreg-test                 # ruff + unit tests
 just pkgreg-models               # regenerate function/models/** (docker + yq)
 just pkgreg-serve                # serve :9443 for `crossplane render`
 just pkgreg-render gcp           # render an example against the served function
+just pkgreg-render aws-helm      # …or a per-format one (package-registry-aws-helm.yaml)
 just pkgreg-image                # build the runtime image
 just pkgreg-install              # image -> kind nodes, xpkg -> local registry
 ```
