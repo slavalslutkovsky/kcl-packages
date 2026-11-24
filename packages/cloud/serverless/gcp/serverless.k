@@ -42,7 +42,7 @@ render = lambda oxr {
         spec.forProvider.location = _region
         # ingress only decides which networks may reach the service; public
         # traffic still has to pass the IAM invoker check bound below.
-        spec.forProvider.ingress = "INGRESS_TRAFFIC_ALL" if _public else "INGRESS_TRAFFIC_INTERNAL_ONLY"
+        spec.forProvider.ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
         if _spec?.tags:
             spec.forProvider.labels = _spec.tags
         spec.forProvider.template = {
