@@ -1,12 +1,17 @@
-# Chaos engineering values (Helm-style) → app.Release with Chaos Mesh faults.
-# Renders like values-backend.yaml (`kcl run /abs/path/to/packages/app -q`)
-# plus one Chaos Mesh experiment per `chaos:` entry, each pinned to this
-# workload's own pods (app=<name> in `namespace`) — nothing else is ever
-# selected. Needs Chaos Mesh on the cluster (devkit.toml installs it).
+# Chaos engineering values (Helm-style) → app.Release with Chaos Mesh and
+# Litmus faults. Renders like values-backend.yaml
+# (`kcl run /abs/path/to/packages/app -q`) plus, per `chaos:` entry, one Chaos
+# Mesh experiment (default) or with `provider: litmus` a Litmus ChaosEngine +
+# ChaosExperiment + runner ServiceAccount/RBAC in the `litmus` namespace (and
+# a Role/RoleBinding in this one). Either way the target is this workload's
+# own pods (app=<name> in `namespace`) — nothing else is ever selected. Needs
+# the operator on the cluster: Chaos Mesh (devkit.toml installs it) or Litmus
+# (the litmus-core chart in `litmus`).
 #
-# Without `schedule` an entry is a one-shot experiment: it starts as soon as
-# it is applied and stops after `duration`. With `schedule` (cron) it becomes a
-# Chaos Mesh Schedule that recurs. Delete the object to stop it either way.
+# Chaos Mesh: without `schedule` an entry is a one-shot experiment: it starts
+# as soon as it is applied and stops after `duration`. With `schedule` (cron)
+# it becomes a Chaos Mesh Schedule that recurs. Litmus: a ChaosEngine runs
+# once when created; there is no `schedule`. Delete the objects to stop either.
 # Keep chaos in an overlay (values.staging.yaml) rather than the base if the
 # same values also drive production.
 
@@ -20,11 +25,12 @@ workload:
     type: http
     path: /ready
     port: 8080
-  hpa:
+  scaler:
     minReplicas: 2
     maxReplicas: 10
+    cpu: 70
   chaos:
-    # Kill one replica every ten minutes: exercises the HPA floor and readiness gating.
+    # Kill one replica every ten minutes: exercises the autoscaler's floor and readiness gating.
     - name: kill-one
       type: pod-kill
       schedule: "*/10 * * * *"
@@ -77,6 +83,24 @@ workload:
     - name: clock-skew
       type: time-skew
       timeOffset: "-1h"
+    # The same faults through Litmus, for the comparison: one pod killed
+    # (pod-delete), 200ms on all outbound traffic of half of the pods
+    # (pod-network-latency), two cores of stress-ng for a minute (pod-cpu-hog).
+    - name: litmus-kill
+      provider: litmus
+      type: pod-kill
+    - name: litmus-slow-net
+      provider: litmus
+      type: delay
+      latency: 200ms
+      mode: fixed-percent
+      value: "50"
+      duration: 2m
+    - name: litmus-hot-cpu
+      provider: litmus
+      type: cpu
+      workers: 2
+      duration: 1m
 
 # The portal side of chaos. `-D catalog=true` renders a Component annotated
 #   platform.example.org/chaos-faults: kill-one=pod-kill,slow-net=delay,...

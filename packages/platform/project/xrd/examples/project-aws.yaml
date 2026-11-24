@@ -73,7 +73,7 @@ spec:
         gateway: {name: platform, namespace: gateway-system}
       overrides:
         readinessProbe: {type: http, path: /ready, port: http}
-        hpa: {minReplicas: 2, maxReplicas: 10}
+        scaler: {minReplicas: 2, maxReplicas: 10, cpu: 70}
     # Nightly report: a CronJob with the database wired in.
     - name: report
       kind: cli

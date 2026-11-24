@@ -59,7 +59,7 @@ Every app: `image` (its tag becomes `app.kubernetes.io/version` unless
 envFrom; store defaults to `cloud.secretStore`: `aws-secrets-manager` /
 `azure-key-vault`), `uses`, `identity.accessPolicies`, and `overrides`, which is
 deep-merged over the generated `app.Workload` / `app.Task` (probes, resources,
-hpa, scaler, monitoring, volumes, ...).
+scaler (KEDA), monitoring, volumes, ...).
 
 With `identity`, the `WorkloadIdentity` child composes ServiceAccount `<name>`
 (it carries the role ARN / client ID); the app references it, and on azure its

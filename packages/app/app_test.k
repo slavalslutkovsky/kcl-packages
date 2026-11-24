@@ -27,13 +27,13 @@ test_backend = lambda {
             {name = "REDIS_USERNAME", secretName = "redis-redis-account-default", secretKey = "username"}
             {name = "REDIS_PASSWORD", secretName = "redis-redis-account-default", secretKey = "password"}
         ]
-        hpa = {minReplicas = 1, maxReplicas = 10, cpu = 70, memory = 80}
+        scaler = {minReplicas = 1, maxReplicas = 10, cpu = 70, memory = 80}
     }
     out = render(w)
-    assert len(out) == 3, "BE renders Deployment + Service + HPA"
+    assert len(out) == 3, "BE renders Deployment + Service + ScaledObject"
     dep = out[0]
     svc = out[1]
-    hpa = out[2]
+    so = out[2]
     assert dep.kind == "Deployment" and dep.apiVersion == "apps/v1"
     assert dep.metadata.name == "zerg-api"
     assert dep.metadata.labels["app.kubernetes.io/component"] == "api-server"
@@ -53,8 +53,9 @@ test_backend = lambda {
     assert dep.spec.template.spec.restartPolicy == "Always"
     assert svc.kind == "Service" and svc.spec.$type == "ClusterIP"
     assert svc.spec.ports[0].port == 8080
-    assert hpa.kind == "HorizontalPodAutoscaler"
-    assert hpa.spec.minReplicas == 1 and hpa.spec.maxReplicas == 10
+    assert so.kind == "ScaledObject" and so.spec.scaleTargetRef.name == "zerg-api"
+    assert so.spec.minReplicaCount == 1 and so.spec.maxReplicaCount == 10
+    assert [t.$type for t in so.spec.triggers] == ["cpu", "memory"], "cpu / memory utilization triggers"
 }
 
 # ── Frontend Workload (zerg-web template) ────────────────────────────────────
@@ -86,7 +87,7 @@ test_frontend = lambda {
         terminationGracePeriodSeconds = 10
     }
     out = render(w)
-    assert len(out) == 2, "FE renders Deployment + Service (no HPA)"
+    assert len(out) == 2, "FE renders Deployment + Service (no autoscaler)"
     dep = out[0]
     assert dep.metadata.labels["app.kubernetes.io/component"] == "frontend"
     # prometheus False → no scrape annotations on the pod template
@@ -190,16 +191,17 @@ envFrom:
     name: zerg-api-config
   - kind: secret
     name: zerg-api-secrets
-hpa:
+scaler:
   minReplicas: 2
   maxReplicas: 8
+  cpu: 70
 """)
     w = Workload {**_beValues}
     out = render(w)
-    assert len(out) == 3, "values.yaml-driven BE → Deployment + Service + HPA"
+    assert len(out) == 3, "values.yaml-driven BE → Deployment + Service + ScaledObject"
     assert out[0].metadata.name == "zerg-api"
     assert out[0].spec.template.spec.containers[0].envFrom[1].secretRef.name == "zerg-api-secrets"
-    assert out[2].spec.minReplicas == 2 and out[2].spec.maxReplicas == 8
+    assert out[2].spec.minReplicaCount == 2 and out[2].spec.maxReplicaCount == 8
 
     _cliValues = yaml.decode("""\
 name: db-migrate
@@ -218,7 +220,7 @@ schedule: "0 3 * * *"
 test_examples_valid = lambda {
     be = Release {**yaml.decode(file.read("examples/values-backend.yaml"))}
     beOut = renderRelease(be)
-    assert [m.kind for m in beOut] == ["ServiceAccount", "Deployment", "Service", "PodDisruptionBudget", "HorizontalPodAutoscaler", "ServiceMonitor", "PrometheusRule", "ConfigMap", "ConfigMap", "ExternalSecret"], "backend example: ${[m.kind for m in beOut]}"
+    assert [m.kind for m in beOut] == ["ServiceAccount", "Deployment", "Service", "PodDisruptionBudget", "ScaledObject", "ServiceMonitor", "PrometheusRule", "ConfigMap", "ConfigMap", "ExternalSecret"], "backend example: ${[m.kind for m in beOut]}"
     assert be.workload.name == "zerg-api" and be.workload.prometheus == True
     assert beOut[7].metadata.name == "zerg-api-dashboard-overview", "dashboards before the Release-level ConfigMap"
     assert beOut[8].metadata.name == "zerg-api-config", "config → <name>-config ConfigMap"
@@ -233,7 +235,8 @@ test_examples_valid = lambda {
     assert cli.task.command == ["/app/migrate"]
 
     ch = Release {**yaml.decode(file.read("examples/values-chaos.yaml"))}
-    assert [m.kind for m in renderRelease(ch)] == ["Deployment", "Service", "HorizontalPodAutoscaler", "Schedule", "NetworkChaos", "NetworkChaos", "NetworkChaos", "Schedule", "StressChaos", "HTTPChaos", "IOChaos", "DNSChaos", "TimeChaos"], "chaos example → core + one Chaos Mesh object per fault"
+    _litmus = ["ServiceAccount", "Role", "RoleBinding", "Role", "RoleBinding", "ChaosExperiment", "ChaosEngine"]
+    assert [m.kind for m in renderRelease(ch)] == ["Deployment", "Service", "ScaledObject", "Schedule", "NetworkChaos", "NetworkChaos", "NetworkChaos", "Schedule", "StressChaos", "HTTPChaos", "IOChaos", "DNSChaos", "TimeChaos"] + _litmus * 3, "chaos example → core + one Chaos Mesh object per fault, seven per Litmus fault"
 
     wk = Release {**yaml.decode(file.read("examples/values-worker.yaml"))}
     wkOut = renderRelease(wk)
@@ -258,9 +261,10 @@ workload:
   envFrom:
     - kind: configMap
       name: zerg-api-config
-  hpa:
+  scaler:
     minReplicas: 1
     maxReplicas: 10
+    cpu: 70
 config:
   PORT: "8080"
   RUST_LOG: info
@@ -273,7 +277,7 @@ externalSecret:
 """)}
     out = renderRelease(r)
     kinds = [m.kind for m in out]
-    assert kinds == ["Deployment", "Service", "HorizontalPodAutoscaler", "ConfigMap", "ExternalSecret"], "release → 5 resources in order: ${kinds}"
+    assert kinds == ["Deployment", "Service", "ScaledObject", "ConfigMap", "ExternalSecret"], "release → 5 resources in order: ${kinds}"
     assert out[3].metadata.name == "zerg-api-config", "configMap named <name>-config"
     assert out[3].data.RUST_LOG == "info"
     assert out[4].metadata.name == "zerg-api-secrets", "externalSecret defaults to <name>-secrets"
@@ -297,9 +301,10 @@ workload:
   name: zerg-api
   image: yurikrupnik/zerg-api:latest
   port: 8080
-  hpa:
+  scaler:
     minReplicas: 1
     maxReplicas: 5
+    cpu: 70
 config:
   PORT: "8080"
   OAUTH_AUTO_LINK: "true"
@@ -307,7 +312,7 @@ config:
 """)
     _prod = yaml.decode("""\
 workload:
-  hpa:
+  scaler:
     maxReplicas: 20
 config:
   OAUTH_AUTO_LINK: "false"
@@ -320,12 +325,12 @@ config:
     assert m.config.OAUTH_AUTO_LINK == "false", "overlay overrides scalar"
     assert m.config.CORS == "prod.example.com", "overlay overrides scalar"
     assert m.config.RATE_LIMIT == "200", "overlay adds key"
-    assert m.workload.hpa.minReplicas == 1, "deep-nested base kept"
-    assert m.workload.hpa.maxReplicas == 20, "deep-nested overlay wins"
+    assert m.workload.scaler.minReplicas == 1, "deep-nested base kept"
+    assert m.workload.scaler.maxReplicas == 20, "deep-nested overlay wins"
     # merged result still builds a valid, type-checked Release
     r = Release {**m}
     out = renderRelease(r)
-    assert out[2].spec.maxReplicas == 20, "HPA reflects prod overlay"
+    assert out[2].spec.maxReplicaCount == 20, "ScaledObject reflects prod overlay"
     assert out[3].data.RATE_LIMIT == "200", "ConfigMap reflects prod overlay"
 }
 
@@ -383,10 +388,7 @@ scaler:
     assert so.spec.triggers[0].metadata.stream == "EMAILS"
 }
 
-test_scaler_or_hpa_valid_paths = lambda {
-    # both single-choice paths render their respective autoscaler
-    wh = Workload {name = "x", image = "i", port = 8080, hpa = {}}
-    assert [m.kind for m in render(wh)][2] == "HorizontalPodAutoscaler", "hpa path"
+test_scaler_paths = lambda {
     ws = Workload {name = "x", image = "i", port = 8080, scaler = {cpu = 70}}
     assert [m.kind for m in render(ws)][2] == "ScaledObject", "scaler path"
     # idleReplicas → idleReplicaCount (0 is a real value, not "unset")
@@ -394,18 +396,12 @@ test_scaler_or_hpa_valid_paths = lambda {
     assert render(wi)[2].spec.idleReplicaCount == 0, "idleReplicas 0 is emitted"
 }
 
-# mutual exclusion (hpa AND scaler) is enforced by the schema `check` block.
-
 # ── Deployment omits spec.replicas when autoscaled (GitOps/Flagger safe) ──────
 test_replicas_ownership = lambda {
     # no autoscaler → replicas present (fixed count, e.g. frontend)
     plain = Workload {name = "web", image = "nginx", port = 8080, replicas = 2}
     dep0 = render(plain)[0]
     assert dep0.spec.replicas == 2, "no autoscaler → spec.replicas set"
-    # HPA → replicas omitted (HPA owns it)
-    wh = Workload {name = "api", image = "i", port = 8080, hpa = {}}
-    deph = render(wh)[0]
-    assert deph.spec?.replicas == Undefined, "hpa → spec.replicas omitted"
     # KEDA scaler → replicas omitted (ScaledObject owns it)
     ws = Workload {name = "api", image = "i", port = 8080, scaler = {cpu = 70}}
     deps = render(ws)[0]
@@ -559,13 +555,15 @@ test_catalog_component = lambda {
 
     _id = c.metadata.annotations["backstage.io/kubernetes-id"]
     assert _id == "zerg-api" and c.metadata.annotations["backstage.io/kubernetes-namespace"] == "zerg"
-    assert c.metadata.annotations["platform.example.org/chaos-faults"] == "kill-one=pod-kill,slow-net=delay,lossy=loss,cut-db=partition,hot-cpu=cpu,memory-pressure=memory,slow-responses=http-delay,slow-disk=io-latency,no-db-dns=dns-error,clock-skew=time-skew", "every declared fault must be readable without the cluster"
+    assert c.metadata.annotations["platform.example.org/chaos-faults"] == "kill-one=pod-kill,slow-net=delay,lossy=loss,cut-db=partition,hot-cpu=cpu,memory-pressure=memory,slow-responses=http-delay,slow-disk=io-latency,no-db-dns=dns-error,clock-skew=time-skew,litmus-kill=pod-kill,litmus-slow-net=delay,litmus-hot-cpu=cpu", "every declared fault must be readable without the cluster"
 
     # The other half of the link: nothing the release renders may be invisible
     # to the entity, chaos objects least of all.
     assert all_true([o.metadata.labels["backstage.io/kubernetes-id"] == _id for o in renderRelease(r) if o.metadata?.labels]), "every labelled object must carry the entity's id"
     _chaos = [o for o in renderRelease(r) if o.apiVersion == "chaos-mesh.org/v1alpha1"]
     assert len(_chaos) == 10 and all_true([o.metadata.labels["backstage.io/kubernetes-id"] == _id for o in _chaos]), "the experiments are what the component page shows"
+    _engines = [o for o in renderRelease(r) if o.apiVersion == "litmuschaos.io/v1alpha1"]
+    assert len(_engines) == 6 and all_true([o.metadata.labels["backstage.io/kubernetes-id"] == _id for o in _engines]), "the Litmus engines and definitions carry the id too, though they live in `litmus`"
 
     # The Deployment's selector is immutable — the id must never leak into it.
     _dep = renderRelease(r)[0]
@@ -702,8 +700,8 @@ serviceAccount:
 
 # ── PodDisruptionBudget ──────────────────────────────────────────────────────
 test_disruption_budget = lambda {
-    out = render(Workload {name = "api", namespace = "zerg", image = "i", disruptionBudget = {maxUnavailable = "25%"}, hpa = {}})
-    assert [m.kind for m in out] == ["Deployment", "Service", "PodDisruptionBudget", "HorizontalPodAutoscaler"]
+    out = render(Workload {name = "api", namespace = "zerg", image = "i", disruptionBudget = {maxUnavailable = "25%"}, scaler = {cpu = 70}})
+    assert [m.kind for m in out] == ["Deployment", "Service", "PodDisruptionBudget", "ScaledObject"]
     pdb = out[2]
     assert pdb.spec.maxUnavailable == "25%" and pdb.spec?.minAvailable == Undefined
     assert pdb.spec.selector.matchLabels == {app = "api"}, "the same pods the Deployment selects"
@@ -886,6 +884,146 @@ chaos:
     assert sched[0].spec.httpChaos.port == 8080
 }
 
+# ── Litmus: ChaosEngine + ChaosExperiment + runner RBAC per fault ────────────
+_litmusKinds = ["ServiceAccount", "Role", "RoleBinding", "Role", "RoleBinding", "ChaosExperiment", "ChaosEngine"]
+
+# The env the ChaosEngine overrides the definition's defaults with.
+_engineEnv = lambda engine -> {str:str} {
+    {e.name: e.value for e in engine.spec.experiments[0].spec.components.env}
+}
+
+test_litmus_per_fault = lambda {
+    w = Workload {**yaml.decode("""\
+name: zerg-api
+namespace: zerg
+image: yurikrupnik/zerg-api:latest
+port: 3000
+chaos:
+  - {name: kill, provider: litmus, type: pod-kill}
+  - {name: restart, provider: litmus, type: container-kill, containerNames: [zerg-api]}
+  - {name: slow, provider: litmus, type: delay, latency: 200ms, jitter: 50ms, correlation: "25", externalTargets: [postgres-rw.dbs.svc, 10.0.0.0/8], duration: 1m30s}
+  - {name: lossy, provider: litmus, type: loss, loss: "30", mode: all}
+  - {name: bits, provider: litmus, type: corrupt, corrupt: "5"}
+  - {name: dup, provider: litmus, type: duplicate, mode: fixed-percent, value: "50"}
+  - {name: narrow, provider: litmus, type: bandwidth, rate: 10kbps}
+  - {name: cut, provider: litmus, type: partition, direction: both, mode: all, externalTargets: [postgres-rw.dbs.svc]}
+  - {name: cpu, provider: litmus, type: cpu, workers: 2, load: 80, duration: 2m}
+  - {name: mem, provider: litmus, type: memory, size: 1GB}
+  - {name: slow-http, provider: litmus, type: http-delay, latency: 2s}
+  - {name: abort, provider: litmus, type: http-abort, port: 9090}
+  - {name: dns, provider: litmus, type: dns-error, patterns: [postgres-rw.dbs.svc]}
+  - {name: dns-wild, provider: litmus, type: dns-error, patterns: ["*.dbs.svc"]}
+""")}
+    out = render(w)[2::]
+    assert [o.kind for o in out] == _litmusKinds * 14, "seven objects per Litmus fault, after the core resources"
+    engines = [o for o in out if o.kind == "ChaosEngine"]
+    defs = [o for o in out if o.kind == "ChaosExperiment"]
+    assert [d.metadata.labels.name for d in defs] == ["pod-delete", "container-kill", "pod-network-latency", "pod-network-loss", "pod-network-corruption", "pod-network-duplication", "pod-network-rate-limit", "pod-network-partition", "pod-cpu-hog", "pod-memory-hog", "pod-http-latency", "pod-http-reset-peer", "pod-dns-error", "pod-dns-error"], "the chaos-charts experiment per fault type"
+    assert [e.metadata.name for e in engines] == ["zerg-zerg-api-" + n for n in ["kill", "restart", "slow", "lossy", "bits", "dup", "narrow", "cut", "cpu", "mem", "slow-http", "abort", "dns", "dns-wild"]], "engines carry the target namespace: everything lives in one `litmus` namespace"
+    assert all_true([engines[i].spec.experiments[0].name == defs[i].metadata.name for i in range(len(engines))]), "each engine runs its own definition"
+    assert all_true([d.metadata.name.startswith(d.metadata.labels.name + "-") and len(d.metadata.name) == len(d.metadata.labels.name) + 9 for d in defs]), "definitions are <experiment>-<8-char hash>"
+    assert defs[12].metadata.name != defs[13].metadata.name, "two faults of one type get two definitions"
+    assert all_true([d.spec.definition.image == "litmuschaos.docker.scarf.sh/litmuschaos/go-runner:3.31.0" for d in defs]), "the go-runner pinned with the operator"
+    assert defs[2].spec.definition.args == ["-c", "./experiments -name pod-network-latency"]
+    assert all_true([_plain(e.spec.appinfo) == {appns = "zerg", applabel = "app=zerg-api", appkind = "deployment"} for e in engines]), "every engine pinned to the workload's pods"
+    assert all_true([e.metadata.namespace == "litmus" and e.spec.chaosServiceAccount == e.metadata.name and e.spec.jobCleanUpPolicy == "delete" for e in engines])
+    assert all_true([e.spec?.engineState == Undefined for e in engines]), "engineState is the operator's to flip: re-asserting active would restart a finished run"
+    env = [_engineEnv(e) for e in engines]
+    assert env[0] == {TOTAL_CHAOS_DURATION = "1", CHAOS_INTERVAL = "1", FORCE = "true"}, "pod-delete: one forced kill, mode one = no PODS_AFFECTED_PERC: ${env[0]}"
+    assert env[1] == {TOTAL_CHAOS_DURATION = "1", TARGET_CONTAINER = "zerg-api", CHAOS_INTERVAL = "1"}, "${env[1]}"
+    assert env[2] == {TOTAL_CHAOS_DURATION = "90", NETWORK_LATENCY = "200", JITTER = "50", CORRELATION = "25", DESTINATION_IPS = "10.0.0.0/8", DESTINATION_HOSTS = "postgres-rw.dbs.svc"}, "${env[2]}"
+    assert env[3] == {TOTAL_CHAOS_DURATION = "30", PODS_AFFECTED_PERC = "100", NETWORK_PACKET_LOSS_PERCENTAGE = "30"}, "mode all = 100%: ${env[3]}"
+    assert env[4] == {TOTAL_CHAOS_DURATION = "30", NETWORK_PACKET_CORRUPTION_PERCENTAGE = "5"}
+    assert env[5] == {TOTAL_CHAOS_DURATION = "30", PODS_AFFECTED_PERC = "50", NETWORK_PACKET_DUPLICATION_PERCENTAGE = "10"}
+    assert env[6] == {TOTAL_CHAOS_DURATION = "30", NETWORK_BANDWIDTH = "10kbps", BURST = "10000", LIMIT = "20971520"}, "the same tc tbf arguments as Chaos Mesh"
+    assert env[7] == {TOTAL_CHAOS_DURATION = "30", PODS_AFFECTED_PERC = "100", POLICY_TYPES = "all", DESTINATION_HOSTS = "postgres-rw.dbs.svc"}
+    assert env[8] == {TOTAL_CHAOS_DURATION = "120", CPU_CORES = "2", CPU_LOAD = "80"}
+    assert env[9] == {TOTAL_CHAOS_DURATION = "30", MEMORY_CONSUMPTION = "1024", NUMBER_OF_WORKERS = "1"}
+    assert env[10] == {TOTAL_CHAOS_DURATION = "30", LATENCY = "2000", TARGET_SERVICE_PORT = "3000"}, "an HTTP fault defaults to the workload's port"
+    assert env[11] == {TOTAL_CHAOS_DURATION = "30", RESET_TIMEOUT = "0", TARGET_SERVICE_PORT = "9090"}
+    assert env[12] == {TOTAL_CHAOS_DURATION = "30", MATCH_SCHEME = "exact", TARGET_HOSTNAMES = json.encode(["postgres-rw.dbs.svc"])}
+    assert env[13] == {TOTAL_CHAOS_DURATION = "30", MATCH_SCHEME = "substring", TARGET_HOSTNAMES = json.encode([".dbs.svc"])}, "a leading/trailing wildcard is a substring match"
+}
+
+test_litmus_rbac = lambda {
+    out = render(Workload {name = "api", namespace = "zerg", image = "i", chaos = [
+        {name = "kill", provider = "litmus", $type = "pod-kill"}
+        {name = "cut", provider = "litmus", $type = "partition", mode = "all"}
+        {name = "slow", provider = "litmus", $type = "delay"}
+    ]})[2::]
+    kill = out[0:7]
+    assert [[o.kind, o.metadata.namespace, o.metadata.name] for o in kill[0:5]] == [["ServiceAccount", "litmus", "zerg-api-kill"], ["Role", "litmus", "zerg-api-kill"], ["RoleBinding", "litmus", "zerg-api-kill"], ["Role", "zerg", "zerg-api-kill"], ["RoleBinding", "zerg", "zerg-api-kill"]], "runner identity in `litmus`, only a Role + binding in the target"
+    assert all_true([_plain(b.subjects) == [{kind = "ServiceAccount", name = "zerg-api-kill", namespace = "litmus"}] for b in [kill[2], kill[4]]]), "both bindings name the runner SA in `litmus`"
+    runner = {r.resources[0]: r.verbs for r in kill[1].rules}
+    assert "create" in runner["pods"] and "create" in runner["jobs"] and "create" in runner["chaosengines"], "runner, Job and helper pods are created in `litmus`"
+    target = lambda objs -> {str:} {
+        {r.resources[0]: r.verbs for r in objs[3].rules}
+    }
+    assert target(kill)["pods"] == ["get", "list", "delete", "deletecollection"], "only pod-delete may delete target pods"
+    assert target(out[14:21])["pods"] == ["get", "list"] and "networkpolicies" not in target(out[14:21]), "a delay touches nothing in the target namespace"
+    assert target(out[7:14])["networkpolicies"] == ["create", "delete", "get", "list"] and target(out[7:14])["pods"] == ["get", "list"], "partition fences with a NetworkPolicy"
+    assert "deployments" in target(kill) and "rollouts" not in target(kill), "owner lookup up to the Deployment; Argo Rollouts only when the target kind is rollout"
+
+    # The renderer the other packages call: any target, any engine name.
+    objs = litmusObjects(Fault {name = "x", provider = "litmus", $type = "pod-kill"}, LitmusTarget {namespace = "dbs", labels = {"cnpg.io/cluster" = "pg"}, kind = "statefulset"}, "game-day-x", {}, False)
+    assert objs[6].spec.engineState == "stop", "paused → the engine is rendered stopped"
+    assert objs[6].spec.appinfo.applabel == "cnpg.io/cluster=pg" and objs[6].spec.appinfo.appkind == "statefulset"
+}
+
+# Mixed providers in one workload: each fault renders for its own operator.
+test_litmus_mixed = lambda {
+    out = render(Workload {name = "api", namespace = "zerg", image = "i", chaos = [
+        {name = "a", $type = "pod-kill"}
+        {name = "b", provider = "litmus", $type = "pod-kill"}
+        {name = "c", $type = "delay"}
+    ]})
+    assert [o.kind for o in out] == ["Deployment", "Service", "PodChaos"] + _litmusKinds + ["NetworkChaos"]
+}
+
+# What Litmus cannot do is rejected at render time, not approximated. Called
+# last at the bottom of this file, after test_route_rejected: a check failure
+# runtime.catch swallowed is still reported by the next schema whose check
+# calls a builtin (kcl 0.13), so nothing may be instantiated after one.
+test_litmus_rejected = lambda {
+    _bad = [
+        {$type = "pod-failure"}
+        {$type = "io-latency", volumePath = "/data"}
+        {$type = "io-fault", volumePath = "/data"}
+        {$type = "dns-random"}
+        {$type = "time-skew"}
+        {$type = "pod-kill", schedule = "0 * * * *"}
+        {$type = "pod-kill", mode = "fixed", value = "2"}
+        {$type = "pod-kill", mode = "random-max-percent", value = "50"}
+        {$type = "delay", duration = "500ms"}
+        {$type = "delay", latency = "1.5s"}
+        {$type = "delay", jitter = "10us"}
+        {$type = "loss", correlation = "0.5"}
+        {$type = "memory"}
+        {$type = "memory", size = "50%"}
+        {$type = "http-delay", path = "/api"}
+        {$type = "http-abort", method = "POST"}
+        {$type = "dns-error", patterns = ["a*b.svc"]}
+        {$type = "partition"}
+    ]
+    # the types Litmus lacks stay valid for Chaos Mesh
+    assert len([Fault {name = "x", **b} for b in _bad[0:5]]) == 5
+    assert all_true([runtime.catch(lambda {
+        Fault {name = "x", provider = "litmus", **b}
+    }) != "" for b in _bad]), "every shape Litmus cannot express is rejected"
+    assert runtime.catch(lambda {
+        LitmusTarget {namespace = "n", labels = {a = "1", b = "2"}}
+    }) != "", "two labels: Litmus would OR them"
+    assert runtime.catch(lambda {
+        litmusObjects(Fault {name = "x", provider = "litmus", $type = "pod-kill"}, LitmusTarget {namespace = "dbs", labels = {a = "b"}}, "x" * 64, {})
+    }) != "", "an engine name longer than a DNS label"
+    assert runtime.catch(lambda {
+        litmusObjects(Fault {name = "x", $type = "pod-kill"}, LitmusTarget {namespace = "dbs", labels = {a = "b"}}, "x", {})
+    }) != "", "a chaos-mesh fault"
+    assert runtime.catch(lambda {
+        litmusObjects(Fault {name = "x", provider = "litmus", $type = "http-delay"}, LitmusTarget {namespace = "dbs", labels = {a = "b"}}, "x", {})
+    }) != "", "an HTTP fault with no port"
+}
+
 # ── Dapr sidecar ─────────────────────────────────────────────────────────────
 test_dapr_defaults = lambda {
     w = Workload {
@@ -980,6 +1118,102 @@ test_dapr_example = lambda {
     assert ann["dapr.io/app-max-concurrency"] == "10" and ann["dapr.io/app-health-check-path"] == "/healthz"
 }
 
+# ── HTTPRoute (Gateway API) ──────────────────────────────────────────────────
+_routeWorkload = lambda route: {str:} {
+    Workload {name = "api", namespace = "zerg", image = "i", port = 8080, route = route}
+}
+
+test_route_single_rule = lambda {
+    out = render(_routeWorkload({
+        hostnames = ["api.example.org"]
+        gateway = {name = "main-gateway", namespace = "gateway", sectionName = "https"}
+        timeout = "30s"
+        requestHeaders = {set = {"X-Env" = "dev"}, remove = ["X-Debug"]}
+    }))
+    assert [m.kind for m in out] == ["Deployment", "Service", "HTTPRoute"], "${[m.kind for m in out]}"
+    r = out[2]
+    assert r.apiVersion == "gateway.networking.k8s.io/v1"
+    assert r.metadata.name == "api" and r.metadata.namespace == "zerg" and r.metadata.labels["app.kubernetes.io/name"] == "api"
+    assert r.spec.hostnames == ["api.example.org"]
+    p = r.spec.parentRefs[0]
+    assert p.name == "main-gateway" and p.namespace == "gateway" and p.sectionName == "https" and p?.port == Undefined
+    first = r.spec.rules[0]
+    assert len(r.spec.rules) == 1
+    assert first.matches[0].path.$type == "PathPrefix" and first.matches[0].path.value == "/"
+    assert first.backendRefs[0].name == "api" and first.backendRefs[0].port == 8080, "the Service the workload renders"
+    assert first.timeouts.request == "30s"
+    f = first.filters[0]
+    assert f.$type == "RequestHeaderModifier"
+    assert f.requestHeaderModifier.set[0].name == "X-Env" and f.requestHeaderModifier.set[0].value == "dev"
+    assert f.requestHeaderModifier.remove == ["X-Debug"] and f.requestHeaderModifier?.add == Undefined
+}
+
+test_route_rules_take_route_defaults = lambda {
+    r = render(_routeWorkload({
+        hostnames = ["api.example.org"]
+        gateway = {name = "gw"}
+        port = 9090
+        timeout = "10s"
+        rules = [{path = "/api"}, {path = "/healthz", pathType = "Exact", port = 8081, timeout = "1s"}]
+    }))[2]
+    rules = r.spec.rules
+    assert len(rules) == 2
+    assert rules[0].matches[0].path.value == "/api" and rules[0].backendRefs[0].port == 9090 and rules[0].timeouts.request == "10s"
+    assert rules[1].matches[0].path.$type == "Exact" and rules[1].backendRefs[0].port == 8081 and rules[1].timeouts.request == "1s"
+    assert rules[0]?.filters == Undefined, "no header filter unless asked"
+    assert r.spec.parentRefs[0]?.sectionName == Undefined and r.spec.parentRefs[0]?.namespace == Undefined
+}
+
+test_route_https_redirect = lambda {
+    out = render(_routeWorkload({
+        hostnames = ["api.example.org"]
+        gateway = {name = "gw", namespace = "edge", sectionName = "https", port = 443}
+        httpsRedirect = {}
+    }))
+    assert [m.kind for m in out] == ["Deployment", "Service", "HTTPRoute", "HTTPRoute"]
+    assert out[2].spec.parentRefs[0].port == 443
+    rd = out[3]
+    assert rd.metadata.name == "api-https-redirect" and rd.spec.hostnames == ["api.example.org"]
+    p = rd.spec.parentRefs[0]
+    assert p.sectionName == "http" and p.namespace == "edge" and p?.port == Undefined, "the plain-HTTP listener, not the HTTPS one's port"
+    f = rd.spec.rules[0].filters[0]
+    assert f.$type == "RequestRedirect" and f.requestRedirect.scheme == "https" and f.requestRedirect.statusCode == 301
+    assert rd.spec.rules[0]?.backendRefs == Undefined, "a redirect sends nothing to the workload"
+}
+
+test_route_enabled_flag_per_env = lambda {
+    base = {workload = {name = "api", image = "i", route = {hostnames = ["api.example.org"], gateway = {name = "gw"}}}}
+    off = mergeValues(base, {workload = {route = {enabled = False}}})
+    assert [m.kind for m in renderRelease(Release {**base})] == ["Deployment", "Service", "HTTPRoute"]
+    assert [m.kind for m in renderRelease(Release {**off})] == ["Deployment", "Service"], "an overlay turns the route off"
+    assert [m.kind for m in render(Workload {name = "api", image = "i", route = {enabled = False}})] == ["Deployment", "Service"], "disabled needs no hostnames or gateway"
+}
+
+# The checks are exercised on bare schemas (see test_dapr_rejected_sidecar_resources).
+test_route_rejected = lambda {
+    assert runtime.catch(lambda {
+        HttpRoute {gateway = {name = "gw"}}
+    }), "an enabled route without hostnames"
+    assert runtime.catch(lambda {
+        HttpRoute {hostnames = ["a.example.org"]}
+    }), "an enabled route without a gateway"
+    assert runtime.catch(lambda {
+        HttpRoute {hostnames = ["a.example.org"], gateway = {name = "gw"}, path = "/x", rules = [{path = "/y"}]}
+    }), "route-level path next to rules"
+    assert runtime.catch(lambda {
+        HttpRoute {hostnames = ["a.example.org"], gateway = {name = "gw"}, httpsRedirect = {}}
+    }), "a redirect without an HTTPS listener to keep the route on"
+    assert runtime.catch(lambda {
+        HttpRoute {hostnames = ["a.example.org"], gateway = {name = "gw", sectionName = "http"}, httpsRedirect = {}}
+    }), "the route on the listener that redirects"
+    assert runtime.catch(lambda {
+        HeaderFilter {}
+    }), "a header filter that does nothing"
+    assert runtime.catch(lambda {
+        HeaderFilter {set = {"X-A" = "1"}, remove = ["X-A"]}
+    }), "a header both set and removed"
+}
+
 # invalid faults (no namespace, fixed mode without value, delay with direction
 # from, duplicate names, io-* without volumePath) and the other invalid shapes
 # (monitoring without namespace, ServiceMonitor with service: false, RBAC rules
@@ -997,7 +1231,7 @@ test_release()
 test_merge_values()
 test_scaler_cpu_mem()
 test_scaler_scale_to_zero()
-test_scaler_or_hpa_valid_paths()
+test_scaler_paths()
 test_replicas_ownership()
 test_chaos_one_shot()
 test_chaos_schedule()
@@ -1012,9 +1246,18 @@ test_scaler_auth()
 test_scaled_job()
 test_monitoring()
 test_chaos_more_types()
+test_litmus_per_fault()
+test_litmus_rbac()
+test_litmus_mixed()
 test_dapr_defaults()
 test_dapr_overrides()
 test_dapr_rejected()
 test_dapr_rejected_app_id()
 test_dapr_rejected_sidecar_resources()
 test_dapr_example()
+test_route_single_rule()
+test_route_rules_take_route_defaults()
+test_route_https_redirect()
+test_route_enabled_flag_per_env()
+test_route_rejected()
+test_litmus_rejected()

@@ -18,15 +18,15 @@ schema NetworkStatus:
     dbSubnetGroupName : str, default is Undefined, optional
         RDS DB subnet group over the private subnets (AWS, when databaseSubnetGroups). Empty on GCP.
     id : str, default is Undefined, optional
-        Provider-assigned network id (VPC id / GCP network name).
+        Provider-assigned network id (VPC id / GCP network name / Azure VNet ARM id).
     name : str, default is Undefined, optional
         Network name as the cloud knows it.
     natEnabled : bool, default is Undefined, optional
         True when private workloads have managed outbound internet access.
     privateSubnetIds : [str], default is Undefined, optional
-        Subnets with no inbound route from the internet (AWS), or every observed subnetwork in spec.subnets order (GCP; the single regional subnetwork without subnets).
+        Subnets with no inbound route from the internet (AWS), or every observed subnetwork / subnet in spec.subnets order (GCP and Azure; the single one over cidr without subnets).
     provider : str, default is Undefined, optional
-        Backend that fulfilled the claim (aws | gcp).
+        Backend that fulfilled the claim (aws | gcp | azure).
     publicSubnetIds : [str], default is Undefined, optional
         Subnets with a route to the internet gateway (AWS). Empty on GCP.
     ready : bool, default is Undefined, optional
@@ -34,13 +34,13 @@ schema NetworkStatus:
     region : str, default is Undefined, optional
         Region the subnets live in.
     securityGroupIds : [str], default is Undefined, optional
-        The workload security group, ready to attach to instances that should be able to talk inside the network (AWS). Empty on GCP, which filters by firewall rule and network tag instead.
+        The workload security group, ready to attach to instances that should be able to talk inside the network (AWS), or the Network Security Group associated with every subnet (Azure). Empty on GCP, which filters by firewall rule and network tag instead.
     selfLink : str, default is Undefined, optional
         GCP network self link (projects/<p>/global/networks/<n>), the spelling other GCP resources expect. Empty on AWS.
     serviceRange : str, default is Undefined, optional
         CIDR reserved for private service access (GCP, when serviceRange is set) — the range to hand to Cloud SQL private IP or Memorystore. Empty on AWS.
     subnets : [NetworkStatusSubnets], default is Undefined, optional
-        GCP subnetworks in spec order (the single regional one without spec.subnets). id and selfLink appear only once the subnetwork is observed. Empty on AWS.
+        GCP subnetworks / Azure subnets in spec order (the single one over cidr without spec.subnets). id and selfLink appear only once the subnet is observed; secondaryRanges is always empty on Azure. Empty on AWS.
     """
   cacheSubnetGroupName?: str
   cidr?: str

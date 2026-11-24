@@ -129,18 +129,27 @@ operators:
              StatusCheck, WorkflowNode]
 
   - name: litmus
-    source: litmuschaos/chaos-operator@3.31.0 (deploy/crds)
-    installedBy: not installed
-    schemas: none
+    source: litmuschaos/litmus-helm@litmus-core-3.31.1 (charts/litmus-core/crds; chaos-operator 3.31.0)
+    installedBy: gitops (mgmt) — litmus-core chart 3.31.1 in `litmus`; not in devkit.toml
+    schemas: packages/providers/litmus/models
     groups: [litmuschaos.io]
     notes: >-
-      The other chaos option, not taken: a Litmus experiment needs a
-      ChaosExperiment installed from the hub per fault type plus a chaos
-      ServiceAccount/Role per target namespace before a ChaosEngine can
-      run, whereas a Chaos Mesh experiment is one self-contained CR. Listed
-      so the choice is on record; nothing here renders these.
-    used: []
-    unused: [ChaosEngine, ChaosExperiment, ChaosResult]
+      The second chaos provider, for comparison with Chaos Mesh. A Fault with
+      `provider: litmus` renders a ChaosEngine plus its own ChaosExperiment
+      definition (copied from chaos-charts 3.31.0 into
+      packages/app/litmus_hub.k) in `litmus`; the manager package renders the
+      same for its experiments, and platform-api's XChaosExperiment composes
+      them through app.litmusObjects. ChaosResult is written by the
+      experiment, never rendered — its verdict surfaces on the ChaosEngine's
+      status, which is what XChaosExperiment maps.
+    used:
+      - kind: ChaosEngine
+        group: litmuschaos.io
+        by: [app, manager (through app.litmusObjects), platform-api xchaosexperiment (through app.litmusObjects)]
+      - kind: ChaosExperiment
+        group: litmuschaos.io
+        by: [app, manager (through app.litmusObjects), platform-api xchaosexperiment (through app.litmusObjects)]
+    unused: [ChaosResult]
 
   - name: flux-source
     source: fluxcd/source-controller@v1.9.2

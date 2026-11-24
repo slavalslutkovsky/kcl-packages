@@ -1,8 +1,8 @@
 # Event-driven worker values (Helm-style) → app.Release with a KEDA ScaledObject.
-# Renders like values-backend.yaml (`kcl run /abs/path/to/packages/app -q`)
-# but with `scaler:` instead of `hpa:`: a keda.sh/v1alpha1 ScaledObject that
-# scales the Deployment on queue lag and down to zero when idle. Needs KEDA on
-# the cluster (the manager package's examples/values.yaml installs it).
+# Renders like values-backend.yaml (`kcl run /abs/path/to/packages/app -q`),
+# but its ScaledObject scales the Deployment on queue lag and down to zero when
+# idle instead of on cpu / memory. Needs KEDA on the cluster (the manager
+# package's examples/values.yaml installs it).
 #
 # `cpu` / `memory` under `scaler:` are convenience shortcuts for KEDA's built-in
 # utilization triggers; `triggers:` is passthrough for any KEDA scaler

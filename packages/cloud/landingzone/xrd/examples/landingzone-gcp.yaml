@@ -1,0 +1,96 @@
+# LandingZone on gcp: the contract's example.gcp spec with the tier-0 foundation Pulumi writes
+# (example.foundation.gcp). Selects the landingzone-gcp Composition.
+apiVersion: cloud.example.org/v1alpha1
+kind: LandingZone
+metadata:
+  name: shl
+  namespace: landing-zone
+spec:
+  prefix: shl
+  labels:
+    managed-by: landing-zone
+  addressSpace: 10.0.0.0/8
+  network:
+    hub:
+      topology: isolated
+    mgmt:
+      cidr: 10.10.0.0/16
+      nodes: 10.10.0.0/24
+      pods: 10.10.32.0/19
+      services: 10.10.16.0/22
+  environments:
+    - name: dev
+      cidr: 10.20.0.0/16
+      nodes: 10.20.0.0/22
+      pods: 10.20.64.0/18
+      services: 10.20.16.0/20
+      cluster:
+        nodeSize: medium
+        minNodes: 1
+        maxNodes: 3
+    - name: prod
+      cidr: 10.30.0.0/16
+      nodes: 10.30.0.0/22
+      pods: 10.30.64.0/18
+      services: 10.30.16.0/20
+  keys:
+    - name: cluster-secrets
+      purpose: cluster-secrets
+    - name: audit
+      purpose: audit
+      rotationDays: 365
+    - name: openbao-unseal
+      purpose: unseal
+  registry:
+    name: platform
+  audit:
+    retentionDays: 400
+  provider: gcp
+  organization:
+    id: "231525148429"
+    domain: shluviza.com
+    billingAccount: 0127E8-28899E-CC1469
+  region: me-west1
+  backupRegion: europe-west4
+  controlPlane:
+    admins: gke-security-groups@shluviza.com
+    nodePools:
+      - name: default
+        machineType: e2-highmem-4
+        minNodes: 1
+        maxNodes: 3
+      - name: ci
+        machineType: e2-highmem-4
+        minNodes: 0
+        maxNodes: 2
+        spot: true
+        taints:
+          - workload=ci:NoSchedule
+  foundation:
+    scopes:
+      root: folders/10
+      platform: folders/1
+      dev: folders/2
+      prod: folders/3
+    containers:
+      platform: shl-lz-mgmt
+      network: shl-lz-net
+      security: shl-lz-security
+      workloads: shl-lz-workloads
+      dev: shl-lz-workloads
+      prod: shl-lz-workloads
+    network:
+      mgmt:
+        id: projects/shl-lz-net/global/networks/mgmt
+        subnet: projects/shl-lz-net/regions/me-west1/subnetworks/mgmt-me-west1
+        pods: pods
+        services: services
+    keys:
+      cluster-secrets: projects/shl-lz-security/locations/me-west1/keyRings/platform/cryptoKeys/cluster-secrets
+    controlPlane:
+      clusterName: mgmt
+      oidcIssuer: https://container.googleapis.com/v1/projects/shl-lz-mgmt/locations/me-west1/clusters/mgmt
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp

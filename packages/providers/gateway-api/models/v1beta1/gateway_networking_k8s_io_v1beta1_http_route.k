@@ -652,29 +652,29 @@ schema GatewayNetworkingK8sIoV1beta1HTTPRouteSpecRulesItems0BackendRefsItems0Fil
 
 
         # filter.requestHeaderModifier must be nil if the filter.type is not RequestHeaderModifier
-        not (((requestHeaderModifier != None) and (type != "RequestHeaderModifier")))
+        not (((requestHeaderModifier not in [None, Undefined]) and (type != "RequestHeaderModifier")))
         # filter.requestHeaderModifier must be specified for RequestHeaderModifier filter.type
-        not ((not ((requestHeaderModifier != None)) and (type == "RequestHeaderModifier")))
+        not ((not ((requestHeaderModifier not in [None, Undefined])) and (type == "RequestHeaderModifier")))
         # filter.responseHeaderModifier must be nil if the filter.type is not ResponseHeaderModifier
-        not (((responseHeaderModifier != None) and (type != "ResponseHeaderModifier")))
+        not (((responseHeaderModifier not in [None, Undefined]) and (type != "ResponseHeaderModifier")))
         # filter.responseHeaderModifier must be specified for ResponseHeaderModifier filter.type
-        not ((not ((responseHeaderModifier != None)) and (type == "ResponseHeaderModifier")))
+        not ((not ((responseHeaderModifier not in [None, Undefined])) and (type == "ResponseHeaderModifier")))
         # filter.requestMirror must be nil if the filter.type is not RequestMirror
-        not (((requestMirror != None) and (type != "RequestMirror")))
+        not (((requestMirror not in [None, Undefined]) and (type != "RequestMirror")))
         # filter.requestMirror must be specified for RequestMirror filter.type
-        not ((not ((requestMirror != None)) and (type == "RequestMirror")))
+        not ((not ((requestMirror not in [None, Undefined])) and (type == "RequestMirror")))
         # filter.requestRedirect must be nil if the filter.type is not RequestRedirect
-        not (((requestRedirect != None) and (type != "RequestRedirect")))
+        not (((requestRedirect not in [None, Undefined]) and (type != "RequestRedirect")))
         # filter.requestRedirect must be specified for RequestRedirect filter.type
-        not ((not ((requestRedirect != None)) and (type == "RequestRedirect")))
+        not ((not ((requestRedirect not in [None, Undefined])) and (type == "RequestRedirect")))
         # filter.urlRewrite must be nil if the filter.type is not URLRewrite
-        not (((urlRewrite != None) and (type != "URLRewrite")))
+        not (((urlRewrite not in [None, Undefined]) and (type != "URLRewrite")))
         # filter.urlRewrite must be specified for URLRewrite filter.type
-        not ((not ((urlRewrite != None)) and (type == "URLRewrite")))
+        not ((not ((urlRewrite not in [None, Undefined])) and (type == "URLRewrite")))
         # filter.extensionRef must be nil if the filter.type is not ExtensionRef
-        not (((extensionRef != None) and (type != "ExtensionRef")))
+        not (((extensionRef not in [None, Undefined]) and (type != "ExtensionRef")))
         # filter.extensionRef must be specified for ExtensionRef filter.type
-        not ((not ((extensionRef != None)) and (type == "ExtensionRef")))
+        not ((not ((extensionRef not in [None, Undefined])) and (type == "ExtensionRef")))
 
 schema GatewayNetworkingK8sIoV1beta1HTTPRouteSpecRulesItems0BackendRefsItems0FiltersItems0ExtensionRef:
     r"""
@@ -899,7 +899,7 @@ schema GatewayNetworkingK8sIoV1beta1HTTPRouteSpecRulesItems0BackendRefsItems0Fil
 
 
         # Only one of percent or fraction may be specified in HTTPRequestMirrorFilter
-        not (((percent != None) and (fraction != None)))
+        not (((percent not in [None, Undefined]) and (fraction not in [None, Undefined])))
 
 schema GatewayNetworkingK8sIoV1beta1HTTPRouteSpecRulesItems0BackendRefsItems0FiltersItems0RequestMirrorBackendRef:
     r"""
@@ -1469,29 +1469,29 @@ schema GatewayNetworkingK8sIoV1beta1HTTPRouteSpecRulesItems0FiltersItems0:
 
 
         # filter.requestHeaderModifier must be nil if the filter.type is not RequestHeaderModifier
-        not (((requestHeaderModifier != None) and (type != "RequestHeaderModifier")))
+        not (((requestHeaderModifier not in [None, Undefined]) and (type != "RequestHeaderModifier")))
         # filter.requestHeaderModifier must be specified for RequestHeaderModifier filter.type
-        not ((not ((requestHeaderModifier != None)) and (type == "RequestHeaderModifier")))
+        not ((not ((requestHeaderModifier not in [None, Undefined])) and (type == "RequestHeaderModifier")))
         # filter.responseHeaderModifier must be nil if the filter.type is not ResponseHeaderModifier
-        not (((responseHeaderModifier != None) and (type != "ResponseHeaderModifier")))
+        not (((responseHeaderModifier not in [None, Undefined]) and (type != "ResponseHeaderModifier")))
         # filter.responseHeaderModifier must be specified for ResponseHeaderModifier filter.type
-        not ((not ((responseHeaderModifier != None)) and (type == "ResponseHeaderModifier")))
+        not ((not ((responseHeaderModifier not in [None, Undefined])) and (type == "ResponseHeaderModifier")))
         # filter.requestMirror must be nil if the filter.type is not RequestMirror
-        not (((requestMirror != None) and (type != "RequestMirror")))
+        not (((requestMirror not in [None, Undefined]) and (type != "RequestMirror")))
         # filter.requestMirror must be specified for RequestMirror filter.type
-        not ((not ((requestMirror != None)) and (type == "RequestMirror")))
+        not ((not ((requestMirror not in [None, Undefined])) and (type == "RequestMirror")))
         # filter.requestRedirect must be nil if the filter.type is not RequestRedirect
-        not (((requestRedirect != None) and (type != "RequestRedirect")))
+        not (((requestRedirect not in [None, Undefined]) and (type != "RequestRedirect")))
         # filter.requestRedirect must be specified for RequestRedirect filter.type
-        not ((not ((requestRedirect != None)) and (type == "RequestRedirect")))
+        not ((not ((requestRedirect not in [None, Undefined])) and (type == "RequestRedirect")))
         # filter.urlRewrite must be nil if the filter.type is not URLRewrite
-        not (((urlRewrite != None) and (type != "URLRewrite")))
+        not (((urlRewrite not in [None, Undefined]) and (type != "URLRewrite")))
         # filter.urlRewrite must be specified for URLRewrite filter.type
-        not ((not ((urlRewrite != None)) and (type == "URLRewrite")))
+        not ((not ((urlRewrite not in [None, Undefined])) and (type == "URLRewrite")))
         # filter.extensionRef must be nil if the filter.type is not ExtensionRef
-        not (((extensionRef != None) and (type != "ExtensionRef")))
+        not (((extensionRef not in [None, Undefined]) and (type != "ExtensionRef")))
         # filter.extensionRef must be specified for ExtensionRef filter.type
-        not ((not ((extensionRef != None)) and (type == "ExtensionRef")))
+        not ((not ((extensionRef not in [None, Undefined])) and (type == "ExtensionRef")))
 
 schema GatewayNetworkingK8sIoV1beta1HTTPRouteSpecRulesItems0FiltersItems0ExtensionRef:
     r"""
@@ -1716,7 +1716,7 @@ schema GatewayNetworkingK8sIoV1beta1HTTPRouteSpecRulesItems0FiltersItems0Request
 
 
         # Only one of percent or fraction may be specified in HTTPRequestMirrorFilter
-        not (((percent != None) and (fraction != None)))
+        not (((percent not in [None, Undefined]) and (fraction not in [None, Undefined])))
 
 schema GatewayNetworkingK8sIoV1beta1HTTPRouteSpecRulesItems0FiltersItems0RequestMirrorBackendRef:
     r"""

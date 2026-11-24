@@ -14,8 +14,10 @@ schema NetworkSpec:
     ElastiCache subnet groups, GCP VPC Network + regional
     Subnetworks + Cloud Router + Cloud NAT per region + Firewall +
     a reserved range for private service access and, opt-in, its
-    servicenetworking peering). Fields a backend cannot
-    express are documented as ignored rather than silently dropped.
+    servicenetworking peering, Azure VirtualNetwork + Subnets +
+    NAT Gateway + Public IP + Network Security Group). Fields a
+    backend cannot express are documented as ignored rather than
+    silently dropped.
 
 
     Attributes
@@ -40,6 +42,8 @@ schema NetworkSpec:
         AWS-only — also create one public subnet per zone, an Internet Gateway, and a default route to it. Turning this off leaves a private-only VPC, which also forces natGateway off (a NAT Gateway must live in a public subnet). Ignored by GCP, where reaching the internet is a matter of routes and NAT, not subnet kind.
     region : str, default is Undefined, required
         Cloud region the subnets live in (VPC subnets region / Subnetwork region).
+    resourceGroup : str, default is Undefined, optional
+        Azure-only — existing resource group the VirtualNetwork and its children (subnets, NAT Gateway, Public IP, Network Security Group) are created in; this XR does not create it. REQUIRED by the azure backend. Ignored by AWS and GCP.
     servicePeering : bool, default is Undefined, optional
         GCP-only — also compose the servicenetworking Connection peering the serviceRange reservation to servicenetworking.googleapis.com, without which no managed service can use the range. Needs serviceRange; no effect without it. Off by default because networks created before this field did the peering out of band, and a second CreateConnection would fight it. Ignored by AWS.
     serviceRange : str, default is Undefined, optional
@@ -47,7 +51,7 @@ schema NetworkSpec:
     subnetPrefixLength : int, default is 20, optional
         AWS-only — prefix length of each derived subnet. Subnets are carved from cidr in order, one private then one public per availability zone. Ignored by GCP, which uses cidr as one regional range or takes an explicit plan from subnets.
     subnets : [NetworkSpecSubnets], default is Undefined, optional
-        GCP-only — explicit address plan: one regional Subnetwork per entry instead of a single one over cidr, each with optional named secondary ranges (GKE pods/services). With subnets set, cidr becomes the address block; every range must be an aligned IPv4 CIDR (host bits clear) inside it, no two ranges (primaries, secondaries, serviceRange) may overlap, and names must be unique, or the render fails. Published per subnet as status.subnets. Ignored by AWS, which carves its subnets from cidr (see subnetPrefixLength).
+        Explicit address plan (GCP and Azure): one Subnetwork / Subnet per entry instead of a single one over cidr, GCP ones with optional named secondary ranges (GKE pods/services). With subnets set, cidr becomes the address block; every range must be an aligned IPv4 CIDR (host bits clear) inside it, no two ranges (primaries, secondaries, serviceRange) may overlap, and names must be unique, or the render fails. Azure honours name and cidr (region must equal spec.region, a VNet is regional) and ignores secondaryRanges: AKS Azure CNI Overlay takes pod/service CIDRs outside the VNet. Published per subnet as status.subnets. Ignored by AWS, which carves its subnets from cidr (see subnetPrefixLength).
     tags : {str:str}, default is Undefined, optional
         Key/value metadata. AWS tags / GCP labels where the resource has them (most compute network resources do not, so GCP applies them only where accepted).
     """
@@ -62,6 +66,7 @@ schema NetworkSpec:
   publicSubnets?: bool = True
   region: str
 
+  resourceGroup?: str
   servicePeering?: bool = False
   serviceRange?: str
   subnetPrefixLength?: int = 20

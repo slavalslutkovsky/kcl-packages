@@ -49,3 +49,12 @@ metadata:
   name: provider-gcp-servicenetworking
 spec:
   package: ghcr.io/crossplane-contrib/provider-gcp-servicenetworking:v2.6.0
+---
+# The azure backend composes the VirtualNetwork, Subnets, NAT Gateway, Public
+# IP and Network Security Group (same version the hubspoke module pins).
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-network
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-network:v2.6.0

@@ -806,6 +806,29 @@ providers:
       whole group is imported; packages/providers/crds.yaml says which kinds
       are rendered.
 
+  - name: litmus
+    cloud: kubernetes
+    repo: litmuschaos/litmus-helm
+    ref: litmus-core-3.31.1
+    crdPath: charts/litmus-core/crds
+    scope: cluster
+    install: none
+    modules: [app, manager]
+    notes: >-
+      Operator CRDs, not a Crossplane provider: a `chaos:` Fault with
+      `provider: litmus` renders litmuschaos.io/v1alpha1 ChaosEngine +
+      ChaosExperiment (the chaos-charts 3.31.0 definition, so the go-runner
+      image matches the operator), and platform-api's XChaosExperiment
+      composes them through the app renderers. Sourced from the litmus-core
+      chart rather than chaos-operator's deploy/crds because the chart is
+      what the gitops repo installs into `litmus` (chart 3.31.1 = operator
+      and runner 3.31.0; its CRDs add `job` kinds and workload
+      labelMatchMode). Keep `ref` in step with that chart and the operator
+      version with `tools/litmus-hub.sh`'s ref (hub.version in
+      packages/app/litmus_hub.k). No `service`: the files are named
+      <kind>_crd.yaml and the directory holds only the litmuschaos.io group.
+      ChaosResult is typed but written by the experiment, never rendered.
+
   - name: prometheus-operator
     cloud: kubernetes
     service: monitoring.coreos.com_servicemonitors,monitoring.coreos.com_podmonitors,monitoring.coreos.com_prometheusrules

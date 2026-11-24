@@ -31,7 +31,6 @@ _appResources = {
     Service = "service"
     ConfigMap = "config"
     ScaledObject = "scaler"
-    HorizontalPodAutoscaler = "hpa"
     ExternalSecret = "secrets"
 }
 

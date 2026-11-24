@@ -3,6 +3,7 @@
 # Run: kcl test
 import yaml
 import file
+import runtime
 import app.lib as app
 
 _kinds = lambda items: [any] -> [str] {
@@ -305,6 +306,56 @@ chaos:
     assert out[2].kind == "Workflow" and out[2].metadata?.annotations == Undefined, "Workflows are not pausable by annotation"
 }
 
+# ── Litmus experiments: the same Experiment through app.litmusObjects ────────
+test_litmus_experiments = lambda {
+    m = Manager {**yaml.decode("""\
+role: manager
+chaos:
+  experiments:
+    - name: pg-kill
+      provider: litmus
+      type: pod-kill
+      target: {namespaces: [dbs], labels: {cnpg.io/cluster: pg}, kind: statefulset}
+    - name: api-slow
+      type: delay
+      target: {namespaces: [zerg]}
+""")}
+    out = render(m)
+    assert _kinds(out) == ["ServiceAccount", "Role", "RoleBinding", "Role", "RoleBinding", "ChaosExperiment", "ChaosEngine", "NetworkChaos"], "${_kinds(out)}"
+    engine = out[6]
+    assert engine.metadata.name == "pg-kill" and engine.metadata.namespace == "litmus", "Litmus objects live in `litmus`, not chaos.namespace"
+    assert engine.metadata.labels["backstage.io/kubernetes-id"] == "pg-kill", "same catalog id as a Chaos Mesh experiment"
+    assert engine.spec.appinfo.appns == "dbs" and engine.spec.appinfo.applabel == "cnpg.io/cluster=pg" and engine.spec.appinfo.appkind == "statefulset"
+    assert engine.spec?.engineState == Undefined
+    assert out[3].metadata.namespace == "dbs", "only the target Role lands in the target namespace"
+    assert out[7].metadata.namespace == "chaos-mesh"
+
+    paused = render(Manager {**yaml.decode("""\
+role: manager
+chaos:
+  paused: true
+  experiments:
+    - {name: pg-kill, provider: litmus, type: pod-kill, target: {namespaces: [dbs], labels: {app: pg}}}
+""")})
+    assert paused[6].spec.engineState == "stop" and paused[6].metadata?.annotations == Undefined, "a paused Litmus experiment is a stopped engine, not the Chaos Mesh annotation"
+}
+
+# Called last (see app_test.k test_litmus_rejected: runtime.catch leaks).
+test_litmus_rejected = lambda {
+    assert runtime.catch(lambda {
+        Experiment {name = "x", provider = "litmus", $type = "pod-kill", target = {namespaces = ["a", "b"], labels = {app = "x"}}}
+    }) != "", "one namespace per ChaosEngine"
+    assert runtime.catch(lambda {
+        Experiment {name = "x", provider = "litmus", $type = "pod-kill", target = {namespaces = ["a"]}}
+    }) != "", "Litmus needs a label"
+    assert runtime.catch(lambda {
+        Experiment {name = "x", provider = "litmus", $type = "pod-kill", target = {namespaces = ["a"], labels = {app = "x"}, nodes = ["n1"]}}
+    }) != "", "no node narrowing in Litmus"
+    assert runtime.catch(lambda {
+        Step {name = "x", provider = "litmus", $type = "pod-kill"}
+    }) != "", "Workflows are Chaos Mesh only"
+}
+
 # ── Workflows: managed runs ──────────────────────────────────────────────────
 test_workflow_serial = lambda {
     m = Manager {**yaml.decode("""\
@@ -557,3 +608,5 @@ test_empty()
 test_catalog_cluster()
 test_catalog_workflows()
 test_catalog_absent()
+test_litmus_experiments()
+test_litmus_rejected()

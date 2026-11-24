@@ -269,9 +269,9 @@ schema GatewayNetworkingK8sIoV1BackendTLSPolicySpecValidation:
 
 
         # must not contain both CACertificateRefs and WellKnownCACertificates
-        not ((((caCertificateRefs != None) and (len(caCertificateRefs) > 0)) and ((wellKnownCACertificates != None) and (wellKnownCACertificates != ""))))
+        not ((((caCertificateRefs not in [None, Undefined]) and (len(caCertificateRefs) > 0)) and ((wellKnownCACertificates not in [None, Undefined]) and (wellKnownCACertificates != ""))))
         # must specify either CACertificateRefs or WellKnownCACertificates
-        (((caCertificateRefs != None) and (len(caCertificateRefs) > 0)) or ((wellKnownCACertificates != None) and (wellKnownCACertificates != "")))
+        (((caCertificateRefs not in [None, Undefined]) and (len(caCertificateRefs) > 0)) or ((wellKnownCACertificates not in [None, Undefined]) and (wellKnownCACertificates != "")))
 
 schema GatewayNetworkingK8sIoV1BackendTLSPolicySpecValidationCaCertificateRefsItems0:
     r"""
@@ -355,13 +355,13 @@ schema GatewayNetworkingK8sIoV1BackendTLSPolicySpecValidationSubjectAltNamesItem
 
 
         # SubjectAltName element must contain Hostname, if Type is set to Hostname
-        not (((type == "Hostname") and (not ((hostname != None)) or (hostname == ""))))
+        not (((type == "Hostname") and (not ((hostname not in [None, Undefined])) or (hostname == ""))))
         # SubjectAltName element must not contain Hostname, if Type is not set to Hostname
-        not ((((type != "Hostname") and (hostname != None)) and (hostname != "")))
+        not ((((type != "Hostname") and (hostname not in [None, Undefined])) and (hostname != "")))
         # SubjectAltName element must contain URI, if Type is set to URI
-        not (((type == "URI") and (not ((uri != None)) or (uri == ""))))
+        not (((type == "URI") and (not ((uri not in [None, Undefined])) or (uri == ""))))
         # SubjectAltName element must not contain URI, if Type is not set to URI
-        not ((((type != "URI") and (uri != None)) and (uri != "")))
+        not ((((type != "URI") and (uri not in [None, Undefined])) and (uri != "")))
 
 schema GatewayNetworkingK8sIoV1BackendTLSPolicyStatus:
     r"""

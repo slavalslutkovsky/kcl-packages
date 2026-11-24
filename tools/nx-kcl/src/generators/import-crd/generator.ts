@@ -11,7 +11,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { fixPresenceChecksIn } from './cel';
 import { writeProviderReadme } from './readme';
+import { dropScalarProperties } from './scalar-props';
 
 /**
  * The `k8s` schema package version every generated provider package depends on.
@@ -311,6 +313,9 @@ export default async function importCrdGenerator(
       return;
     }
 
+    // A scalar `type` with `properties` becomes `schema str:`: see ./scalar-props.ts.
+    crdFiles = dropScalarProperties(crdFiles);
+
     logger.info(`Importing ${crdFiles.length} CRD(s) into ${projectRoot}/models ...`);
     try {
       execFileSync('kcl', ['import', '-m', 'crd', '-f', ...crdFiles], {
@@ -326,6 +331,11 @@ export default async function importCrdGenerator(
     // Nx project. Strip it so models/ stays part of this package.
     rmSync(join(pkgAbs, 'models', 'kcl.mod'), { force: true });
     rmSync(join(pkgAbs, 'models', 'kcl.mod.lock'), { force: true });
+
+    // `kcl import` turns CEL `has(self.x)` into `x != None`, which an unset
+    // (Undefined) field fails: see ./cel.ts.
+    const fixed = fixPresenceChecksIn(join(pkgAbs, 'models'));
+    if (fixed.length) logger.info(`Fixed CEL presence checks in ${fixed.length} file(s).`);
 
     writeProviderReadme(tree.root, projectRoot, name, provenance.replace(/^# Source: /, ''));
 

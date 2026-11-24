@@ -1,0 +1,21 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Network
+metadata:
+  namespace: default
+  name: my-azure-network
+spec:
+  region: westeurope               # VirtualNetwork location; every subnet must be in it
+  resourceGroup: platform-network  # existing resource group (required on azure; not created by this XR)
+  cidr: 10.20.0.0/16               # VirtualNetwork addressSpace; with subnets, the block every subnet lies inside
+  subnets:
+    - name: nodes                  # Azure subnet name (default <xr-name>-<region>)
+      cidr: 10.20.0.0/22           # addressPrefixes; secondaryRanges are ignored (AKS CNI Overlay pods live outside the VNet)
+  natGateway: true                 # Standard NAT Gateway + static Public IP, associated with every subnet
+  allowInternalIngress: true       # false adds an NSG rule denying inbound from VirtualNetwork (priority 4000)
+  deletionPolicy: Orphan           # keep the VNet and its children if the XR goes away
+  tags:                            # VirtualNetwork, Public IP, NAT Gateway and NSG tags
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure

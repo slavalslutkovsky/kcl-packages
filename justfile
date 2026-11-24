@@ -94,6 +94,13 @@ app values env="":
 manager values="packages/manager/examples/values.yaml" env="":
     kcl run packages/manager -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
 
+# Regenerate packages/app/litmus_hub.k: the chaos-charts ChaosExperiment
+# definitions a `provider: litmus` Fault renders. Keep `ref` equal to the
+# chaos-operator version the `litmus` row in packages/providers/registry.yaml
+# pins (litmus-core chart 3.31.1 = operator 3.31.0).
+litmus-hub ref="3.31.0":
+    tools/litmus-hub.sh {{ ref }}
+
 cncf values="packages/cncf/examples/values.yaml" env="":
     kcl run packages/cncf -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
 

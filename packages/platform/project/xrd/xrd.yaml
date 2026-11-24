@@ -385,7 +385,7 @@ spec:
                       overrides:
                         type: object
                         x-kubernetes-preserve-unknown-fields: true
-                        description: Deep-merged over the generated `app` package Workload (or Task, for cli) — probes, resources, hpa, scaler, monitoring, volumes, any field of packages/app. Maps merge, lists and scalars replace.
+                        description: Deep-merged over the generated `app` package Workload (or Task, for cli) — probes, resources, scaler (KEDA), monitoring, volumes, any field of packages/app. Maps merge, lists and scalars replace.
                       labels:
                         type: object
                         additionalProperties:

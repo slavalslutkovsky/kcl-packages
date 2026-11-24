@@ -28,8 +28,10 @@ spec:
                 ElastiCache subnet groups, GCP VPC Network + regional
                 Subnetworks + Cloud Router + Cloud NAT per region + Firewall +
                 a reserved range for private service access and, opt-in, its
-                servicenetworking peering). Fields a backend cannot
-                express are documented as ignored rather than silently dropped.
+                servicenetworking peering, Azure VirtualNetwork + Subnets +
+                NAT Gateway + Public IP + Network Security Group). Fields a
+                backend cannot express are documented as ignored rather than
+                silently dropped.
               properties:
                 region:
                   type: string
@@ -58,7 +60,7 @@ spec:
                   description: Give private workloads outbound internet access. AWS creates one NAT Gateway (plus its Elastic IP) in the first public subnet and points the private route table at it; GCP creates a Cloud Router and a Cloud NAT (ALL_SUBNETWORKS_ALL_IP_RANGES, so secondary ranges egress too) in every region that has a subnetwork.
                 subnets:
                   type: array
-                  description: 'GCP-only — explicit address plan: one regional Subnetwork per entry instead of a single one over cidr, each with optional named secondary ranges (GKE pods/services). With subnets set, cidr becomes the address block; every range must be an aligned IPv4 CIDR (host bits clear) inside it, no two ranges (primaries, secondaries, serviceRange) may overlap, and names must be unique, or the render fails. Published per subnet as status.subnets. Ignored by AWS, which carves its subnets from cidr (see subnetPrefixLength).'
+                  description: 'Explicit address plan (GCP and Azure): one Subnetwork / Subnet per entry instead of a single one over cidr, GCP ones with optional named secondary ranges (GKE pods/services). With subnets set, cidr becomes the address block; every range must be an aligned IPv4 CIDR (host bits clear) inside it, no two ranges (primaries, secondaries, serviceRange) may overlap, and names must be unique, or the render fails. Azure honours name and cidr (region must equal spec.region, a VNet is regional) and ignores secondaryRanges: AKS Azure CNI Overlay takes pod/service CIDRs outside the VNet. Published per subnet as status.subnets. Ignored by AWS, which carves its subnets from cidr (see subnetPrefixLength).'
                   items:
                     type: object
                     required: [cidr]
@@ -114,6 +116,9 @@ spec:
                   additionalProperties:
                     type: string
                   description: Key/value metadata. AWS tags / GCP labels where the resource has them (most compute network resources do not, so GCP applies them only where accepted).
+                resourceGroup:
+                  type: string
+                  description: Azure-only — existing resource group the VirtualNetwork and its children (subnets, NAT Gateway, Public IP, Network Security Group) are created in; this XR does not create it. REQUIRED by the azure backend. Ignored by AWS and GCP.
               required:
                 - region
             status:
@@ -124,10 +129,10 @@ spec:
                   description: True once the network reports an id.
                 provider:
                   type: string
-                  description: Backend that fulfilled the claim (aws | gcp).
+                  description: Backend that fulfilled the claim (aws | gcp | azure).
                 id:
                   type: string
-                  description: Provider-assigned network id (VPC id / GCP network name).
+                  description: Provider-assigned network id (VPC id / GCP network name / Azure VNet ARM id).
                 name:
                   type: string
                   description: Network name as the cloud knows it.
@@ -147,11 +152,11 @@ spec:
                 privateSubnetIds:
                   type: array
                   items: {type: string}
-                  description: Subnets with no inbound route from the internet (AWS), or every observed subnetwork in spec.subnets order (GCP; the single regional subnetwork without subnets).
+                  description: Subnets with no inbound route from the internet (AWS), or every observed subnetwork / subnet in spec.subnets order (GCP and Azure; the single one over cidr without subnets).
                 securityGroupIds:
                   type: array
                   items: {type: string}
-                  description: The workload security group, ready to attach to instances that should be able to talk inside the network (AWS). Empty on GCP, which filters by firewall rule and network tag instead.
+                  description: The workload security group, ready to attach to instances that should be able to talk inside the network (AWS), or the Network Security Group associated with every subnet (Azure). Empty on GCP, which filters by firewall rule and network tag instead.
                 dbSubnetGroupName:
                   type: string
                   description: RDS DB subnet group over the private subnets (AWS, when databaseSubnetGroups). Empty on GCP.
@@ -160,7 +165,7 @@ spec:
                   description: ElastiCache subnet group over the private subnets (AWS, when databaseSubnetGroups). Empty on GCP.
                 subnets:
                   type: array
-                  description: GCP subnetworks in spec order (the single regional one without spec.subnets). id and selfLink appear only once the subnetwork is observed. Empty on AWS.
+                  description: GCP subnetworks / Azure subnets in spec order (the single one over cidr without spec.subnets). id and selfLink appear only once the subnet is observed; secondaryRanges is always empty on Azure. Empty on AWS.
                   items:
                     type: object
                     properties:

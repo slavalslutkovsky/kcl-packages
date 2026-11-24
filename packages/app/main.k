@@ -63,7 +63,7 @@ _demoValues = {
     workload.component = "api-server"
     workload.image = "demo/api:latest"
     workload.port = 8080
-    workload.hpa = {minReplicas = 1, maxReplicas = 5}
+    workload.scaler = {minReplicas = 1, maxReplicas = 5, cpu = 70}
     config.PORT = "${workload.port}"
 }
 _baseValues = yaml.decode(file.read(_valuesPath)) if _hasValues else _demoValues
