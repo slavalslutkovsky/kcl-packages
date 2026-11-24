@@ -11,6 +11,7 @@ Entry point for `ci-pipeline`.
 Without `-D values`, examples/pipeline.yaml renders. That is how `nx build ci-pipeline`
 smoke-tests the package.
 """
+
 import .lib
 import .cloudbuild
 import .gha

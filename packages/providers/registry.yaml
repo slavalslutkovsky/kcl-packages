@@ -312,7 +312,10 @@ providers:
     service: cloudbuild
     image: ghcr.io/crossplane-contrib/provider-gcp-cloudbuild
     tag: v2.6.0
-    modules: []
+    modules: [ci-pipeline]
+    notes: >-
+      ci-pipeline renders Trigger MRs (one per push / pull request event)
+      carrying its container pipeline as the inline build.
 
   - name: gcp-cloudplatform
     cloud: gcp

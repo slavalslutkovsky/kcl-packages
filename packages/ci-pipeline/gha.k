@@ -19,6 +19,7 @@ which is before any login.
 Fork pull requests are skipped: they get no OIDC token. GIT_SHA is the PR head (what the PR
 shows), not GitHub's merge commit. A secret `ENV` is read from the repository secret `ENV`.
 """
+
 import regex
 import .lib
 
@@ -28,7 +29,7 @@ _GH_SHA = "\${{ github.event.pull_request.head.sha || github.sha }}"
 _GH_PASSTHROUGH = ["GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE", "CLOUDSDK_CORE_PROJECT"]
 
 _ghRun = lambda s: {str:}, names: [str] -> str {
-    """cfg=$(mktemp -d)
+  """cfg=$(mktemp -d)
 if [ -f "$HOME/.docker/config.json" ]; then cp "$HOME/.docker/config.json" "$cfg/"; fi
 docker run --rm -i --network host \\
   -v /var/run/docker.sock:/var/run/docker.sock \\
@@ -38,49 +39,49 @@ docker run --rm -i --network host \\
 }
 
 workflow = lambda p: lib.Pipeline -> {str:} {
-    _plan = lib.plan(p)
-    _open = "$" + "{{"
-    _expr = [_s.id for _s in _plan.steps if _open in _s.script]
-    assert not _expr, "step(s) ${_expr}: a script must not contain " + _open + ", which Actions would evaluate"
-    _on = {
-        push = {branches = p.triggers.push.branches, paths = p.triggers.paths or Undefined} if p.triggers.push else Undefined
-        pull_request = {branches = p.triggers.pullRequest.branches, paths = p.triggers.paths or Undefined} if p.triggers.pullRequest else Undefined
-    }
-    _ar = [_h for _h in _plan.registries if regex.match(_h, r"^[a-z0-9-]+-docker\.pkg\.dev$")]
-    _job = {
-        "if" = "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository" if p.triggers.pullRequest else Undefined
-        "runs-on" = p.github.runner
-        "timeout-minutes" = p.timeoutMinutes
-        env = {GIT_SHA = _GH_SHA} | _plan.env
-        steps = [
-            {uses = p.github.actions.checkout, "with" = {ref = _GH_SHA}}
-            {
-                id = "auth"
-                uses = p.github.actions.auth
-                "with" = {
-                    workload_identity_provider = p.github.workloadIdentityProvider
-                    service_account = p.github.serviceAccount
-                    token_format = "access_token"
-                }
-            }
-        ] + [{
-            uses = p.github.actions.login
-            "with" = {
-                registry = _h
-                username = "oauth2accesstoken"
-                password = "\${{ steps.auth.outputs.access_token }}"
-            }
-        } for _h in _ar] + [{
-            name = _s.id
-            env = _s.env | {_k: _open + " secrets." + _k + " }}" for _k in _s.secrets} or Undefined
-            run = _ghRun(_s, ["GIT_SHA"] + [_k for _k in _plan.env] + [_k for _k in _s.env] + [_k for _k in _s.secrets] + _GH_PASSTHROUGH)
-            "continue-on-error" = True if _s.allowFailure else Undefined
-        } for _s in _plan.steps]
-    }
-    {
-        name = p.name
-        "on" = _on
-        permissions = {contents = "read", "id-token" = "write"}
-        jobs = {"${p.name}" = _job}
-    }
+  _plan = lib.plan(p)
+  _open = "$" + "{{"
+  _expr = [_s.id for _s in _plan.steps if _open in _s.script]
+  assert not _expr, "step(s) ${_expr}: a script must not contain " + _open + ", which Actions would evaluate"
+  _on = {
+    push = {branches = p.triggers.push.branches, paths = p.triggers.paths or Undefined} if p.triggers.push else Undefined
+    pull_request = {branches = p.triggers.pullRequest.branches, paths = p.triggers.paths or Undefined} if p.triggers.pullRequest else Undefined
+  }
+  _ar = [_h for _h in _plan.registries if regex.match(_h, r"^[a-z0-9-]+-docker\.pkg\.dev$")]
+  _job = {
+    "if" = "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository" if p.triggers.pullRequest else Undefined
+    "runs-on" = p.github.runner
+    "timeout-minutes" = p.timeoutMinutes
+    env = {GIT_SHA = _GH_SHA} | _plan.env
+    steps = [
+      {uses = p.github.actions.checkout, "with" = {ref = _GH_SHA}}
+      {
+        id = "auth"
+        uses = p.github.actions.auth
+        "with" = {
+          workload_identity_provider = p.github.workloadIdentityProvider
+          service_account = p.github.serviceAccount
+          token_format = "access_token"
+        }
+      }
+    ] + [{
+      uses = p.github.actions.login
+      "with" = {
+        registry = _h
+        username = "oauth2accesstoken"
+        password = "\${{ steps.auth.outputs.access_token }}"
+      }
+    } for _h in _ar] + [{
+      name = _s.id
+      env = _s.env | {_k: _open + " secrets." + _k + " }}" for _k in _s.secrets} or Undefined
+      run = _ghRun(_s, ["GIT_SHA"] + [_k for _k in _plan.env] + [_k for _k in _s.env] + [_k for _k in _s.secrets] + _GH_PASSTHROUGH)
+      "continue-on-error" = True if _s.allowFailure else Undefined
+    } for _s in _plan.steps]
+  }
+  {
+    name = p.name
+    "on" = _on
+    permissions = {contents = "read", "id-token" = "write"}
+    jobs = {"${p.name}" = _job}
+  }
 }
