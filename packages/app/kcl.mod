@@ -1,7 +1,7 @@
 [package]
 name = "app"
 edition = "v0.12.3"
-version = "0.2.0"
+version = "0.3.0"
 
 [dependencies]
 chaos-mesh = { path = "../providers/chaos-mesh" }

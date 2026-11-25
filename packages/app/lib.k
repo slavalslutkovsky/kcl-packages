@@ -661,6 +661,13 @@ schema Workload:
   runAsUser: int = 65534
   runAsGroup?: int
   readOnlyRootFilesystem: bool = True
+  # Container entrypoint / arguments; unset keeps the image's ENTRYPOINT / CMD.
+  command?: [str]
+  args?: [str]
+  # Deployment update strategy. Recreate stops the old pod before starting the
+  # new one: needed when pods share a ReadWriteOnce volume or hold a lock that
+  # two replicas must never hold at once.
+  strategy: "RollingUpdate" | "Recreate" = "RollingUpdate"
   prometheus: bool = True
   metricsPath: str = "/metrics"
   startupProbe?: Probe
@@ -669,8 +676,9 @@ schema Workload:
   resources: {str:} = {requests = {memory = "128Mi", cpu = "250m"}, limits = {memory = "512Mi"}}
   env: [EnvVar] = []
   envFrom: [EnvFrom] = []
-  volumeMounts: [{str:}] = [{name = "tmp", mountPath = "/tmp"}]
-  volumes: [{str:}] = [{name = "tmp", emptyDir = {}}]
+  # unset → a /tmp emptyDir (_tmpMounts/_tmpVolumes) for the read-only root
+  volumeMounts?: [{str:}]
+  volumes?: [{str:}]
   terminationGracePeriodSeconds: int = 30
   service: bool = True
   serviceType: str = "ClusterIP"
@@ -732,8 +740,9 @@ schema Task:
   resources: {str:} = {requests = {memory = "128Mi", cpu = "250m"}, limits = {memory = "512Mi"}}
   env: [EnvVar] = []
   envFrom: [EnvFrom] = []
-  volumeMounts: [{str:}] = [{name = "tmp", mountPath = "/tmp"}]
-  volumes: [{str:}] = [{name = "tmp", emptyDir = {}}]
+  # unset → a /tmp emptyDir (_tmpMounts/_tmpVolumes) for the read-only root
+  volumeMounts?: [{str:}]
+  volumes?: [{str:}]
   # pod identity (+ namespaced RBAC); absent → the namespace's `default` SA
   serviceAccount?: ServiceAccount
   # KEDA ScaledJob instead of a single Job: Jobs started per pending work item
@@ -868,9 +877,8 @@ schema Release:
     """
   workload?: Workload
   task?: Task
-  config?: configMap
-  # config?: _deployment = lambda w: Workload -> appsv1.Deployment
-  config?: appsv1.Deployment
+  # data of the "<name>-config" ConfigMap (renderRelease → configMap())
+  config?: {str:str}
   externalSecret?: ExternalSecretSpec
   catalog?: Catalog
 
@@ -968,13 +976,20 @@ _podSecurity = lambda w: Workload -> {str:} {
   } | ({runAsGroup = w.runAsGroup, fsGroup = w.runAsGroup} if w.runAsGroup else {fsGroup = w.runAsUser})
 }
 
+# The /tmp scratch volume every pod gets when it lists no volumes of its own.
+# A renderer default rather than a schema default: values decoded from YAML or
+# JSON are unioned index-by-index into a list default, so a values file's first
+# volume would inherit the default's `emptyDir` next to its own source.
+_tmpMounts = [{name = "tmp", mountPath = "/tmp"}]
+_tmpVolumes = [{name = "tmp", emptyDir = {}}]
+
 _container = lambda w: Workload -> {str:} {
   {
     name = w.name
     image = w.image
     imagePullPolicy = w.imagePullPolicy
     ports = [{containerPort = w.port, name = w.portName, $protocol = "TCP"}]
-  } | ({envFrom = [_envFrom(f) for f in w.envFrom]} if w.envFrom else {}) | ({env = [_envVar(e) for e in w.env]} if w.env else {}) | ({startupProbe = _probe(w.startupProbe)} if w.startupProbe else {}) | ({livenessProbe = _probe(w.livenessProbe)} if w.livenessProbe else {}) | ({readinessProbe = _probe(w.readinessProbe)} if w.readinessProbe else {}) | {
+  } | ({command = w.command} if w.command else {}) | ({args = w.args} if w.args else {}) | ({envFrom = [_envFrom(f) for f in w.envFrom]} if w.envFrom else {}) | ({env = [_envVar(e) for e in w.env]} if w.env else {}) | ({startupProbe = _probe(w.startupProbe)} if w.startupProbe else {}) | ({livenessProbe = _probe(w.livenessProbe)} if w.livenessProbe else {}) | ({readinessProbe = _probe(w.readinessProbe)} if w.readinessProbe else {}) | {
     resources = w.resources
     securityContext = {
       allowPrivilegeEscalation = False
@@ -983,7 +998,7 @@ _container = lambda w: Workload -> {str:} {
       runAsUser = w.runAsUser
       capabilities = {drop = ["ALL"]}
     }
-    volumeMounts = w.volumeMounts
+    volumeMounts = _tmpMounts if w.volumeMounts == Undefined else w.volumeMounts
   }
 }
 
@@ -1052,6 +1067,9 @@ _deployment = lambda w: Workload -> appsv1.Deployment {
     # GitOps (Flux/ArgoCD) server-side apply and Flagger fight the autoscaler
     # over the replica count. The autoscaler's min is the floor.
     spec = ({replicas = w.replicas} if not w.scaler else {}) | {
+      # type only: the package sets no rollingUpdate surge/unavailable, so
+      # Recreate never carries settings the API server would reject.
+      strategy = {$type = w.strategy}
       selector = {
         matchLabels = {app = w.name}
       }
@@ -1060,7 +1078,7 @@ _deployment = lambda w: Workload -> appsv1.Deployment {
         spec = {
           securityContext = _podSecurity(w)
           containers = [_container(w)]
-          volumes = w.volumes
+          volumes = _tmpVolumes if w.volumes == Undefined else w.volumes
           terminationGracePeriodSeconds = w.terminationGracePeriodSeconds
           restartPolicy = "Always"
         } | (_saPodSpec(w.name, w.serviceAccount) if w.serviceAccount else {}) | ({nodeSelector = w.nodeSelector} if w.nodeSelector else {}) | ({tolerations = w.tolerations} if w.tolerations else {})
@@ -1855,7 +1873,7 @@ _taskContainer = lambda t: Task -> {str:} {
       runAsUser = t.runAsUser
       capabilities = {drop = ["ALL"]}
     }
-    volumeMounts = t.volumeMounts
+    volumeMounts = _tmpMounts if t.volumeMounts == Undefined else t.volumeMounts
   }
 }
 
@@ -1863,7 +1881,7 @@ _jobPodSpec = lambda t: Task -> {str:} {
   {
     securityContext = _taskPodSecurity(t)
     containers = [_taskContainer(t)]
-    volumes = t.volumes
+    volumes = _tmpVolumes if t.volumes == Undefined else t.volumes
     restartPolicy = t.restartPolicy
   } | (_saPodSpec(t.name, t.serviceAccount) if t.serviceAccount else {}) | ({nodeSelector = t.nodeSelector} if t.nodeSelector else {}) | ({tolerations = t.tolerations} if t.tolerations else {})
 }

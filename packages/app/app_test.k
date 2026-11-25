@@ -1261,3 +1261,51 @@ test_route_https_redirect()
 test_route_enabled_flag_per_env()
 test_route_rejected()
 test_litmus_rejected()
+
+# ── Params mode (the kclx operator's option("params")) ──────────────────────
+# main.k hands a non-empty option("params") straight to `Release {**params}`:
+# the operator serialises a KclModule's spec.params as JSON, so this is the
+# same path, file-free.
+test_params_json = lambda {
+    _params = json.decode("""{"workload": {"name": "api", "namespace": "demo", "image": "demo/api:1", "strategy": "Recreate", "replicas": 1, "volumes": [{"name": "state", "persistentVolumeClaim": {"claimName": "api"}}], "volumeMounts": [{"name": "state", "mountPath": "/var/lib/api"}]}, "config": {"PORT": "8080"}}""")
+    out = renderRelease(Release {**_params})
+    assert [m.kind for m in out] == ["Deployment", "Service", "ConfigMap"], "params → Deployment + Service + ConfigMap"
+    d = out[0]
+    assert d.spec.strategy.type == "Recreate", "params strategy → spec.strategy.type"
+    # a decoded volume list replaces the /tmp default instead of being unioned
+    # index-by-index into it (the state PVC must not grow an emptyDir)
+    _vols = d.spec.template.spec.volumes
+    assert len(_vols) == 1 and _vols[0].persistentVolumeClaim.claimName == "api" and not _vols[0].emptyDir, "decoded volumes replace the default"
+    _mounts = d.spec.template.spec.containers[0].volumeMounts
+    assert [m.mountPath for m in _mounts] == ["/var/lib/api"], "decoded mounts replace the default"
+    assert out[2].metadata.name == "api-config" and out[2].data.PORT == "8080", "params config → <name>-config ConfigMap"
+}
+
+# ── Deployment strategy ─────────────────────────────────────────────────────
+test_strategy = lambda {
+    d = renderRelease(Release {workload = {name = "s", image = "x"}})[0]
+    assert d.spec.strategy.type == "RollingUpdate", "default strategy → RollingUpdate"
+    assert [v.name for v in d.spec.template.spec.volumes] == ["tmp"], "no volumes → the /tmp emptyDir"
+    r = renderRelease(Release {workload = {name = "s", image = "x", strategy = "Recreate"}})[0]
+    assert r.spec.strategy.type == "Recreate", "Recreate → spec.strategy.type"
+    assert not r.spec.strategy.rollingUpdate, "Recreate carries no rollingUpdate settings"
+}
+
+test_agent_factory_example = lambda {
+    af = Release {**yaml.decode(file.read("examples/values-agent-factory.yaml"))}
+    out = renderRelease(af)
+    assert [m.kind for m in out] == ["Deployment", "Service", "HTTPRoute"], "agent-factory → Deployment + Service + HTTPRoute (ServiceAccount referenced, not created)"
+    d = out[0]
+    c = d.spec.template.spec.containers[0]
+    assert d.spec.strategy.type == "Recreate" and d.spec.replicas == 1, "one replica, Recreate"
+    assert c.args == ["serve"], "args → container args"
+    assert d.spec.template.spec.serviceAccountName == "agent-factory", "existing ServiceAccount referenced by name"
+    assert d.spec.template.spec.automountServiceAccountToken == True, "agent-factory reads the API: its token is mounted"
+    assert [v.name for v in d.spec.template.spec.volumes] == ["config", "state", "tmp"], "config, state, tmp volumes"
+    assert not d.spec.template.spec.volumes[0].emptyDir, "the ConfigMap volume has no stray emptyDir"
+    assert out[2].spec.parentRefs[0].name == "main-gateway" and out[2].spec.parentRefs[0].namespace == "gateway" and out[2].spec.parentRefs[0].sectionName == "https", "route attaches to gateway/main-gateway's https listener"
+}
+
+test_params_json()
+test_strategy()
+test_agent_factory_example()

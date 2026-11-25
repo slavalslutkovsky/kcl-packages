@@ -22,6 +22,9 @@ kcl run packages/app -D values=<dir>/values.yaml -D env=prod -q
 
 # Backstage entities of the `catalog:` block instead of the manifests
 kcl run packages/app -D values=packages/app/examples/values-backend.yaml -D catalog=true -q > catalog-info.yaml
+
+# values inline: a non-empty `params` dict IS the Release; no file, no env overlay
+kcl run packages/app -D params='{"workload":{"name":"api","image":"demo/api:1","strategy":"Recreate"}}' -q
 ```
 
 The same through `just`:
@@ -38,6 +41,7 @@ From the published package: `kcl run oci://docker.io/yurikrupnik/app --tag <vers
 | `values` | `values.yaml` in the current directory | Base values file, CWD-relative. An explicit path that does not exist fails the render |
 | `env` | `""` | Overlay `<stem>.<env>.yaml` next to the base; must exist when set. Maps merge recursively, lists and scalars replace |
 | `catalog` | `false` | `true` / `1` / `yes` renders the Backstage entities; fails without a `catalog:` block |
+| `params` | `{}` | A non-empty dict is the values (`Release` shape); `values` and `env` are then ignored. The kclx operator passes a `KclModule`'s `spec.params` here |
 
 Without `-D values` and with no `values.yaml` in the current directory, a
 built-in demo workload renders (Deployment, Service, ScaledObject, ConfigMap), so a
@@ -67,8 +71,9 @@ Main `Workload` / `Task` field groups:
 
 | field | applies to | meaning |
 | --- | --- | --- |
-| `image`, `env`, `envFrom`, `resources`, `volumes`, `volumeMounts` | both | Container; non-root (`runAsUser` 65534), read-only root filesystem, `/tmp` emptyDir by default |
-| `command`, `args` | task | Container entrypoint override |
+| `image`, `env`, `envFrom`, `resources`, `volumes`, `volumeMounts` | both | Container; non-root (`runAsUser` 65534), read-only root filesystem, `/tmp` emptyDir when `volumes` / `volumeMounts` are unset (a list you give replaces it) |
+| `command`, `args` | both | Container entrypoint override |
+| `strategy` | workload | Deployment `spec.strategy.type`: `RollingUpdate` (default) or `Recreate` (ReadWriteOnce state, single-holder locks) |
 | `port`, `portName`, `service`, `serviceType`, `startupProbe` / `livenessProbe` / `readinessProbe` | workload | Container port, Service (on by default), http / grpc probes |
 | `serviceAccount` | both | ServiceAccount (token not mounted unless `automountToken`), `cloud` + `identity` workload-identity annotation (gcp / aws / azure), `rules` → namespaced Role + RoleBinding |
 | `scaler` | both | The only autoscaler. Workload: KEDA ScaledObject (`cpu`, `memory`, `triggers`, `minReplicas: 0` for scale-to-zero); KEDA creates and owns the HorizontalPodAutoscaler behind it, so the Deployment omits `replicas`. Task: KEDA ScaledJob. `authentications` → TriggerAuthentications referenced by a trigger's `auth`. Needs KEDA on the cluster |
@@ -156,6 +161,7 @@ render error, not an approximation — see docs/chaos.md.
 | `examples/values-cli.yaml` | One-shot Job (CronJob once `schedule` is set) |
 | `examples/values-queue-job.yaml` | KEDA ScaledJob on a Pub/Sub backlog, GKE Workload Identity, `podIdentity: gcp` TriggerAuthentication |
 | `examples/values-chaos.yaml` | Every Chaos Mesh fault type, one-shot and scheduled, three of them again through Litmus, plus the `catalog:` block |
+| `examples/values-agent-factory.yaml` | agent-factory: one replica, Recreate, existing ServiceAccount, ConfigMap + PVC + /tmp volumes, optional secretKeyRef credentials, HTTPRoute on `gateway/main-gateway` |
 | `examples/consumer-main.k.example` | A consumer `main.k` + `kcl.mod` for adding manifests in code on top of `renderRelease` |
 
 ## Layout
