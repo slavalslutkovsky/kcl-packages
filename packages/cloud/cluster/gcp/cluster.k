@@ -25,6 +25,8 @@ render = lambda oxr, ocds {
     _mp = _orphan_policies if (_spec?.deletionPolicy or "Delete") == "Orphan" else Undefined
 
     assert not _spec?.kubeconfigSecret and not _spec?.bootstrap, "cluster-gcp: spec.kubeconfigSecret and spec.bootstrap are onprem-only — a provisioned cluster publishes its own kubeconfig (status.kubeconfigSecret) and is handed over bare"
+    # Every platform GKE cluster is fleet-registered; there is no unregistered mode.
+    assert _spec?.fleetProject, "cluster-gcp: spec.fleetProject is required — every GKE cluster registers to a fleet (the fleet host project id)"
 
     _count = _spec?.nodeCount or 2
     _as = _spec?.autoscaling
@@ -43,6 +45,7 @@ render = lambda oxr, ocds {
         spec.forProvider.removeDefaultNodePool = True
         spec.forProvider.initialNodeCount = 1
         spec.forProvider.deletionProtection = False
+        spec.forProvider.fleet.project = _spec.fleetProject
         if _spec?.version:
             spec.forProvider.minMasterVersion = _spec.version
         if _spec?.network?.id:

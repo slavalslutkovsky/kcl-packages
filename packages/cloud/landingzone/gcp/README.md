@@ -26,14 +26,15 @@ Every child: namespace = the XR's, `region`, `deletionPolicy` = `spec.deletionPo
 | `Network` | `network-<env>` | `<prefix>-<env>` | always | `cidr` = `env.cidr` (the block); one subnetwork `<prefix>-<env>-<region>` over `env.nodes` with secondary ranges `pods` / `services` when set; `natGateway`, `allowInternalIngress` |
 | `NetworkHub` | `hub` | `<prefix>-hub` | always | `topology` = `network.hub.topology` (default `isolated`); spokes below |
 | `EncryptionKey` | `key-<env>` | `<prefix>-<env>-cmek` | always | `encrypt-decrypt`, `symmetric`, `rotationDays: 90`; — |
-| `KubernetesCluster` | `cluster-<env>` | `<prefix>-<env>` | `env.cluster`, once the env Network is ready and reports a subnet | `network = {id: <VPC selfLink>, subnets: [<first subnetwork selfLink>]}`; `spot` passed through; `nodeCount` = max(1, minNodes), `autoscaling` = {minNodes, maxNodes} |
+| `KubernetesCluster` | `cluster-<env>` | `<prefix>-<env>` | `env.cluster`, once the env Network is ready and reports a subnet | `network = {id: <VPC selfLink>, subnets: [<first subnetwork selfLink>]}`; `fleetProject` = `foundation.containers[<env>]` (the environment's project hosts its GKE fleet); `spot` passed through; `nodeCount` = max(1, minNodes), `autoscaling` = {minNodes, maxNodes} |
 
 Hub spokes: `mgmt` (`foundation.network.mgmt.id`, shared) always, plus one
 per environment whose Network reports `status.selfLink` (`shared` = `env.shared`).
-Spokes and clusters stay composed once composed, with the reference they were
-composed against, so a flapping child status never deletes them.
+Spokes and clusters stay composed once composed, with the reference (and, for
+a cluster, the fleet project) they were composed against, so a flapping child
+status never deletes them.
 
-GCP children carry no project: they land in the project of the `gcp` ProviderConfig the child Compositions use. `foundation.containers` is checked by the contract but not read here.
+GCP children carry no project: they land in the project of the `gcp` ProviderConfig the child Compositions use. The one read of `foundation.containers` is a cluster's fleet host: `containers[<env>]`, which needs `gkehub.googleapis.com` enabled.
 
 ## Status
 

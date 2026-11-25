@@ -11,7 +11,8 @@
 #                                     pods / services secondary ranges
 #   hub            NetworkHub         NCC hub; mgmt (shared) + every env spoke
 #   key-<env>      EncryptionKey      the environment's CMEK
-#   cluster-<env>  KubernetesCluster  opt-in GKE cluster in the env network
+#   cluster-<env>  KubernetesCluster  opt-in GKE cluster in the env network,
+#                                     registered to the env project's fleet
 #
 # Every rule lives in landingzone-contract: contract.checked(oxr) is the first
 # thing render and status do, so a broken spec fails every reconcile with the
@@ -151,8 +152,12 @@ cluster_composed = lambda ocds, e -> bool {
 _cluster = lambda oxr, s, ocds, e -> {str:} {
   _c = e.cluster
   _subs = subnet_ids(ocds, e.name)
-  _prev = _composedSpec(ocds, cluster_key(e.name))?.network
-  _network = {id = network_id(ocds, e.name), subnets = [_subs[0]]} if _subs and network_id(ocds, e.name) else _prev
+  _prev = _composedSpec(ocds, cluster_key(e.name))
+  _network = {id = network_id(ocds, e.name), subnets = [_subs[0]]} if _subs and network_id(ocds, e.name) else _prev?.network
+  # The environment's project hosts its fleet. Kept once composed: moving a
+  # cluster between fleets re-registers it, not something a foundation edit
+  # should do on its own.
+  _fleet = _prev?.fleetProject or s.foundation.containers[e.name]
   # 0 is a value (scale to zero), not absence.
   _min = _c.minNodes if _c.minNodes not in [None, Undefined] else 1
   _spec = _common(s) | {
@@ -165,6 +170,7 @@ _cluster = lambda oxr, s, ocds, e -> {str:} {
     autoscaling = {min = _min, max = _c.maxNodes or 3}
     spot = _c.spot or False
     network = _network
+    fleetProject = _fleet
   }
   _child(oxr, cluster_key(e.name), "KubernetesCluster", "${s.prefix}-${e.name}", _spec)
 }

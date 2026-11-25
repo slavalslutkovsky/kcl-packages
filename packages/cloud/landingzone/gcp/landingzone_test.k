@@ -77,6 +77,15 @@ test_cluster_gated_on_network_and_stays = lambda {
   # Network flaps after the cluster was composed: it stays, on the same network.
   _again = _fxByKey(lz.render(_fxOxr, {"cluster-dev" = {Resource.spec = _cl.spec}}))["cluster-dev"]
   assert _again.spec.network == _cl.spec.network
+  # The foundation moves dev's project after the cluster was composed: its fleet stays.
+  _moved = _fxXr(example.gcp | {foundation = example.foundation.gcp | {containers = example.foundation.gcp.containers | {dev = "shl-lz-elsewhere"}}})
+  assert _fxByKey(lz.render(_moved, {"cluster-dev" = {Resource.spec = _cl.spec}}))["cluster-dev"].spec.fleetProject == "shl-lz-workloads"
+}
+
+test_cluster_registers_to_its_environment_fleet = lambda {
+  _x = _fxXr(example.gcp | {foundation = example.foundation.gcp | {containers = example.foundation.gcp.containers | {dev = "shl-lz-dev"}}})
+  _cl = _fxByKey(lz.render(_x, {"network-dev" = _fxNet("dev", True)}))["cluster-dev"].spec
+  assert _cl.fleetProject == "shl-lz-dev", "the environment's project (foundation.containers[env]) hosts its fleet"
 }
 
 test_cluster_spot_and_min_zero = lambda {

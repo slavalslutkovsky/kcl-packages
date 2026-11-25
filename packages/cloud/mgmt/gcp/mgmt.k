@@ -90,6 +90,8 @@ apis = [
     "run.googleapis.com"
     "redis.googleapis.com"
     "workflows.googleapis.com"
+    # The mgmt GKE cluster registers to this project's own fleet (fleet.project).
+    "gkehub.googleapis.com"
 ]
 
 # What Crossplane needs on an environment folder to create projects in it...
@@ -121,6 +123,9 @@ _platform_roles = [
     "roles/dns.admin"
     "roles/cloudkms.admin"
     "roles/iam.serviceAccountAdmin"
+    # Every GKE cluster it composes registers to a fleet (fleet.project), which
+    # creates the Membership in the fleet host project.
+    "roles/gkehub.admin"
     "roles/iam.serviceAccountUser"
 ]
 
@@ -493,6 +498,9 @@ plan = lambda oxr, ocds -> {str:} {
                 managedPrometheus.enabled = True
             }
             binaryAuthorization.evaluationMode = "PROJECT_SINGLETON_POLICY_ENFORCE"
+            # Every platform GKE cluster is fleet-registered; mgmt hosts its own
+            # fleet (same project, so the same Workload Identity pool).
+            fleet.project = _pid
         }
         # Shapes the deleted default pool only: set at creation, never
         # reconciled, so editing it can not force a cluster replacement
@@ -684,7 +692,8 @@ plan = lambda oxr, ocds -> {str:} {
 
     # ── gates ───────────────────────────────────────────────────────────────
     _has_num = _num != ""
-    _cluster_deps = ["attachment", "subnet-network-user-gke-agent", "subnet-network-user-apis-agent", "host-service-agent-user", "host-firewall-admin", "gke-agent-uses-gke-secrets", "api-container-googleapis-com"]
+    # api-gkehub: the cluster registers to the fleet at creation.
+    _cluster_deps = ["attachment", "subnet-network-user-gke-agent", "subnet-network-user-apis-agent", "host-service-agent-user", "host-firewall-admin", "gke-agent-uses-gke-secrets", "api-container-googleapis-com", "api-gkehub-googleapis-com"]
     _cluster_ready = _ok("gke")
     _groups_of = [
         {items = _project_items + _identity_items + _binauthz_items + _storage_items + _dns_items + _secret_items, open = True}

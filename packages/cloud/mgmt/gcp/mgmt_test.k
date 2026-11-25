@@ -29,7 +29,7 @@ _fxObs = lambda _fxAt: {str:}, _fxReady: bool {
     {Resource.status = {atProvider = _fxAt, conditions = [{$type = "Ready", status = "True" if _fxReady else "False"}]}}
 }
 
-_fxClusterDeps = ["attachment", "subnet-network-user-gke-agent", "subnet-network-user-apis-agent", "host-service-agent-user", "host-firewall-admin", "gke-agent-uses-gke-secrets", "api-container-googleapis-com"]
+_fxClusterDeps = ["attachment", "subnet-network-user-gke-agent", "subnet-network-user-apis-agent", "host-service-agent-user", "host-firewall-admin", "gke-agent-uses-gke-secrets", "api-container-googleapis-com", "api-gkehub-googleapis-com"]
 
 # The project numbered and every prerequisite of the cluster Ready.
 _fxNumbered = {"project" = _fxObs({number = "123456789"}, True)}
@@ -106,6 +106,8 @@ test_cluster_is_private_dns_only_and_encrypted = lambda {
     assert f.workloadIdentityConfig.workloadPool == "demo-mgmt.svc.id.goog"
     assert f.ipAllocationPolicy.clusterSecondaryRangeName == "pods" and f.ipAllocationPolicy.servicesSecondaryRangeName == "services"
     assert f.binaryAuthorization.evaluationMode == "PROJECT_SINGLETON_POLICY_ENFORCE"
+    assert f.fleet.project == "demo-mgmt", "the mgmt cluster registers to its own project's fleet"
+    assert "gkehub.googleapis.com" in mgmt.apis, "the fleet host needs the GKE Hub API"
     assert f.deletionProtection == True
     assert c.spec.initProvider.nodeConfig.serviceAccount == "gke-nodes@demo-mgmt.iam.gserviceaccount.com", "the default pool's shape is creation-only"
     assert f?.nodeConfig == Undefined, "a reconciled nodeConfig would force a replacement on edit"
@@ -150,8 +152,9 @@ test_workload_identity_waits_for_the_cluster = lambda {
 # ---- identities -------------------------------------------------------------------
 test_folder_grants_only_for_given_folders = lambda {
     all_folders = [n for n in _fxNames(_fxRender({}, {})) if n.startswith("crossplane-dev-") or n.startswith("crossplane-staging-") or n.startswith("crossplane-network-") or n.startswith("crossplane-prod-")]
-    # 24 environment roles (+ xpnAdmin on dev and staging), xpnAdmin on network.
-    assert len([n for n in all_folders if n.startswith("crossplane-dev-")]) == 25
+    # 25 environment roles (+ xpnAdmin on dev and staging), xpnAdmin on network.
+    assert len([n for n in all_folders if n.startswith("crossplane-dev-")]) == 26
+    assert "crossplane-dev-gkehub-admin" in all_folders, "every composed GKE cluster registers to a fleet"
     assert len([n for n in all_folders if n.startswith("crossplane-network-")]) == 1
     only_platform = _fxRender({folders = {platform = "101"}}, {})
     assert [i for i in only_platform if i.kind == "FolderIAMMember"] == []

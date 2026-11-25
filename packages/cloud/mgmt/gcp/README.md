@@ -39,7 +39,7 @@ All kinds are namespaced `*.gcp.m.upbound.io/v1beta1`.
 | composition-resource-name | kind | Pulumi |
 | --- | --- | --- |
 | `project` | `Project` | `mgmt` |
-| `api-<api>` | `ProjectService` × 24 (+ `additionalApis`) | `mgmt-apis` |
+| `api-<api>` | `ProjectService` × 25 (+ `additionalApis`) | `mgmt-apis` |
 | `attachment` | `SharedVPCServiceProject` | `mgmt-on-net-mgmt` |
 | `subnet-network-user-{gke,apis}-agent` | `SubnetworkIAMMember` | same |
 | `host-service-agent-user`, `host-firewall-admin` | `ProjectIAMMember` (host) | same |
@@ -62,7 +62,9 @@ All kinds are namespaced `*.gcp.m.upbound.io/v1beta1`.
 The cluster matches `GkeCluster`: private nodes, DNS endpoint only (IP
 endpoints off), Workload Identity, CMEK Secrets encryption, shielded COS nodes,
 REGULAR channel with the Fri/Sat maintenance window, Gateway API, cost
-management, Managed Prometheus, Binary Authorization with the project policy.
+management, Managed Prometheus, Binary Authorization with the project policy,
+and registration to the project's own GKE fleet (`fleet.project` = the mgmt
+project; `gkehub.googleapis.com` is in the API list).
 The deleted default pool's `nodeConfig` goes in `spec.initProvider`, the
 Crossplane form of `ignoreChanges: ['nodeConfig']`.
 
@@ -74,7 +76,7 @@ observed yet stays out of the desired state, and `status.pending` lists it:
 | held back | until |
 | --- | --- |
 | service agent grants, nx-cache and cert-manager principals | `project` reports `number` (the agents' emails and the Workload Identity pool's principal embed it) |
-| `gke`, `node-pool-*` | `attachment`, both subnet grants, both host grants, the key grant and `api-container-googleapis-com` are Ready |
+| `gke`, `node-pool-*` | `attachment`, both subnet grants, both host grants, the key grant, `api-container-googleapis-com` and `api-gkehub-googleapis-com` are Ready |
 | `cloud-sql` | `cloudsql-agent-uses-cloudsql` is Ready (CMEK is set at creation only) |
 | `db-*` | `cloud-sql` is Ready |
 | `*-workload-identity`, principals | `gke` is Ready (it creates the identity pool) |
