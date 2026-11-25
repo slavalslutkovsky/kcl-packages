@@ -94,10 +94,11 @@ test_service_account = lambda {
 
 # ---- render: exposure --------------------------------------------------------
 
-# public flips both knobs: ingress AND the allUsers invoker binding.
+# public adds the allUsers invoker binding; ingress stays internal-only either
+# way, so exposure is decided by IAM, never by the Service's ingress.
 test_public_default = lambda {
     items = serverless.render(_build({image = "i", region = "r"}))
-    assert items[0].spec.forProvider.ingress == "INGRESS_TRAFFIC_ALL", "public must open ingress"
+    assert items[0].spec.forProvider.ingress == "INGRESS_TRAFFIC_INTERNAL_ONLY", "ingress must stay internal-only even when public"
     member = _by_kind(items, "ServiceIAMMember")
     assert member != Undefined, "public must add the invoker binding"
     assert member.metadata.annotations["krm.kcl.dev/composition-resource-name"] == "invoker", "invoker must have a stable resource name"
@@ -110,7 +111,7 @@ test_public_default = lambda {
 test_private = lambda {
     items = serverless.render(_build({image = "i", region = "r", public = False}))
     assert len(items) == 1, "private render must not emit an invoker binding"
-    assert items[0].spec.forProvider.ingress == "INGRESS_TRAFFIC_INTERNAL_ONLY", "private must close ingress"
+    assert items[0].spec.forProvider.ingress == "INGRESS_TRAFFIC_INTERNAL_ONLY", "private must keep ingress internal-only"
 }
 
 # ---- render: deletion policy -------------------------------------------------

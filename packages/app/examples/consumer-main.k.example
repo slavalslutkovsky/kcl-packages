@@ -51,6 +51,6 @@ manifests.yaml_stream(_out)
 
 # ── Lower-level API ───────────────────────────────────────────────────────────
 # renderRelease is the one-call entrypoint; the pieces are also exported:
-#   app.render(app.Workload {**w})       # Deployment (+ Service, + HPA/Scaler)
+#   app.render(app.Workload {**w})       # Deployment (+ Service, + KEDA ScaledObject)
 #   app.renderTask(app.Task {**t})       # Job, or CronJob when `schedule` is set
 #   app.mergeValues(base, overlay)       # deep, right-wins overlay merge

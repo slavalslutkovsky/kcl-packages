@@ -4,7 +4,7 @@ KCL schemas generated from CRDs by `kcl import -m crd` (the
 `nx-kcl:import-crd` generator). Generated: do not edit.
 Regenerate from its row in `packages/providers/registry.yaml` with `tools/providers.sh seed kubevirt`.
 
-Source: datreeio/CRDs-catalog@ad3b08c5045129d7bb1eeffd8e61719b2c8dd1e2 (kubevirt.io/virtualmachine_v1.json:VirtualMachine,cdi.kubevirt.io/datavolume_v1beta1.json:DataVolume)
+Source: datreeio/CRDs-catalog@ad3b08c5045129d7bb1eeffd8e61719b2c8dd1e2 (kubevirt.io/virtualmachine_v1.json:VirtualMachine,cdi.kubevirt.io/datavolume_v1beta1.json:DataVolume,instancetype.kubevirt.io/virtualmachineinstancetype_v1beta1.json:VirtualMachineInstancetype,instancetype.kubevirt.io/virtualmachinepreference_v1beta1.json:VirtualMachinePreference)
 
 ## Usage
 
@@ -34,3 +34,5 @@ import kubevirt.models.v1.kubevirt_io_v1_virtual_machine as model
 | kind | import |
 | --- | --- |
 | DataVolume | `kubevirt.models.v1beta1.cdi_kubevirt_io_v1beta1_data_volume` |
+| VirtualMachineInstancetype | `kubevirt.models.v1beta1.instancetype_kubevirt_io_v1beta1_virtual_machine_instancetype` |
+| VirtualMachinePreference | `kubevirt.models.v1beta1.instancetype_kubevirt_io_v1beta1_virtual_machine_preference` |

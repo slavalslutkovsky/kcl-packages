@@ -12,7 +12,8 @@ Cloud Storage `Bucket`. `function-kcl` runs it from
 
 | resource | when | notes |
 | --- | --- | --- |
-| `Bucket` (`storage.gcp.m.upbound.io/v1beta1`), resource name `managed` | always | the only managed resource |
+| `Bucket` (`storage.gcp.m.upbound.io/v1beta1`), resource name `managed` | always | the bucket |
+| `BucketIAMMember` (`storage.gcp.m.upbound.io/v1beta1`), resource name `access-<entry>-<sha256(member)[:8]>` | one per member of each `spec.access` entry | `bucketSelector.matchControllerRef` (or `bucket` = `import.existingName`), `role`, `member`; names do not depend on list order |
 
 ## Spec fields read
 
@@ -21,6 +22,7 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 | field | maps to (`forProvider.`) |
 | --- | --- |
 | `region` | `location` |
+| `providerConfigName` | `providerConfigRef: {kind: ProviderConfig, name: <it>}` on the Bucket and every `BucketIAMMember`: the namespaced ProviderConfig of the project billed. Unset: the provider default |
 | `storageClass` | `storageClass` (`STANDARD` / `NEARLINE` / `COLDLINE` / `ARCHIVE`); a non-`standard` tier also adds a `SetStorageClass` lifecycle rule at age 0 |
 | `versioning` | `versioning.enabled` |
 | `blockPublicAccess` | `publicAccessPrevention`: `enforced`, else `inherited` |
@@ -38,9 +40,16 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 | `import.existingName` | `crossplane.io/external-name` — the bucket name is the whole identity |
 | `import.mode` | `observe` (default) → `managementPolicies: [Observe]`; `manage` → the `deletionPolicy` mapping |
 | `import.source`, `import.address` | annotations `cloud.example.org/imported-from`, `cloud.example.org/import-address` |
+| `access[]` | one `BucketIAMMember` per member from [`federation`](../../federation/README.md) `gcp_members`: `principal://…/subject/<sub>` per `subjects`, else `principalSet://…/attribute.<repo attr>/<repo>` per `repositories`, else `principalSet://…/workloadIdentityPools/<pool>/*`; `role` `read` / `write` / `admin` → `roles/storage.objectViewer` / `objectUser` / `objectAdmin` |
+| `federation.gcpProjectNumber` | the project of those pools (required with `access`); the pools and their providers must exist there, named by the same entries (`<client pool>` or `<ticket>-<client>`), e.g. from a GcpProject `spec.workloadIdentity` — their provider condition is what enforces owner, workflows and the ticket trigger |
 
 `import.resourceGroup` is ignored (Azure only). Adoption is walked through in
 [docs/bucket-import.md](../../../../docs/bucket-import.md).
+
+`access` fails the render without `federation.gcpProjectNumber`, with
+`federation.awsAccountId` / `awsPermissionsBoundary` / `azureResourceGroup`, or with `import.mode: observe`
+(a grant writes the bucket's IAM). `deletionPolicy: Orphan` applies to the
+grants too.
 
 Status written back to the XR:
 
@@ -53,6 +62,7 @@ Status written back to the XR:
 | `cloud-url` | Cloud console storage browser URL |
 | `endpoint` | `<bucketName>.storage.googleapis.com` |
 | `url`, `selfLink`, `id`, `region`, `storageClass` | from `atProvider` once observed (`region` is `atProvider.location`) |
+| `access[]` | `{name, role, members}` per `spec.access` entry |
 
 ## Usage
 

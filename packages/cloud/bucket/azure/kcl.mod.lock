@@ -1,8 +1,20 @@
 [dependencies]
+  [dependencies.azure-authorization]
+    name = "azure-authorization"
+    full_name = "azure-authorization_0.0.1"
+    version = "0.0.1"
+  [dependencies.azure-managedidentity]
+    name = "azure-managedidentity"
+    full_name = "azure-managedidentity_0.0.1"
+    version = "0.0.1"
   [dependencies.azure-storage]
     name = "azure-storage"
     full_name = "azure-storage_0.0.1"
     version = "0.0.1"
+  [dependencies.federation]
+    name = "federation"
+    full_name = "federation_0.1.0"
+    version = "0.1.0"
   [dependencies.k8s]
     name = "k8s"
     full_name = "k8s_1.32.4"

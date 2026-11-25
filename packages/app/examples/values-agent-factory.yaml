@@ -1,0 +1,68 @@
+# agent-factory: the autopilot engine in observe mode, the deliberations and
+# the dashboard. The same values gitops puts in a KclModule's `spec.params`
+# (the kclx operator passes them as option("params")); here as a file so
+# `kcl run packages/app -D values=examples/values-agent-factory.yaml` shows it.
+#
+# One replica, Recreate: the state directory is a ReadWriteOnce claim and the
+# autopilot holds a lock in it. Credentials are optional secretKeyRefs so the pod
+# starts before a human has stored them. The ServiceAccount, its RBAC, the
+# ConfigMap, the PVC and the ExternalSecrets stay in gitops: `create: false`
+# only points the pod at the existing `agent-factory` ServiceAccount.
+# The HTTPRoute (main-gateway in `gateway`) is `route:` below. Its hostname is
+# validated as a DNS name, so `${AGENT_FACTORY_HOSTNAME}` cannot sit in a file
+# the package renders: in gitops, Flux postBuild substitutes it into the
+# KclModule's params before the operator sees them. Here, a literal stand-in.
+workload:
+  name: agent-factory
+  namespace: agent-factory
+  component: autopilot
+  partOf: platform
+  image: me-west1-docker.pkg.dev/shl-artifacts/docker/agent-factory
+  args: [serve]
+  port: 8080
+  replicas: 1
+  strategy: Recreate
+  runAsUser: 65532
+  runAsGroup: 65532
+  readOnlyRootFilesystem: true
+  # no /metrics endpoint: no scrape annotations
+  prometheus: false
+  serviceAccount:
+    create: false
+    name: agent-factory
+    # it reads the cluster through this account (rbac.yaml): mount the token
+    automountToken: true
+  env:
+    - { name: PORT, value: "8080" }
+    - { name: HOST, value: "0.0.0.0" }
+    - { name: AF_CONTEXT, value: in-cluster }
+    - { name: AF_WORKFLOWS, value: /etc/agent-factory/workflows.toml }
+    - { name: AF_PLAYBOOK, value: /etc/agent-factory/playbook.toml }
+    - { name: AF_STATE_DIR, value: /var/lib/agent-factory }
+    - { name: AF_AUTOPILOT_MODE, value: observe }
+    - { name: ANTHROPIC_API_KEY, secretName: agent-factory-providers, secretKey: ANTHROPIC_API_KEY }
+    - { name: OPENAI_API_KEY, secretName: agent-factory-providers, secretKey: OPENAI_API_KEY }
+    - { name: GEMINI_API_KEY, secretName: agent-factory-providers, secretKey: GEMINI_API_KEY }
+    - { name: GITHUB_APP_ID, secretName: agent-factory-github, secretKey: GITHUB_APP_ID }
+    - { name: GITHUB_APP_INSTALLATION_ID, secretName: agent-factory-github, secretKey: GITHUB_APP_INSTALLATION_ID }
+    - { name: GITHUB_APP_PRIVATE_KEY, secretName: agent-factory-github, secretKey: GITHUB_APP_PRIVATE_KEY }
+  # /readyz waits for the autopilot's first sync; /healthz only for the
+  # server, so a slow initial list never restarts the pod.
+  startupProbe: { type: http, path: /healthz, port: http, periodSeconds: 2, failureThreshold: 60 }
+  livenessProbe: { type: http, path: /healthz, port: http, periodSeconds: 20, failureThreshold: 3 }
+  readinessProbe: { type: http, path: /readyz, port: http, periodSeconds: 10 }
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  volumeMounts:
+    - { name: config, mountPath: /etc/agent-factory, readOnly: true }
+    - { name: state, mountPath: /var/lib/agent-factory }
+    - { name: tmp, mountPath: /tmp }
+  volumes:
+    - { name: config, configMap: { name: agent-factory } }
+    - { name: state, persistentVolumeClaim: { claimName: agent-factory } }
+    - { name: tmp, emptyDir: { sizeLimit: 64Mi } }
+  route:
+    hostnames: [agent-factory.example.com]
+    gateway: { name: main-gateway, namespace: gateway, sectionName: https }
+    path: /

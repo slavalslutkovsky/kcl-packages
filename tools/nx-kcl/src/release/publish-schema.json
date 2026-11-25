@@ -7,6 +7,10 @@
     "registry": {
       "type": "string",
       "description": "OCI registry prefix, e.g. oci://docker.io/<namespace>. Environment variables are expanded; defaults to oci://$KCL_REGISTRY."
+    },
+    "verifyOnly": {
+      "type": "boolean",
+      "description": "Stage the self-contained artifact (path deps vendored transitively) and compile it with `kcl run main.k`, but never push. Backs the `publish-check` target."
     }
   },
   "additionalProperties": true

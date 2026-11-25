@@ -1,0 +1,26 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: InstanceTemplate
+metadata:
+  namespace: default
+  name: build-agents
+spec:
+  region: in-cluster                 # required by the XRD; a free-form site label here
+  size: medium                       # -> VirtualMachineInstancetype cpu.guest=2, memory.guest=8Gi
+  image: ubuntu-24-04                # -> quay.io/containerdisks/ubuntu:24.04, imported per machine
+  diskGb: 50                         # each machine's root PVC
+  storageClass: local-path           # in-cluster only; unset = the cluster default
+  sshKey:                            # -> one Secret + accessCredentials on every machine
+    user: ubuntu                     # ignored here: cloud-init authorizes the image's own default user
+    publicKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample build-agents
+  userData: |
+    #cloud-config
+    package_update: true
+  tags:
+    team: platform                   # -> labels on every VirtualMachine
+  instances:                         # each -> a VirtualMachine referencing the instancetype + preference
+    - name: a
+    - name: b
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: kubevirt           # the flag: picks the backend (aws | gcp | azure | kubevirt)

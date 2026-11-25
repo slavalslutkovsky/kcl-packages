@@ -1,14 +1,37 @@
 """A Crossplane composition function composing PackageRegistry XRs."""
 
+from types import ModuleType
+
 import grpc
 from crossplane.function import logging, resource, response
 from crossplane.function.proto.v1 import run_function_pb2 as fnv1
 from crossplane.function.proto.v1 import run_function_pb2_grpc as grpcv1
 
 from function.backends import BACKENDS
-from function.spec import Spec, SpecError
+from function.spec import FORMATS, Spec, SpecError
 
 BACKEND_NAMES = ", ".join(BACKENDS)
+
+
+def served_by(fmt: str) -> str:
+    """The backends that serve one format, for the unsupported-format error."""
+    names = [name for name, mod in BACKENDS.items() if fmt in mod.SUPPORTED]
+    return f"{fmt} -> {', '.join(names) if names else 'no backend'}"
+
+
+def unsupported_message(mod: ModuleType, unsupported: list[str]) -> str:
+    """The fatal result for formats a backend cannot serve.
+
+    Names what the backend does compose, why it cannot serve the rest, and
+    which backend would — so the XR author can fix the XR from the message.
+    """
+    composes = ", ".join(f for f in FORMATS if f in mod.SUPPORTED)
+    return (
+        f"{mod.NAME} backend composes {composes}; "
+        f"spec.formats asks for {', '.join(unsupported)}. "
+        f"{mod.UNSUPPORTED_HINT} "
+        f"Served by: {'; '.join(served_by(f) for f in unsupported)}."
+    )
 
 
 class FunctionRunner(grpcv1.FunctionRunnerService):
@@ -39,11 +62,7 @@ class FunctionRunner(grpcv1.FunctionRunnerService):
             # then never be able to publish to.
             unsupported = [f for f in spec.formats if f not in mod.SUPPORTED]
             if unsupported:
-                msg = (
-                    f"{mod.NAME} backend composes {', '.join(sorted(mod.SUPPORTED))}; "
-                    f"spec.formats asks for {', '.join(unsupported)}. "
-                    f"{mod.UNSUPPORTED_HINT}"
-                )
+                msg = unsupported_message(mod, unsupported)
                 response.fatal(rsp, msg)
                 return rsp
             desired = mod.render(spec)

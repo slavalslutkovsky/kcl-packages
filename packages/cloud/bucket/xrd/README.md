@@ -20,6 +20,7 @@ this schema before they reach the API server.
 | field | type | required | default | meaning |
 | --- | --- | :-: | --- | --- |
 | `region` | string | ✓ | | GCS location / S3 region |
+| `providerConfigName` | string | | | The cloud account the bucket is created in and billed to: a namespaced ProviderConfig in the XR's namespace, set as `providerConfigRef` on every composed resource. Unset: the provider default (`ClusterProviderConfig/default`, the platform's account). Rejected by rustfs. Client AWS accounts: [platform/tenant-account](../../../platform/tenant-account/README.md) |
 | `storageClass` | `standard` \| `nearline` \| `cold` \| `archive` | | `standard` | Abstract tier, mapped per cloud |
 | `versioning` | bool | | `true` | Keep noncurrent object versions |
 | `forceDestroy` | bool | | `false` | Delete contained objects when the bucket is destroyed |
@@ -35,6 +36,23 @@ this schema before they reach the API server.
 | `cors` | list | | | Rules: `origins`, `methods` (required), `headers`, `maxAgeSeconds` (default 3600) |
 | `lifecycleRules` | list | | | Rules: `id` (required), `prefix` (default `""`), `expirationDays`, `transitionDays`, `transitionStorageClass` |
 | `import` | object | | | Adopt an existing bucket: `existingName` (required), `mode` `observe` (default) \| `manage`, `source` `terraform` \| `pulumi` \| `other`, `address`, `resourceGroup` (Azure only). See [docs/bucket-import.md](../../../../docs/bucket-import.md) |
+| `access` | list | | | Keyless access for CI pipelines and the ticket systems that start them: each entry is a [federation](../../federation/README.md) binding (`client` or `customClient`; `ticket` or `customTicket`; `owner`, `repositories`, `workflows`, `subjects`, `audiences`, `condition`, `host`, `issuerUri`, `pool`, `provider`) plus `role` `read` (default) \| `write` \| `admin` |
+| `federation` | object | | | Where `access` trusts tokens: `gcpProjectNumber` (GCP pools), `awsAccountId` (IAM OIDC providers), `awsPermissionsBoundary` (managed policy ARN capping every AWS access role, tagged onto it too), `azureResourceGroup` (access identities; default `import.resourceGroup`). Only the backend's own fields may be set |
+
+### `access` per backend
+
+| backend | per entry | trust | `role` |
+| --- | --- | --- | --- |
+| gcp | one `BucketIAMMember` per member | the entry's workload identity pool in `gcpProjectNumber` (must exist; its provider condition carries owner, workflows, ticket trigger): `principalSet://…/*`, one per repository attribute, or `principal://…/subject/<sub>` | `roles/storage.objectViewer` \| `objectUser` \| `objectAdmin` |
+| aws | IAM `Role` + inline `RolePolicy` | the account's IAM OIDC provider for the issuer (must exist), `<host>:aud` and `<host>:sub` patterns (`repo:<owner>/*`, `repo:<repo>:*`, or `subjects`) | S3 object (+ list) actions on this bucket; KMS when `encryptionKmsKeyId` is set |
+| azure | `UserAssignedIdentity`, one `FederatedIdentityCredential` per subject, `RoleAssignment` on the account | exact `subjects` (required, ≤ 20) | `Storage Blob Data Reader` \| `Contributor` \| `Owner` |
+| rustfs | — | fails the render: RustFS federates OIDC server-wide, not per bucket | — |
+
+AWS and Azure see only the token's `sub` and `aud`: an entry with `ticket`,
+`workflows` or `condition` needs `subjects` there (a customized sub claim that
+carries them). Access writes IAM, so it fails with `import.mode: observe`.
+`status.access[]` reports `name`, `role` and what a pipeline authenticates as:
+`members` (gcp), `roleArn` (aws), `clientId`/`tenantId` (azure).
 
 Status fields: `ready`, `provider`, `mode` (`created` \| `observe` \|
 `managed`), `bucketName`, `region`, `storageClass`, `url`, `cloud-url`,
@@ -61,16 +79,17 @@ into `Bucket` XRs that adopt existing buckets.
 | file | content |
 | --- | --- |
 | `xrd.yaml` | the `CompositeResourceDefinition` (`apiextensions.crossplane.io/v2`) |
-| `providers.yaml` | `Provider`s `provider-aws-s3`, `provider-gcp-storage`, `provider-azure-storage`; the `rustfs` backend reuses provider-aws-s3 |
+| `providers.yaml` | `Provider`s `provider-aws-s3`, `provider-gcp-storage`, `provider-azure-storage`; for `access`, `provider-aws-iam`, `provider-azure-managedidentity`, `provider-azure-authorization`; the `rustfs` backend reuses provider-aws-s3 |
 | `functions.yaml` | `Function`s `function-kcl` and `function-auto-ready`, pinned and sourced from ghcr.io |
 | `examples/bucket-aws.yaml` | every portable field, `provider: aws` |
 | `examples/bucket-gcp.yaml` | GCS-relevant fields, `deletionPolicy: Orphan`, `provider: gcp` |
 | `examples/bucket-azure.yaml` | `storageClass: archive` (adds the lifecycle policy), `provider: azure` |
 | `examples/bucket-rustfs.yaml` | `storageClass: cold` (adds the lifecycle transition), `provider: rustfs` |
 | `examples/bucket-import.yaml` | adopts `legacy-assets-8f3a1c` in observe mode with `deletionPolicy: Orphan`, `provider: aws` |
+| `examples/bucket-access-{gcp,aws,azure}.yaml` | `access` for a GitHub org, a Jira-started workflow and a GitLab project, with each cloud's `federation` anchor |
 | `models/` | generated KCL schemas (`v1alpha1/cloud_example_org_v1alpha1_bucket.k` + k8s meta) |
 | `main.k` | placeholder; points at `models/` |
-| `xrd_test.k` | the shipped examples are valid `Bucket`s; `import.mode` and the spec defaults match the XRD |
+| `xrd_test.k` | the shipped examples (including the access ones) are valid `Bucket`s; `import.mode`, `access[].role` and the spec defaults match the XRD |
 
 There is no `providerconfigs.yaml`: `just e2e-providerconfigs bucket` applies
 nothing for this module.

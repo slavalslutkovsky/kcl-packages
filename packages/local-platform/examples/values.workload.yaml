@@ -1,0 +1,7 @@
+# Overlay for values.yaml: the same platform on a workload cluster.
+#   kcl run packages/local-platform -D values=packages/local-platform/examples/values.yaml -D env=workload -q
+# manager-type rows (crossplane, backstage) drop out; application rows,
+# metrics-server and cloudnative-pg + its Cluster stay.
+role: workload
+cluster:
+  name: workload-local

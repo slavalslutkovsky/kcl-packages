@@ -1,0 +1,26 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: PackageRegistry
+metadata:
+  namespace: default
+  name: my-charts
+spec:
+  region: us-east-1
+  # An ECR repository holds ONE chart, named after it, so helm composes an ECR
+  # repository creation template (CREATE_ON_PUSH, prefix my-charts/charts):
+  #   helm push app-1.0.0.tgz oci://<account>.dkr.ecr.us-east-1.amazonaws.com/my-charts/charts
+  # makes ECR create my-charts/charts/app with the settings below. Those
+  # repositories belong to ECR, not to this XR: deleting it removes only the
+  # template.
+  formats:
+    - helm
+  immutableTags: true            # template imageTagMutability=IMMUTABLE — a chart version is never overwritten
+  untaggedRetentionDays: 7       # template lifecycle rule: expire untagged manifests after 7 days
+  keepLastImages: 50             # template lifecycle rule: keep the 50 most recent chart versions
+  publicAccess: false            # true puts the anonymous-pull policy on every created repository
+  # No encryptionKeyId and no tags: a creation template applies a KMS key or
+  # resource tags only through an IAM creation role this XRD does not model, so
+  # encryptionKeyId FAILS the render here and tags are not applied to charts.
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: aws            # the flag: picks the backend (aws | gcp | azure | zot | forgejo)

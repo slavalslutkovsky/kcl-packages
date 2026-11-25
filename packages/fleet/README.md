@@ -100,6 +100,7 @@ layer's `Component`s, then each team's `Component`s in file order. Labels:
 | --- | --- |
 | `examples/values.yaml` | Platform layer (crossplane chart, `platform-apis` crossplane artifact, `policy` from Git) and two teams: `web` (nginx chart, `web-api` kustomize from Git with `serviceAccount`), `data` (`data-resources` crossplane artifact on a semver range, `cnpg` chart into `cnpg-system`). Default for `just fleet` |
 | `examples/values.prod.yaml` | `-D env=prod`: `name: platform-prod`, only the `web` team, `web-api` from a tagged public OCI artifact |
+| `examples/values.platform.yaml` | The platform team's own operators as a platform layer, kustomize from Git: manager UI (`gitops-hub`, `dev-portal`) and cloud usage (`resource-stats-operator`, `epic-watch`) |
 
 ## Layout
 

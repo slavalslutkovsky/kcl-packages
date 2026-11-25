@@ -1,0 +1,96 @@
+# LandingZone on azure: the contract's example.azure spec with the tier-0 foundation Pulumi writes
+# (example.foundation.azure). Selects the landingzone-azure Composition.
+apiVersion: cloud.example.org/v1alpha1
+kind: LandingZone
+metadata:
+  name: shl
+  namespace: landing-zone
+spec:
+  prefix: shl
+  labels:
+    managed-by: landing-zone
+  addressSpace: 10.0.0.0/8
+  network:
+    hub:
+      cidr: 10.0.0.0/23
+      topology: isolated
+    mgmt:
+      cidr: 10.10.0.0/16
+      nodes: 10.10.0.0/24
+      pods: 10.10.32.0/19
+      services: 10.10.16.0/22
+  environments:
+    - name: dev
+      cidr: 10.20.0.0/16
+      nodes: 10.20.0.0/22
+      pods: 10.20.64.0/18
+      services: 10.20.16.0/20
+      cluster:
+        nodeSize: medium
+        minNodes: 1
+        maxNodes: 3
+    - name: prod
+      cidr: 10.30.0.0/16
+      nodes: 10.30.0.0/22
+      pods: 10.30.64.0/18
+      services: 10.30.16.0/20
+  keys:
+    - name: cluster-secrets
+      purpose: cluster-secrets
+    - name: audit
+      purpose: audit
+      rotationDays: 365
+    - name: openbao-unseal
+      purpose: unseal
+  registry:
+    name: platform
+  audit:
+    retentionDays: 400
+  provider: azure
+  organization:
+    id: 11111111-2222-3333-4444-555555555555
+    domain: shluviza.com
+    tenantId: 11111111-2222-3333-4444-555555555555
+    subscriptions:
+      platform: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+  region: israelcentral
+  backupRegion: westeurope
+  controlPlane:
+    admins: 99999999-8888-7777-6666-555555555555
+    nodePools:
+      - name: system
+        machineType: Standard_D4s_v5
+        minNodes: 1
+        maxNodes: 3
+      - name: ci
+        machineType: Standard_D4s_v5
+        minNodes: 0
+        maxNodes: 2
+        spot: true
+        taints:
+          - workload=ci:NoSchedule
+  foundation:
+    scopes:
+      root: /providers/Microsoft.Management/managementGroups/shl
+      platform: /providers/Microsoft.Management/managementGroups/shl-platform
+      dev: /providers/Microsoft.Management/managementGroups/shl-dev
+      prod: /providers/Microsoft.Management/managementGroups/shl-prod
+    containers:
+      platform: shl-platform
+      network: shl-network
+      security: shl-security
+      dev: shl-dev
+      prod: shl-prod
+    network:
+      mgmt:
+        id: /subscriptions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/resourceGroups/shl-network/providers/Microsoft.Network/virtualNetworks/shl-mgmt
+        subnet: /subscriptions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/resourceGroups/shl-network/providers/Microsoft.Network/virtualNetworks/shl-mgmt/subnets/nodes
+        pods: 10.10.32.0/19
+        services: 10.10.16.0/22
+    controlPlane:
+      clusterName: mgmt
+      oidcIssuer: https://israelcentral.oic.prod-aks.azure.com/11111111-2222-3333-4444-555555555555/00000000-0000-0000-0000-000000000000/
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure

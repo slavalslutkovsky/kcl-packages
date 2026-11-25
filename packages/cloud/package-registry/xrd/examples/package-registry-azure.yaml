@@ -6,11 +6,14 @@ metadata:
   name: mypackages01
 spec:
   region: westeurope
-  # OCI only. Azure has no ARM-managed language package registry (Azure
-  # Artifacts belongs to Azure DevOps), so any other format here fails the
-  # render with a named error instead of quietly composing nothing.
+  # OCI only — images and Helm charts (ACR stores charts as OCI artifacts; the
+  # helm endpoint is oci://<login server>/<name>/charts). Azure has no
+  # ARM-managed language package registry (Azure Artifacts belongs to Azure
+  # DevOps), so any other format here fails the render with a named error
+  # instead of quietly composing nothing.
   formats:
     - oci
+    - helm
   resourceGroup: platform-rg     # azure-only, REQUIRED: an existing resource group
   tier: premium                  # standard | premium — premium adds zone redundancy
   publicAccess: false            # true sets anonymousPullEnabled

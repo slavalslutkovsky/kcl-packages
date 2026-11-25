@@ -27,7 +27,7 @@ runner: kind
 domain: localtest.me
 
 ingress:
-  className: nginx
+  className: istio
   default: true
 
 certs:

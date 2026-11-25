@@ -1,0 +1,536 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: landingzones.cloud.example.org
+spec:
+  scope: Namespaced
+  group: cloud.example.org
+  names:
+    kind: LandingZone
+    plural: landingzones
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                One landing zone on one cloud, declared once. This schema is the
+                single input contract of the landing zone on every layer:
+
+                  Pulumi   @org/landing-zone (shluviza/infra) takes it as
+                           LandingZoneSpec, builds tier 0 with the gcp or azure
+                           backend, and returns LandingZoneOutputs (= status).
+                  KCL      landingzone-contract validates it (check: blocks);
+                           landingzone-gcp / landingzone-azure compose tier 1
+                           from it as child XRs of this catalog.
+
+                Tier 0 (Pulumi, what the control plane runs on): organization
+                scopes and guardrails, platform keys, the mgmt network, the
+                platform registry, the audit archive and the mgmt cluster with
+                Crossplane's keyless identity. Tier 1 (this XR's Compositions,
+                reconciled on that cluster): one spoke Network per environment,
+                the NetworkHub attaching every spoke plus the mgmt network, one
+                EncryptionKey per environment and, opt-in, one
+                KubernetesCluster per environment.
+
+                Tier 1 cannot start before tier 0: the Compositions read
+                spec.foundation, which Pulumi writes from its outputs when it
+                creates this XR. A LandingZone without foundation renders
+                nothing but its status.
+
+                Address plan: every block (mgmt, hub, each environment) lies
+                inside addressSpace and no two overlap. Inside a block, nodes is
+                what the VNet/subnet takes; pods and services are reserved in
+                the same block and must not overlap nodes. GCP turns them into
+                subnet secondary ranges; AKS (Azure CNI Overlay) takes them as
+                its pod and service CIDRs, which is why they stay outside the
+                VNet's own address space there.
+              properties:
+                provider:
+                  type: string
+                  enum: [gcp, azure]
+                  description: The cloud. Selects the Pulumi backend and must match the Composition selected for this XR (label provider).
+                prefix:
+                  type: string
+                  pattern: ^[a-z][a-z0-9]{1,5}$
+                  description: Name prefix of every resource (shl). Short on purpose — Azure Key Vault names stop at 24 characters and storage account names at 24 alphanumerics.
+                organization:
+                  type: object
+                  description: Who the landing zone belongs to. Bought or created out of band, then referenced.
+                  properties:
+                    id:
+                      type: string
+                      minLength: 1
+                      description: 'Root of the hierarchy. gcp: the numeric organization id. azure: the management group the landing zone hangs from (for a whole tenant, the tenant root group, whose id is the tenant id).'
+                    domain:
+                      type: string
+                      pattern: ^[a-z0-9.-]+\.[a-z]{2,}$
+                      description: Primary domain. Groups and DNS live under it.
+                    billingAccount:
+                      type: string
+                      description: gcp-only, required there — billing account id (XXXXXX-XXXXXX-XXXXXX) of every project tier 0 creates.
+                    tenantId:
+                      type: string
+                      description: azure-only, required there — Entra ID tenant GUID (Key Vaults, workload identity federation).
+                    subscriptions:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: 'azure-only — existing subscription GUIDs by scope. `platform` is required on azure: tier 0 lives there and Crossplane composes tier 1 into it (its ClusterProviderConfig names one subscription). Any `<environment>` key moves that subscription under the environment''s management group. Azure subscriptions are bought, not created by this API.'
+                  required: [id, domain]
+                region:
+                  type: string
+                  description: Primary region (me-west1 / israelcentral). Data lives here.
+                backupRegion:
+                  type: string
+                  description: DR region. Allowed by the location guardrail next to region.
+                labels:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Labels (GCP) / tags (Azure) on every resource that takes them.
+                guardrails:
+                  type: object
+                  description: Organization policies (gcp) / Azure Policy assignments (azure) at the root scope. Tier 0.
+                  properties:
+                    allowedLocations:
+                      type: array
+                      items: {type: string}
+                      description: Regions resources may be created in. Empty means [region, backupRegion]. Must contain region.
+                    denyPublicIp:
+                      type: boolean
+                      default: true
+                      description: 'No external IPs on VMs/nodes. gcp: compute.vmExternalIpAccess; azure: built-in "Network interfaces should not have public IPs".'
+                    denyPublicStorage:
+                      type: boolean
+                      default: true
+                      description: 'No public buckets. gcp: storage.publicAccessPrevention; azure: built-in "Storage account public access should be disallowed".'
+                    dryRun:
+                      type: boolean
+                      default: false
+                      description: Audit only. gcp publishes the dry-run spec; azure assigns with enforcementMode DoNotEnforce.
+                  default: {}
+                addressSpace:
+                  type: string
+                  default: 10.0.0.0/8
+                  description: Supernet every block below must lie inside.
+                network:
+                  type: object
+                  properties:
+                    hub:
+                      type: object
+                      description: The NetworkHub tier 1 composes. Every environment network is a spoke; the mgmt network is a shared spoke.
+                      properties:
+                        cidr:
+                          type: string
+                          description: azure-only, required there — the Virtual Hub's own address space, /23 or larger. gcp's NCC hub has no address space.
+                        topology:
+                          type: string
+                          enum: [mesh, isolated]
+                          default: isolated
+                          description: isolated — environments reach only shared spokes (mgmt and environments marked shared), never each other.
+                      default: {}
+                    mgmt:
+                      type: object
+                      description: The mgmt cluster's network. Tier 0, because the cluster cannot wait for a Composition running on itself.
+                      properties:
+                        cidr:
+                          type: string
+                          description: Address block.
+                        nodes:
+                          type: string
+                          description: Node subnet (the VNet address space on azure).
+                        pods:
+                          type: string
+                          description: Pod range (GKE secondary range / AKS overlay pod CIDR).
+                        services:
+                          type: string
+                          description: Service range (GKE secondary range / AKS service CIDR).
+                      required: [cidr, nodes, pods, services]
+                  required: [mgmt]
+                environments:
+                  type: array
+                  minItems: 1
+                  description: Workload environments. Tier 0 gives each a scope (folder / management group) and a container (project / resource group); tier 1 gives each a spoke network, a key and, opt-in, a cluster.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        pattern: ^[a-z][a-z0-9]{1,9}$
+                        description: dev, staging, prod. Part of every composed name, so it is the contract — renaming recreates.
+                      cidr:
+                        type: string
+                        description: Address block.
+                      nodes:
+                        type: string
+                        description: Node subnet inside the block.
+                      pods:
+                        type: string
+                        description: Pod range inside the block. Required with cluster.
+                      services:
+                        type: string
+                        description: Service range inside the block. Required with cluster.
+                      shared:
+                        type: boolean
+                        default: false
+                        description: Shared-services spoke — reachable by every spoke under topology isolated.
+                      cluster:
+                        type: object
+                        description: A workload cluster in this environment (KubernetesCluster XR). Omit for none.
+                        properties:
+                          version:
+                            type: string
+                            description: Kubernetes minor version; provider default when omitted.
+                          nodeSize:
+                            type: string
+                            enum: [small, medium, large, xlarge]
+                            default: small
+                          machineType:
+                            type: string
+                            description: Native machine type, overrides nodeSize.
+                          minNodes:
+                            type: integer
+                            minimum: 0
+                            default: 1
+                          maxNodes:
+                            type: integer
+                            minimum: 1
+                            default: 3
+                          spot:
+                            type: boolean
+                            default: false
+                            description: gcp only — AKS cannot run its default pool on Spot and the contract rejects it on azure.
+                    required: [name, cidr, nodes]
+                keys:
+                  type: array
+                  minItems: 2
+                  description: Platform keys tier 0 creates (GCP Cloud KMS key ring / Azure Key Vault). Exactly one cluster-secrets key (mgmt cluster Secrets encryption) and one audit key (audit archive) are required.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        pattern: ^[a-z][a-z0-9-]{1,14}$
+                      purpose:
+                        type: string
+                        enum: [cluster-secrets, audit, database, unseal, generic]
+                        default: generic
+                      rotationDays:
+                        type: integer
+                        minimum: 1
+                        default: 90
+                      protection:
+                        type: string
+                        enum: [software, hsm]
+                        default: software
+                    required: [name]
+                registry:
+                  type: object
+                  description: Platform OCI registry (Artifact Registry / ACR). Tier 0, because Compositions pull their KCL modules from it.
+                  properties:
+                    name:
+                      type: string
+                      pattern: ^[a-z][a-z0-9]{1,30}$
+                      default: platform
+                    immutableTags:
+                      type: boolean
+                      default: true
+                  default: {}
+                audit:
+                  type: object
+                  description: Activity/audit logs of the whole scope, archived under the audit key.
+                  properties:
+                    retentionDays:
+                      type: integer
+                      minimum: 1
+                      default: 400
+                  default: {}
+                controlPlane:
+                  type: object
+                  description: The mgmt cluster Crossplane and Flux run on, and Crossplane's keyless identity in this cloud.
+                  properties:
+                    name:
+                      type: string
+                      pattern: ^[a-z][a-z0-9-]{1,20}$
+                      default: mgmt
+                    version:
+                      type: string
+                      description: Kubernetes minor version; release channel / provider default when omitted.
+                    admins:
+                      type: string
+                      minLength: 1
+                      description: 'Group granted cluster-admin. gcp: the group email nested in gke-security-groups@; azure: the Entra group object id.'
+                    nodePools:
+                      type: array
+                      minItems: 1
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            pattern: ^[a-z][a-z0-9]{0,11}$
+                            description: At most 12 characters — the AKS limit for a Linux pool.
+                          machineType:
+                            type: string
+                          minNodes:
+                            type: integer
+                            minimum: 0
+                          maxNodes:
+                            type: integer
+                            minimum: 1
+                          spot:
+                            type: boolean
+                            default: false
+                          taints:
+                            type: array
+                            items: {type: string}
+                            description: key=value:NoSchedule|PreferNoSchedule|NoExecute. At least one pool must have none.
+                        required: [name, machineType, minNodes, maxNodes]
+                    crossplane:
+                      type: object
+                      description: The Kubernetes ServiceAccount Crossplane's providers run as, federated to a cloud identity (GCP service account / Azure user-assigned identity).
+                      properties:
+                        namespace:
+                          type: string
+                          default: crossplane-system
+                        serviceAccount:
+                          type: string
+                          description: Default crossplane-<provider>, the gitops DeploymentRuntimeConfig name.
+                      default: {}
+                    flux:
+                      type: object
+                      description: Flux hand-off. Omit to stop at the cluster.
+                      properties:
+                        repoUrl:
+                          type: string
+                        branch:
+                          type: string
+                          default: main
+                        path:
+                          type: string
+                        operatorVersion:
+                          type: string
+                          description: flux-operator Helm chart version, exact.
+                        fluxVersion:
+                          type: string
+                          default: 2.x
+                      required: [repoUrl, path, operatorVersion]
+                  required: [admins, nodePools]
+                deletionPolicy:
+                  type: string
+                  enum: [Delete, Orphan]
+                  default: Orphan
+                  description: Passed to every child XR. Orphan by default — a landing zone is not deleted by deleting a manifest.
+                foundation:
+                  type: object
+                  description: Tier-0 facts, written by Pulumi from its outputs (the status.foundation shape). The Compositions read nothing else from tier 0.
+                  properties:
+                    scopes:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: 'Policy scope by name — root, platform and every environment. gcp: folders/<id>; azure: the management group resource id.'
+                    containers:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: 'Where resources are placed, by name — platform and every environment. gcp: project id; azure: resource group name.'
+                    network:
+                      type: object
+                      properties:
+                        mgmt:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                              description: Network self link (gcp) / VNet resource id (azure).
+                            subnet:
+                              type: string
+                              description: Subnetwork self link (gcp) / subnet resource id (azure).
+                            pods:
+                              type: string
+                              description: Secondary range name (gcp) / pod CIDR (azure).
+                            services:
+                              type: string
+                              description: Secondary range name (gcp) / service CIDR (azure).
+                    keys:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Key reference by spec.keys name — Cloud KMS resource name (gcp) / versionless Key Vault key id (azure).
+                    registry:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        url:
+                          type: string
+                          description: OCI prefix to push and pull, e.g. me-west1-docker.pkg.dev/shl-artifacts/platform or shlplatform.azurecr.io.
+                    audit:
+                      type: object
+                      properties:
+                        archive:
+                          type: string
+                          description: Archive bucket name (gcp) / storage account id (azure).
+                        sink:
+                          type: string
+                          description: Log sink name (gcp) / diagnostic setting id (azure).
+                    controlPlane:
+                      type: object
+                      properties:
+                        clusterName:
+                          type: string
+                        clusterId:
+                          type: string
+                        endpoint:
+                          type: string
+                          description: API server host, no scheme.
+                        oidcIssuer:
+                          type: string
+                          description: Issuer URL of the cluster's ServiceAccount tokens — what every federated cloud identity trusts.
+                        crossplane:
+                          type: object
+                          properties:
+                            principal:
+                              type: string
+                              description: Service account email (gcp) / identity principal id (azure).
+                            clientId:
+                              type: string
+                              description: What the ProviderConfig names — service account email (gcp) / identity client id (azure).
+              required:
+                - provider
+                - prefix
+                - organization
+                - region
+                - network
+                - environments
+                - keys
+                - controlPlane
+            status:
+              type: object
+              description: The single output contract — Pulumi returns the same shape (provider and foundation; hub and environments are tier 1 and come from this XR).
+              properties:
+                ready:
+                  type: boolean
+                  description: True once the hub and every environment network report ready.
+                provider:
+                  type: string
+                foundation:
+                  type: object
+                  description: spec.foundation as rendered, so one object holds both tiers.
+                  properties:
+                    scopes:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: 'Policy scope by name — root, platform and every environment. gcp: folders/<id>; azure: the management group resource id.'
+                    containers:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: 'Where resources are placed, by name — platform and every environment. gcp: project id; azure: resource group name.'
+                    network:
+                      type: object
+                      properties:
+                        mgmt:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                              description: Network self link (gcp) / VNet resource id (azure).
+                            subnet:
+                              type: string
+                              description: Subnetwork self link (gcp) / subnet resource id (azure).
+                            pods:
+                              type: string
+                              description: Secondary range name (gcp) / pod CIDR (azure).
+                            services:
+                              type: string
+                              description: Secondary range name (gcp) / service CIDR (azure).
+                    keys:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Key reference by spec.keys name — Cloud KMS resource name (gcp) / versionless Key Vault key id (azure).
+                    registry:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        url:
+                          type: string
+                          description: OCI prefix to push and pull, e.g. me-west1-docker.pkg.dev/shl-artifacts/platform or shlplatform.azurecr.io.
+                    audit:
+                      type: object
+                      properties:
+                        archive:
+                          type: string
+                          description: Archive bucket name (gcp) / storage account id (azure).
+                        sink:
+                          type: string
+                          description: Log sink name (gcp) / diagnostic setting id (azure).
+                    controlPlane:
+                      type: object
+                      properties:
+                        clusterName:
+                          type: string
+                        clusterId:
+                          type: string
+                        endpoint:
+                          type: string
+                          description: API server host, no scheme.
+                        oidcIssuer:
+                          type: string
+                          description: Issuer URL of the cluster's ServiceAccount tokens — what every federated cloud identity trusts.
+                        crossplane:
+                          type: object
+                          properties:
+                            principal:
+                              type: string
+                              description: Service account email (gcp) / identity principal id (azure).
+                            clientId:
+                              type: string
+                              description: What the ProviderConfig names — service account email (gcp) / identity client id (azure).
+                hub:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    attachedCount:
+                      type: integer
+                environments:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      ready:
+                        type: boolean
+                      networkId:
+                        type: string
+                      subnetIds:
+                        type: array
+                        items: {type: string}
+                      keyUri:
+                        type: string
+                      clusterName:
+                        type: string
+                      clusterEndpoint:
+                        type: string
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: HUB
+          type: string
+          jsonPath: .status.hub.id

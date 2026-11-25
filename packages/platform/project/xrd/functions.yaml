@@ -1,0 +1,16 @@
+# Functions the Project Composition runs — the same pinned pair every other
+# module uses (see packages/platform/appstack/xrd/functions.yaml for why they
+# are pinned and sourced from ghcr.io).
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-kcl
+spec:
+  package: ghcr.io/crossplane-contrib/function-kcl:v0.12.2
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-auto-ready
+spec:
+  package: ghcr.io/crossplane-contrib/function-auto-ready:v0.7.0

@@ -26,6 +26,19 @@ spec:
                 region:
                   type: string
                   description: Cloud region/location for the Bucket (GCS location / S3 region).
+                providerConfigName:
+                  type: string
+                  pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                  description: |
+                    Cloud account the bucket is created in — and billed to. Names a
+                    namespaced ProviderConfig in this XR's namespace; every composed
+                    managed resource gets providerConfigRef {kind: ProviderConfig,
+                    name: <this>}, so a tenant can only reach the accounts configured
+                    in its own namespace (packages/platform/tenant-account renders
+                    them for client-owned AWS accounts). Unset keeps the provider
+                    default, the ClusterProviderConfig `default` — the platform's own
+                    account. Rejected by the rustfs backend, which always uses its
+                    in-cluster `rustfs` config.
                 storageClass:
                   type: string
                   enum: [standard, nearline, cold, archive]
@@ -180,6 +193,102 @@ spec:
                       type: string
                       description: Azure only — resource group of the storage account being adopted; the account cannot be observed without it. Ignored by the other backends.
                   required: [existingName]
+                access:
+                  type: array
+                  description: |
+                    Keyless access for CI pipelines (git clients) and the ticket
+                    systems that start them, by OIDC federation — no keys.
+                    Each entry is a federation binding (packages/cloud/federation)
+                    plus a role:
+                      GCP   a BucketIAMMember per member of the entry's workload
+                            identity pool (the pool must exist in
+                            federation.gcpProjectNumber, e.g. made by a GcpProject
+                            from the same binding);
+                      AWS   an IAM Role trusting the account's IAM OIDC provider
+                            for the issuer (sub/aud) with an inline S3 policy;
+                      Azure a User Assigned Identity, one federated credential per
+                            subject, and a Storage Blob Data role on the account.
+                    AWS and Azure see only the token's sub and aud: ticket,
+                    workflows and condition need explicit subjects there, and
+                    Azure always needs subjects (exact match). rustfs fails the
+                    render: it has no per-bucket federation.
+                  items:
+                    type: object
+                    x-kubernetes-validations:
+                      - rule: "has(self.client) != has(self.customClient)"
+                        message: exactly one of client or customClient must be set
+                      - rule: "!(has(self.ticket) && has(self.customTicket))"
+                        message: set ticket or customTicket, not both
+                    properties:
+                      role:
+                        type: string
+                        enum: [read, write, admin]
+                        default: read
+                        description: read = get/list objects; write = read + put/delete; admin = full object control (ACLs, retention, tags). Never bucket configuration or IAM.
+                      client:
+                        type: string
+                        description: Built-in git client, a key of packages/cloud/federation/lib.k `clients` (github, github-enterprise, gitlab, bitbucket, azure-devops).
+                      customClient:
+                        type: object
+                        description: Any other OIDC issuer; the fields of federation Client.
+                        required: [id, label, issuer]
+                        properties:
+                          id: {type: string, pattern: '^[a-z][a-z0-9-]*$'}
+                          label: {type: string}
+                          issuer: {type: string, description: 'https:// issuer; "{host}" and "{owner}" are filled from the entry.'}
+                          defaultHost: {type: string}
+                          pool: {type: string}
+                          provider: {type: string}
+                          attributeMapping: {type: object, additionalProperties: {type: string}}
+                          ownerKey: {type: string}
+                          repositoryKey: {type: string}
+                          triggerClaim: {type: string}
+                          workflowKey: {type: string}
+                          audiences: {type: array, items: {type: string}}
+                          cloudAudiences: {type: object, additionalProperties: {type: array, items: {type: string}}}
+                          requireAudiences: {type: boolean}
+                          subjectByOwner: {type: string}
+                          subjectByRepository: {type: string}
+                          multiTenant: {type: boolean}
+                      ticket:
+                        type: string
+                        description: Built-in ticket system, a key of federation `tickets` (jira, clickup, monday, asana, trello, linear, shortcut, youtrack, servicenow, zendesk, azure-boards, github-issues).
+                      customTicket:
+                        type: object
+                        required: [id, label, triggers]
+                        properties:
+                          id: {type: string, pattern: '^[a-z][a-z0-9-]*$'}
+                          label: {type: string}
+                          triggers: {type: object, description: 'Trigger claim (event_name, pipeline_source) -> values.', additionalProperties: {type: array, items: {type: string}}}
+                      pool: {type: string, pattern: '^[a-z0-9-]{4,32}$', description: GCP pool id; defaults to the client's (github-actions-pool) or <ticket>-<client>.}
+                      provider: {type: string, pattern: '^[a-z0-9-]{4,32}$'}
+                      host: {type: string, description: Self-managed instance (GitHub Enterprise Server, GitLab).}
+                      issuerUri: {type: string, description: Replaces the client's issuer.}
+                      owner: {type: string, description: Org / group / workspace / organization id.}
+                      repositories: {type: array, items: {type: string}}
+                      workflows: {type: array, items: {type: string, pattern: '^[^/@]+/[^/@]+/[^@]+(@.+)?$'}, description: '<owner>/<repo>/<path>[@<ref>] (GitHub workflow_ref); GCP only unless encoded in subjects.'}
+                      subjects: {type: array, items: {type: string}, description: Exact token subjects. Required on Azure; on AWS they replace the owner/repository patterns.}
+                      audiences: {type: array, items: {type: string}}
+                      condition: {type: string, description: Extra CEL ANDed into the GCP provider condition; GCP only unless encoded in subjects.}
+                federation:
+                  type: object
+                  description: Where `access` trusts tokens, per cloud. Each backend fails the render when its field is missing while `access` is set, and when another cloud's field is set.
+                  properties:
+                    gcpProjectNumber:
+                      type: string
+                      pattern: '^[0-9]+$'
+                      description: GCP-only — number of the project holding the workload identity pools the access entries name.
+                    awsAccountId:
+                      type: string
+                      pattern: '^[0-9]{12}$'
+                      description: AWS-only — account whose IAM OIDC providers (one per issuer, created outside this XR) the roles trust.
+                    awsPermissionsBoundary:
+                      type: string
+                      pattern: '^arn:aws[a-z-]*:iam::[0-9]{12}:policy/.+$'
+                      description: AWS-only — managed policy ARN set as the permissionsBoundary of every access role. Required by an account whose provisioner role may only create boundary-capped roles (a client account from packages/platform/tenant-account with accessRoles); optional otherwise.
+                    azureResourceGroup:
+                      type: string
+                      description: Azure-only — Resource Group for the access identities; defaults to import.resourceGroup.
               required:
                 - region
             status:
@@ -221,6 +330,18 @@ spec:
                 id:
                   type: string
                   description: Provider-assigned resource id.
+                access:
+                  type: array
+                  description: What each access entry became — the principal a pipeline authenticates as.
+                  items:
+                    type: object
+                    properties:
+                      name: {type: string, description: Entry name (its pool id, plus provider id when set).}
+                      role: {type: string}
+                      members: {type: array, items: {type: string}, description: GCP IAM members granted.}
+                      roleArn: {type: string, description: AWS role to assume (aws-actions/configure-aws-credentials role-to-assume).}
+                      clientId: {type: string, description: Azure identity client id (azure/login client-id).}
+                      tenantId: {type: string, description: Azure tenant id.}
       additionalPrinterColumns:
         - name: READY
           type: boolean

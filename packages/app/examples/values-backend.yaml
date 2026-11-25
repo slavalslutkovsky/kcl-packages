@@ -9,7 +9,7 @@
 # `catalog:` (the Backstage entities, rendered on their own — see the bottom).
 #
 # Renders, in apply order: ServiceAccount, Deployment, Service,
-# PodDisruptionBudget, HPA, ServiceMonitor, PrometheusRule, dashboard
+# PodDisruptionBudget, ScaledObject, ServiceMonitor, PrometheusRule, dashboard
 # ConfigMap, then the ConfigMap and ExternalSecret.
 
 workload:
@@ -63,7 +63,8 @@ workload:
     - name: REDIS_PASSWORD
       secretName: redis-redis-account-default
       secretKey: password
-  hpa:
+  # → KEDA ScaledObject on cpu / memory utilization; KEDA owns the HPA behind it.
+  scaler:
     minReplicas: 2
     maxReplicas: 10
     cpu: 70
@@ -118,7 +119,7 @@ externalSecret:
 # a Location). `spec.type` defaults to service, `spec.system` to the workload's
 # `partOf`, and the Component is annotated `backstage.io/kubernetes-id: zerg-api`
 # — the label every object above carries, so the portal's Kubernetes tab shows
-# this release's Deployment, Service, HPA and chaos experiments.
+# this release's Deployment, Service, ScaledObject and chaos experiments.
 catalog:
   owner: team-zerg                 # required: Backstage rejects an ownerless entity
   description: "Zerg's public HTTP API."

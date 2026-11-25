@@ -1,0 +1,28 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: Network
+metadata:
+  namespace: default
+  name: mgmt
+spec:
+  # The infra `mgmt` host network as an XR: a GKE-ready address plan with
+  # named subnets and secondary ranges instead of one subnetwork over cidr.
+  region: me-west1                 # default region for subnets that name none
+  cidr: 10.10.0.0/16               # with subnets set, the address block every subnet range must lie inside
+  subnets:
+    - name: mgmt-me-west1          # GCP subnetwork name (the default is <xr-name>-<region>)
+      region: me-west1
+      cidr: 10.10.0.0/24           # primary range: nodes and VMs
+      secondaryRanges:             # GKE ipAllocationPolicy picks these up by name
+        pods: 10.10.32.0/19
+        services: 10.10.16.0/22
+      flowLogSampling: 0           # 0 = flow logs explicitly off; omit to leave them untouched
+  natGateway: true                 # one Cloud Router + Cloud NAT per subnet region, covering secondary ranges too
+  privateGoogleAccess: true        # default for each subnet's privateIpGoogleAccess
+  serviceRange: 10.10.128.0/20     # VPC_PEERING GlobalAddress for Cloud SQL / Memorystore private IPs
+  servicePeering: true             # also compose the servicenetworking Connection that peers serviceRange
+  allowInternalIngress: true       # ingress Firewall allowing all protocols from every primary and secondary range
+  deletionPolicy: Orphan           # keep the network if the XR goes away
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp

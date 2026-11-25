@@ -1,9 +1,15 @@
 """Forgejo backend: the in-cluster registry that serves every format.
 
-Forgejo's package registry speaks npm, PyPI, Maven, Go, Cargo, NuGet, generic
-and OCI from one deployment, under `/api/packages/<owner>/<format>`. The chart
-pin and the Service-name contract are the ones packages/cloud/forge/forgejo
-already uses, so both capabilities install the same forge.
+Forgejo's package registry speaks npm, PyPI, Maven, Go, Cargo, NuGet, generic,
+RubyGems, Composer, Conan, Swift, Helm and OCI from one deployment, under
+`/api/packages/<owner>/<format>` (https://forgejo.org/docs/latest/user/packages/).
+The chart pin and the Service-name contract are the ones packages/cloud/forge/
+forgejo already uses, so both capabilities install the same forge.
+
+`helm` is Forgejo's native Helm chart repository (`helm repo add`, publish with
+`helm cm-push` or an HTTP POST to `<endpoint>/api/charts`), not the container
+registry: it is the package type Forgejo lists and manages as Helm. Charts can
+still be pushed to the `oci` endpoint as OCI artifacts.
 
 The Release is typed against function/models/helm; the chart VALUES are not —
 `spec.forProvider.values` is x-kubernetes-preserve-unknown-fields, because a
@@ -122,7 +128,8 @@ def endpoint(spec: Spec, fmt: str) -> str:
 
     Each is the string the matching client is configured with: a docker
     host/path for OCI, a registry URL for npm, a sparse index for cargo, the
-    service index for NuGet.
+    service index for NuGet, the `gem push --host` / Composer / Conan remote /
+    Swift registry URL, and the `helm repo add` URL for Helm.
     """
     host = service_host(spec)
     api = f"http://{host}/api/packages/{spec.owner}"
@@ -134,6 +141,11 @@ def endpoint(spec: Spec, fmt: str) -> str:
         "go": f"{api}/go",
         "cargo": f"sparse+http://{host}/api/packages/{spec.owner}/cargo/",
         "nuget": f"{api}/nuget/index.json",
+        "rubygems": f"{api}/rubygems",
+        "composer": f"{api}/composer",
+        "conan": f"{api}/conan",
+        "swift": f"{api}/swift",
+        "helm": f"{api}/helm",
         "generic": f"{api}/generic",
     }[fmt]
 

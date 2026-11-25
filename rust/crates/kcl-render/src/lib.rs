@@ -30,7 +30,11 @@ use serde_json::Value;
 /// Parse a YAML *or* JSON document (YAML is a superset, so one parser does
 /// both) into a JSON value. Used for `--oxr`, `--params-file` and friends.
 pub fn parse_document(text: &str) -> Result<Value> {
-    serde_yaml_ng::from_str(text).context("input is neither valid YAML nor JSON")
+    // Strict booleans: `yes`/`on`/`y` stay strings, as YAML 1.2 (and the
+    // previous parser) read them. No snippet: the error is one line and does
+    // not echo the input (which may hold secrets) into logs.
+    let options = serde_saphyr::options! { strict_booleans: true, with_snippet: false };
+    serde_saphyr::from_str_with_options(text, options).context("input is neither valid YAML nor JSON")
 }
 
 /// Serialise as a YAML document stream: one `---`-separated document per item,
@@ -39,7 +43,7 @@ pub fn to_yaml_stream(items: &[Value]) -> Result<String> {
     let mut out = String::new();
     for item in items {
         out.push_str("---\n");
-        out.push_str(&serde_yaml_ng::to_string(item)?);
+        out.push_str(&serde_saphyr::to_string(item)?);
     }
     Ok(out)
 }

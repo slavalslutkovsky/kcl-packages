@@ -1,0 +1,69 @@
+# Local manager cluster → local_platform.Platform. One file, two renders:
+#   kcl run packages/local-platform -D values=<this file> -D output=kind -q | kind create cluster --config -
+#   kcl run packages/local-platform -D values=<this file> -q | kubectl apply -f -
+# Overlays next to this file: `-D env=argocd` (Argo CD instead of Flux),
+# `-D env=workload` (the same platform on a workload cluster).
+#
+# The engine must already run on the cluster: `flux install` for Flux,
+# `helm install argocd argo/argo-cd -n argocd --create-namespace` for Argo CD.
+# The postgres Cluster is an instance of a CRD the cloudnative-pg chart
+# installs: with Flux, apply the render a second time once
+# `flux get helmreleases -n flux-system` shows cloudnative-pg Ready.
+
+name: local
+engine: flux
+role: manager
+
+# → cluster.kind.Cluster. dbWorkers adds a worker tainted
+# dedicated=database:NoSchedule; the postgres Cluster below is pinned to it.
+cluster:
+  name: platform-local
+  workers: 1
+  dbWorkers: 1
+  ingress: false
+
+# → manager.Manager.bundles. `platform` = crossplane + backstage (manager
+# type, manager clusters only) and cert-manager (application type).
+bundles: [platform]
+
+# → manager.Manager.dependencies, the same row shape as packages/manager.
+# An explicit row replaces a bundle row or a generated app of the same name.
+dependencies:
+  - name: keda
+    type: application
+    repo: https://kedacore.github.io/charts
+    version: 2.17.2
+    namespace: keda
+  # Replaces the platform bundle's crossplane row: a pinned older version.
+  - name: crossplane
+    type: manager
+    repo: https://charts.crossplane.io/stable
+    version: 2.3.4
+    namespace: crossplane-system
+
+# Values-only app: generated Kind-safe defaults, then `values` deep-merged over
+# them. `args` is a list, so it replaces the generated one wholesale.
+metricsServer:
+  replicas: 1
+  values:
+    args: [--kubelet-insecure-tls, --metric-resolution=30s]
+    resources:
+      requests:
+        memory: 100Mi            # cpu: 50m stays from the generated defaults
+
+# App with platform resources: the operator chart plus the platform database.
+postgres:
+  values:
+    monitoring:
+      podMonitorEnabled: false
+  database:
+    name: platform-db
+    namespace: platform
+    instances: 1
+    storage: 2Gi
+    # Raw Cluster.spec, merged over the generated one and validated against
+    # the CNPG CRD schema.
+    spec:
+      postgresql:
+        parameters:
+          max_connections: "200"

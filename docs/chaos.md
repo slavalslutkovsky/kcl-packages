@@ -47,7 +47,52 @@ packages/app -D values=packages/app/examples/values-chaos.yaml` renders it.
 | operator | status | why |
 |---|---|---|
 | **Chaos Mesh** v2.8.4 | **used** — `devkit.toml` `[[deps]]` `chaos-mesh` (helm chart 2.8.4, namespace `chaos-mesh`, wave 0); schemas in `packages/providers/chaos-mesh` generated from `chaos-mesh/chaos-mesh@v2.8.4` | Each experiment is one self-contained CR: a kind, a selector, a duration. Nothing to install per fault type, nothing to grant per namespace. |
-| **Litmus** 3.31.0 | **not used, not installed** | A Litmus fault needs a `ChaosExperiment` installed from the ChaosHub per fault type, plus a chaos ServiceAccount/Role/RoleBinding per target namespace, before a `ChaosEngine` can run. That is three objects of setup and a hub dependency where Chaos Mesh needs none. Its CRDs (`ChaosEngine`, `ChaosExperiment`, `ChaosResult`) are listed as unused in `packages/providers/crds.yaml` so the decision is on record. |
+| **Litmus** 3.31.0 | **used** — `provider: litmus` on a Fault (app, manager experiments) and platform-api's XChaosExperiment; operator from the litmus-core chart 3.31.1 in `litmus` (gitops, mgmt); schemas in `packages/providers/litmus` generated from that chart's CRDs; ChaosExperiment definitions from chaos-charts 3.31.0 in `packages/app/litmus_hub.k` (`just litmus-hub`) | The comparison provider. A fault is seven objects — runner ServiceAccount + Role + RoleBinding, ChaosExperiment and ChaosEngine in `litmus`, Role + RoleBinding in the target namespace — and runs once. Fewer fault types and coarser knobs than Chaos Mesh (see [Litmus](#litmus)). |
+
+## Litmus
+
+| `type` | Chaos Mesh kind | Litmus experiment (chaos-charts 3.31.0) | env the engine sets |
+|---|---|---|---|
+| `pod-kill` | PodChaos | `pod-delete` | `FORCE=true`, `TOTAL_CHAOS_DURATION=1`, `CHAOS_INTERVAL=1` (one kill) |
+| `pod-failure` | PodChaos | — | |
+| `container-kill` | PodChaos | `container-kill` | `TARGET_CONTAINER`, one kill |
+| `delay` | NetworkChaos | `pod-network-latency` | `NETWORK_LATENCY`/`JITTER` (ms), `CORRELATION`, `DESTINATION_IPS`/`_HOSTS` |
+| `loss` / `corrupt` / `duplicate` | NetworkChaos | `pod-network-loss` / `-corruption` / `-duplication` | `NETWORK_PACKET_*_PERCENTAGE`, `CORRELATION`, destinations |
+| `bandwidth` | NetworkChaos | `pod-network-rate-limit` | `NETWORK_BANDWIDTH`=`rate`, `BURST`=`buffer`, `LIMIT`=`limit` (same tc tbf args) |
+| `partition` | NetworkChaos | `pod-network-partition` | `POLICY_TYPES` egress/ingress/all from `direction`; needs `mode: all` |
+| `cpu` / `memory` | StressChaos | `pod-cpu-hog` / `pod-memory-hog` | `CPU_CORES`=`workers`, `CPU_LOAD`=`load` / `MEMORY_CONSUMPTION` (MB), `NUMBER_OF_WORKERS` |
+| `http-delay` / `http-abort` | HTTPChaos | `pod-http-latency` / `pod-http-reset-peer` | `LATENCY` (ms) / `RESET_TIMEOUT=0`, `TARGET_SERVICE_PORT`=`port` |
+| `io-latency` / `io-fault` | IOChaos | — | |
+| `dns-error` | DNSChaos | `pod-dns-error` | `TARGET_HOSTNAMES` (JSON), `MATCH_SCHEME` exact, or substring for a leading/trailing `*` |
+| `dns-random` | DNSChaos | — | |
+| `time-skew` | TimeChaos | — | |
+
+Every engine also gets `TOTAL_CHAOS_DURATION` (whole seconds from
+`duration`) and `PODS_AFFECTED_PERC` (`all` → 100, `fixed-percent` → `value`,
+`one` → unset = one pod).
+
+What Litmus cannot do, rejected by the `Fault` schema with a message rather
+than approximated: pause a pod's containers (`pod-failure`), syscall-level IO
+faults (`io-*`; `pod-io-stress` only loads the disk), random DNS answers
+(`dns-random`; `pod-dns-spoof` maps named hosts), clock skew (`time-skew`), a
+cron (`schedule`: a ChaosEngine runs once, recurrence is ChaosCenter's),
+pod counts (`fixed`, `random-max-percent`), sub-second or fractional
+durations/latencies, a memory size as a percent, HTTP path/method matching
+(toxiproxy acts on the whole connection; `httpTarget` is ignored), wildcards
+inside a DNS pattern, more than one target label (Litmus ORs them), and a
+partition of fewer than all labelled pods (it is a NetworkPolicy). In
+`manager`, a Litmus experiment targets one namespace and one label with no
+node/phase narrowing, and Workflow steps are Chaos Mesh only (Litmus
+scenarios are Argo Workflows ChaosCenter owns).
+
+Where it runs: the runner, the experiment Job and the privileged go-runner
+helper (network/stress/http/dns faults) all run in `litmus`, which the gitops
+Kyverno PolicyException admits for go-runner images only; the target
+namespace gets only a Role + RoleBinding (pod get/list and owner lookup, pod
+delete for `pod-kill`, NetworkPolicies for `partition`). `engineState` is
+never rendered: the operator flips it to `stop` on completion, and an applier
+re-asserting `active` would restart the run. A partition needs a CNI that
+enforces NetworkPolicy.
 
 Chaos Mesh on Kind: the chart is installed with
 `chaosDaemon.runtime=containerd` and

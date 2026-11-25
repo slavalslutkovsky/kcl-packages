@@ -1,0 +1,35 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: InstanceTemplate
+metadata:
+  namespace: default
+  name: build-agents
+spec:
+  region: us-central1
+  zone: us-central1-b                # default zone for the instances; defaults to <region>-a
+  size: medium                       # -> e2-standard-2
+  image: ubuntu-24-04                # -> ubuntu-os-cloud ubuntu-2404-lts-amd64 family
+  diskGb: 50
+  spot: true                         # provisioningModel=SPOT
+  network:
+    subnetId: projects/my-project/regions/us-central1/subnetworks/default
+    publicIp: true                   # adds an accessConfig
+  sshKey:                            # -> template metadata ssh-keys
+    user: dev
+    publicKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample build-agents
+  userData: |
+    #!/bin/sh
+    echo hello > /etc/motd
+  deletionPolicy: Delete
+  tags:
+    team: platform
+  instances:                         # each -> an InstanceFromTemplate
+    - name: a
+    - name: b
+      zone: us-central1-c            # per-instance zone override
+      userData: |
+        #!/bin/sh
+        echo canary > /etc/motd
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp                # the flag: picks the backend (aws | gcp | azure | kubevirt)

@@ -181,7 +181,7 @@ pub fn operator(args: OperatorArgs, engine: Arc<Engine>) -> Result<()> {
         // No cluster, no runtime: printing the schema must work before the
         // CRD it describes is installed.
         OperatorCommand::Crd => {
-            print!("{}", serde_yaml_ng::to_string(&KclModule::crd())?);
+            print!("{}", serde_saphyr::to_string(&KclModule::crd())?);
             Ok(())
         }
         OperatorCommand::Run(run) => {
@@ -358,7 +358,7 @@ fn one_line(message: &str) -> String {
 fn print_object<T: Serialize>(value: &T, format: &str) -> Result<()> {
     let text = match format {
         "json" => serde_json::to_string_pretty(value)?,
-        _ => serde_yaml_ng::to_string(value)?,
+        _ => serde_saphyr::to_string(value)?,
     };
     println!("{}", text.trim_end());
     Ok(())

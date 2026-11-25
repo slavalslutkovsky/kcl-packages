@@ -46,12 +46,20 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 | `destination.bucket`, `destination.prefix` | `objectStorage.bucket`, `objectStorage.prefix` |
 | `destination.region` | `config.region` on both locations |
 | `destination.s3Url` | `config.s3Url` plus `config.s3ForcePathStyle: "true"`, storage location only |
+| `destination.storageAccount`, `destination.resourceGroup` | `config.storageAccount`, `config.resourceGroup` on the storage location — both required with provider `azure` |
 | `destination.credentialsSecret` | `spec.credential` on both locations; `key` defaults to `cloud` |
+
+`destination` is required here even though the XRD no longer requires it (the
+aws and gcp backends write to their own vaults): a velero plan without one, or
+an `azure` destination without its storage account and resource group, fails
+the render rather than composing a location that can never be reached.
 
 `deletionPolicy` is ignored: there are no managed resources to set
 `managementPolicies` on. The Schedule and locations go with the XR; the
 backups already in the bucket outlive it either way. The bucket itself is not
-created here — compose a `Bucket` XR for it.
+created here — compose a `Bucket` XR for it. `cluster` and
+`encryptionKmsKeyId` are ignored: Velero backs up the cluster its server runs
+in, and the bucket's own encryption applies.
 
 Status written back to the XR:
 

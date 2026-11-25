@@ -78,6 +78,9 @@ spec:
                 resourceGroup:
                   type: string
                   description: Azure-only — the Resource Group the cluster lives in. Required by the azure backend.
+                fleetProject:
+                  type: string
+                  description: GCP-only — the fleet host project id the GKE cluster registers to. Required by the gcp backend; the other backends ignore it (as gcp ignores resourceGroup).
                 kubeconfigSecret:
                   type: string
                   description: On-prem only — name of a Secret in this namespace holding a kubeconfig for the EXISTING cluster under the key `kubeconfig` (the same key the cloud backends publish theirs under, see status.kubeconfigSecret). Required by the onprem backend; the cloud backends reject it.

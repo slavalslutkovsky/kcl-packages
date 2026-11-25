@@ -6,5 +6,6 @@ _params = option("params") or {oxr = _example, ocds = {}}
 _oxr = _params.oxr
 _ocds = _params?.ocds or {}
 
-# Managed resources + the desired composite carrying observed status back to the XR.
-items = bucket.render(_oxr) + [bucket.status(_oxr, _ocds)]
+# Managed resources (bucket, then access grants) + the desired composite
+# carrying observed status back to the XR.
+items = bucket.render(_oxr) + bucket.render_access(_oxr, _ocds) + [bucket.status(_oxr, _ocds)]

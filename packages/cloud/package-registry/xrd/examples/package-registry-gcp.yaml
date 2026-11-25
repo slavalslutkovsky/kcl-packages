@@ -19,8 +19,9 @@ spec:
   deletionPolicy: Delete         # Delete | Orphan — Orphan keeps the repositories
   tags:                          # rendered as Artifact Registry labels
     team: platform
-  # `cargo` and `nuget` are not Artifact Registry formats — use the aws or
-  # forgejo backend for those.
+  # Also served here: go, generic, rubygems (the Preview RUBY format) and helm
+  # (a second DOCKER repository, my-packages-helm). `cargo`, `nuget`,
+  # `composer`, `conan` and `swift` are not Artifact Registry formats.
   crossplane:
     compositionSelector:
       matchLabels:

@@ -99,7 +99,7 @@ schema Cncf:
     # node, or k3d's LoadBalancer through the serverlb. openshift → OpenShift
     # Local (CRC); the router already serves 80/443, so ingress-nginx is not
     # rendered and the wildcard becomes the router's default certificate.
-    runner: "kind" | "k3d" | "openshift"
+    runner: "kind" | "k3d" | "openshift" | "tanos"
     # the dev domain the wildcard certificate covers; *.localtest.me → 127.0.0.1
     domain: str = "localtest.me"
     # where the HelmRepository / HelmRelease objects live
@@ -174,8 +174,9 @@ _ingressDependency = lambda c: Cncf -> manager.Dependency {
 # crds.enabled: the chart skips its CRDs by default and its startupapicheck job
 # then fails (same note as packages/manager/examples/values.yaml).
 _certsDependency = lambda c: Cncf -> manager.Dependency {
+#  c.
     manager.Dependency {
-        name = "cert-manager"
+        name = "cert-manager" #c.name #"cert-manager"
         $type = "application"
         repo = "https://charts.jetstack.io"
         version = c.certs.version

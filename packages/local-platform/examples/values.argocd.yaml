@@ -1,0 +1,8 @@
+# Overlay for values.yaml: Argo CD instead of Flux.
+#   kcl run packages/local-platform -D values=packages/local-platform/examples/values.yaml -D env=argocd -q
+# Same charts, now one Application each (sync waves from dependsOn), plus a
+# repository Secret per OCI registry. The postgres Cluster syncs one wave
+# after cloudnative-pg.
+engine: argocd
+argocd:
+  project: default

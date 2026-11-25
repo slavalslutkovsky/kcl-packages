@@ -8,10 +8,13 @@ spec:
   # namespace by provider-helm. `region` stays required by the XRD, so give it
   # something honest.
   region: in-cluster
-  # zot is an OCI registry and nothing else. For an in-cluster registry that
-  # also serves npm/pypi/cargo/…, use the forgejo backend.
+  # zot is an OCI registry and nothing else: images, plus Helm charts as OCI
+  # artifacts (helm push --plain-http <chart>.tgz oci://<host>:5000/<name>/charts).
+  # For an in-cluster registry that also serves npm/pypi/cargo/…, use the
+  # forgejo backend.
   formats:
     - oci
+    - helm
   storageGb: 50                  # self-hosted only: PVC the images live on
   scanOnPush: true               # enables zot's CVE search extension
   untaggedRetentionDays: 14      # storage.retention: delete untagged images after 14 days

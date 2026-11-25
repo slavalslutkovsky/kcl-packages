@@ -16,12 +16,12 @@ flowchart TB
   crossplane(["crossplane 2.3.4"])
   pgbouncer(["pgbouncer 4.1.9"])
   openebs(["openebs 4.6"])
-  vcluster(["vcluster 0.37.0-rc.3"])
   external_secrets(["external-secrets 2.9.0"])
   kubeblocks_crds["kubeblocks-crds"]
   flagger(["flagger 1.44.0"])
   chaos_mesh(["chaos-mesh 2.8.4"])
   flux2(["flux2 2.19.0"])
+  dam["dam"]
   kubeblocks(["kubeblocks 1.2.0-alpha.3"])
   gateway_api_crds["gateway-api-crds"]
   entitlement_crd["entitlement-crd"]
@@ -32,6 +32,7 @@ flowchart TB
   landing_xrd["landing-xrd"]
   hubspoke_xrd["hubspoke-xrd"]
   organization_xrd["organization-xrd"]
+  mgmt_xrd["mgmt-xrd"]
   component_xrd["component-xrd"]
   application_xrd["application-xrd"]
   entitlement_records[["entitlement-records (dir)"]]
@@ -42,6 +43,7 @@ flowchart TB
   landing_providers["landing-providers"]
   hubspoke_providers["hubspoke-providers"]
   organization_providers["organization-providers"]
+  mgmt_providers["mgmt-providers"]
   component_providers["component-providers"]
   application_providers["application-providers"]
   forge_providers["forge-providers"]
@@ -66,6 +68,7 @@ flowchart TB
   organization_composition_gcp["organization-composition-gcp"]
   organization_composition_aws["organization-composition-aws"]
   organization_composition_azure["organization-composition-azure"]
+  mgmt_composition_gcp["mgmt-composition-gcp"]
   component_composition_flux["component-composition-flux"]
   application_composition_k8s["application-composition-k8s"]
   forge_providerconfigs["forge-providerconfigs"]
@@ -76,6 +79,7 @@ flowchart TB
   landing_examples[["landing-examples (dir)"]]
   hubspoke_examples[["hubspoke-examples (dir)"]]
   organization_examples[["organization-examples (dir)"]]
+  mgmt_examples[["mgmt-examples (dir)"]]
   component_examples[["component-examples (dir)"]]
   application_examples[["application-examples (dir)"]]
   forge_examples[["forge-examples (dir)"]]
@@ -86,12 +90,12 @@ flowchart TB
   crossplane --> wave1
   pgbouncer --> wave1
   openebs --> wave1
-  vcluster --> wave1
   external_secrets --> wave1
   kubeblocks_crds --> wave1
   flagger --> wave1
   chaos_mesh --> wave1
   flux2 --> wave1
+  dam --> wave1
   wave1 --> kubeblocks
   wave1 --> gateway_api_crds
   wave1 --> entitlement_crd
@@ -107,6 +111,7 @@ flowchart TB
   wave2 --> landing_xrd
   wave2 --> hubspoke_xrd
   wave2 --> organization_xrd
+  wave2 --> mgmt_xrd
   wave2 --> component_xrd
   wave2 --> application_xrd
   wave2 --> entitlement_records
@@ -119,6 +124,7 @@ flowchart TB
   landing_xrd --> wave3
   hubspoke_xrd --> wave3
   organization_xrd --> wave3
+  mgmt_xrd --> wave3
   component_xrd --> wave3
   application_xrd --> wave3
   entitlement_records --> wave3
@@ -129,6 +135,7 @@ flowchart TB
   wave3 --> landing_providers
   wave3 --> hubspoke_providers
   wave3 --> organization_providers
+  wave3 --> mgmt_providers
   wave3 --> component_providers
   wave3 --> application_providers
   wave3 --> forge_providers
@@ -139,6 +146,7 @@ flowchart TB
   landing_providers --> wave4
   hubspoke_providers --> wave4
   organization_providers --> wave4
+  mgmt_providers --> wave4
   component_providers --> wave4
   application_providers --> wave4
   forge_providers --> wave4
@@ -163,6 +171,7 @@ flowchart TB
   wave4 --> organization_composition_gcp
   wave4 --> organization_composition_aws
   wave4 --> organization_composition_azure
+  wave4 --> mgmt_composition_gcp
   wave4 --> component_composition_flux
   wave4 --> application_composition_k8s
   wave4 --> forge_providerconfigs
@@ -189,6 +198,7 @@ flowchart TB
   organization_composition_gcp --> wave5
   organization_composition_aws --> wave5
   organization_composition_azure --> wave5
+  mgmt_composition_gcp --> wave5
   component_composition_flux --> wave5
   application_composition_k8s --> wave5
   forge_providerconfigs --> wave5
@@ -199,6 +209,7 @@ flowchart TB
   wave5 --> landing_examples
   wave5 --> hubspoke_examples
   wave5 --> organization_examples
+  wave5 --> mgmt_examples
   wave5 --> component_examples
   wave5 --> application_examples
   wave5 --> forge_examples
@@ -211,18 +222,18 @@ flowchart TB
   classDef mod_landing fill:#ffedd5,stroke:#64748b
   classDef mod_hubspoke fill:#e0f2fe,stroke:#64748b
   classDef mod_organization fill:#f1f5f9,stroke:#64748b
-  classDef mod_component fill:#fee2e2,stroke:#64748b
-  classDef mod_application fill:#ecfccb,stroke:#64748b
-  classDef mod_entitlement fill:#dbeafe,stroke:#64748b
-  classDef mod_forge fill:#dcfce7,stroke:#64748b
-  classDef mod_repository fill:#fef9c3,stroke:#64748b
+  classDef mod_mgmt fill:#fee2e2,stroke:#64748b
+  classDef mod_component fill:#ecfccb,stroke:#64748b
+  classDef mod_application fill:#dbeafe,stroke:#64748b
+  classDef mod_entitlement fill:#dcfce7,stroke:#64748b
+  classDef mod_forge fill:#fef9c3,stroke:#64748b
+  classDef mod_repository fill:#fce7f3,stroke:#64748b
   classDef overlap stroke:#b3261e,stroke-width:3px
   class n8n mod_chart
   class openbao mod_chart
   class crossplane mod_chart,overlap
   class pgbouncer mod_chart
   class openebs mod_chart
-  class vcluster mod_chart
   class external_secrets mod_chart
   class kubeblocks_crds mod_external
   class kubeblocks mod_chart
@@ -265,6 +276,10 @@ flowchart TB
   class organization_composition_aws mod_organization
   class organization_composition_azure mod_organization
   class organization_examples mod_organization
+  class mgmt_xrd mod_mgmt
+  class mgmt_providers mod_mgmt
+  class mgmt_composition_gcp mod_mgmt
+  class mgmt_examples mod_mgmt
   class component_xrd mod_component
   class component_providers mod_component
   class component_composition_flux mod_component
@@ -286,6 +301,7 @@ flowchart TB
   class repository_providers mod_repository
   class repository_composition_forgejo mod_repository
   class repository_examples mod_repository
+  class dam mod_repository
 ```
 
 ## `manager` — Flux `dependsOn`

@@ -50,6 +50,10 @@ _base = lambda spec: {str:any} -> {str:any} {
 
 _bucket = lambda name: str, spec: {str:any} -> bucket.Bucket {
     _b = spec?.bucket or {}
+    _da = spec._bucket or {
+      name: bucket.CloudExampleOrgV1alpha1BucketSpec
+    }
+    #bucket.CloudExampleOrgV1alpha1BucketSpec
     bucket.Bucket {
         metadata = {
             name = "${name}-bucket"

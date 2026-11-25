@@ -1,0 +1,55 @@
+# A workflow that translates completely with examples/values.yaml.
+name: web
+on:
+  push:
+    branches: [main, 'release/**']
+  pull_request:
+    branches: [main]
+    paths: ['apps/web/**', 'bun.lock']
+env:
+  NODE_ENV: test
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Lint
+        run: bun run lint
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CACHE_URL: ${{ vars.CACHE_URL }}
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        shard: [1, 2]
+    services:
+      redis:
+        image: docker.io/library/redis:7
+        ports: ['6379:6379']
+    steps:
+      - uses: actions/checkout@v4
+      - run: bun install --frozen-lockfile
+      - run: bun test --shard=${{ matrix.shard }}/2
+        working-directory: apps/web
+        env:
+          REDIS_URL: redis://localhost:6379
+      - if: github.event_name == 'push'
+        shell: bash
+        run: echo "pushed ${{ github.sha }} to ${{ github.repository }}" >> "$GITHUB_STEP_SUMMARY"
+  deploy:
+    needs: [lint, test]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "deploying $GITHUB_SHA with ${GHA_TOKEN:+a token}"
+        env:
+          GHA_TOKEN: ${{ secrets.GITHUB_TOKEN }}

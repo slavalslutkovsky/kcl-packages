@@ -1,6 +1,7 @@
 packages:
   - 'packages/*'
   - 'tools/*'
+  - 'apps/console/*'
 
 # pnpm 11 asks for an explicit decision per package that ships install scripts.
 # protobufjs generates its CLI shims; puppeteer downloads the Chromium the bench

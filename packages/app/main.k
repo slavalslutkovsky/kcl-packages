@@ -12,6 +12,9 @@ USAGE (no local main.k / kcl.mod in your app dir — just values files):
 
   # explicit base path (like `helm -f`); overlay becomes <stem>.<env>.yaml:
   kcl run /abs/path/to/packages/app -D values=apps/zerg/api/k8s/values.yaml -D env=dev -q
+
+  # values inline (what the kclx operator does with a KclModule's spec.params):
+  kcl run /abs/path/to/packages/app -D params='{"workload":{"name":"api","image":"…"}}' -q
   # after publish: kcl run oci://docker.io/yurikrupnik/app -D env=prod -q
 
 Values files are `Release`s: a `workload:` (backend/frontend) or `task:` (CLI),
@@ -42,17 +45,25 @@ import manifests
 import yaml
 import file
 
+# `option("params")`: a non-empty dict IS the values (a `Release`). This is how
+# the kclx operator renders a KclModule (spec.params → option("params")), and
+# how `kcl run packages/app -D params='<json>'` works: the caller already holds
+# the final values, so no file is read and no `-D env` overlay applies — the
+# per-env difference lives in whichever KclModule the cluster's gitops carries.
+_params = option("params", default={}) or {}
+_paramsMode = typeof(_params) == "dict" and len(_params) > 0
+
 # `-D values=<path>` (like helm -f), else a values.yaml in the current directory.
-_explicit = option("values", default="")
+_explicit = option("values", default="") if not _paramsMode else ""
 _valuesPath = _explicit or "values.yaml"
-_hasValues = file.exists(_valuesPath)
+_hasValues = not _paramsMode and file.exists(_valuesPath)
 
 # An explicit -D values=<path> that isn't found is a hard error — never silently
 # fall back to the demo (the path is CWD-relative; run from where it resolves).
 assert (not _explicit) or _hasValues, "values file not found: '${_valuesPath}' (relative to current dir ${file.workdir()}). Pass an absolute path or run from the directory that contains it."
 
 # `-D env=<name>` selects an overlay next to the base: <stem>.<env>.yaml.
-_env = option("env", default="")
+_env = option("env", default="") if not _paramsMode else ""
 _overlayPath = _valuesPath[0:len(_valuesPath) - 5:] + ".${_env}.yaml" if _env else ""
 _hasOverlay = _env and file.exists(_overlayPath)
 assert (not _env) or _hasOverlay, "env overlay not found: '${_overlayPath}' for -D env=${_env} (relative to ${file.workdir()})."
@@ -63,10 +74,10 @@ _demoValues = {
     workload.component = "api-server"
     workload.image = "demo/api:latest"
     workload.port = 8080
-    workload.hpa = {minReplicas = 1, maxReplicas = 5}
+    workload.scaler = {minReplicas = 1, maxReplicas = 5, cpu = 70}
     config.PORT = "${workload.port}"
 }
-_baseValues = yaml.decode(file.read(_valuesPath)) if _hasValues else _demoValues
+_baseValues = _params if _paramsMode else yaml.decode(file.read(_valuesPath)) if _hasValues else _demoValues
 _values = lib.mergeValues(_baseValues, yaml.decode(file.read(_overlayPath))) if _hasOverlay else _baseValues
 
 _release: lib.Release = lib.Release {**_values}

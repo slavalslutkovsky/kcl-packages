@@ -46,7 +46,7 @@ check runs again.
 | `Job` (`batch/v1`) | `db-check-<md5[:10]>` | connection set, not provisioned | `backoffLimit = attempts - 1`, `activeDeadlineSeconds = check.deadlineSeconds`; `psql -tAc 'SELECT 1'` with `PGPASSWORD` from `connection.passwordSecret`, else `pg_isready`; uid 70, read-only root, no capabilities; declared ready once terminal |
 | `PostgresInstance` (`cloud.example.org`) | `database` | provisioned | `<name>-db`; `spec = provision.spec` + `region` (`in-cluster` for cnpg), `database`/`username` (connection's), `deletionPolicy` (XR's), `crossplane.compositionSelector.matchLabels.provider = provision.backend` |
 | `ProviderConfig` (`helm.m.crossplane.io`) | `providerconfig` | `kubeconfigSecret` set | Secret key `kubeconfig`; declared ready |
-| `Release` (`helm.m.crossplane.io`) | `engine` | database resolved, or already installed | flux: `flux2` 2.19.0 → `flux-system`, image automation/reflection and notification controllers off; argocd: `argo-cd` 10.9.6 → `argocd`; `spec.values` merged one level over the defaults; `ClusterProviderConfig/default` unless `kubeconfigSecret`; `wait`, `waitTimeout: 10m` |
+| `Release` (`helm.m.crossplane.io`) | `engine` | database resolved, or already installed | flux: `flux2` 2.20.0 → `flux-system`, image automation/reflection and notification controllers on; argocd: `argo-cd` 10.9.6 → `argocd`; `spec.values` merged one level over the defaults; `ClusterProviderConfig/default` unless `kubeconfigSecret`; `wait`, `waitTimeout: 10m` |
 
 The Job key hashes every pod-template input (connection + check fields): a pod
 template is immutable, so a changed connection becomes a new Job instead of a

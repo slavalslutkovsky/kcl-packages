@@ -21,8 +21,10 @@ spec:
     team: platform
     cost-center: "42"
   # Ignored by the CodeArtifact half: immutableTags, scanOnPush, publicAccess,
-  # untaggedRetentionDays and keepLastImages are ECR-only. `go` is not
-  # available on this backend at all — use gcp or forgejo for a Go proxy.
+  # untaggedRetentionDays and keepLastImages are ECR-only. `go`, `composer`
+  # and `conan` are not available on this backend at all, and `helm`
+  # cannot be combined with encryptionKeyId here — see
+  # package-registry-aws-helm.yaml.
   crossplane:
     compositionSelector:
       matchLabels:

@@ -1,0 +1,126 @@
+# A client's shop on AWS: every app kind, every capability, all native
+# backends (RDS, ElastiCache, SQS, S3, ECR) plus IRSA identities.
+apiVersion: platform.example.org/v1alpha1
+kind: Project
+metadata:
+  namespace: acme-shop            # the client's tenant namespace; everything lands here
+  name: shop
+spec:
+  client: acme
+  environment: dev
+  cloud:
+    provider: aws                 # every child below resolves to its aws Composition
+    region: eu-west-1
+    # IRSA: the EKS cluster's IAM OIDC provider, trusted by every app identity.
+    oidcIssuer: arn:aws:iam::123456789012:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE1234567890
+    tags:
+      cost-center: "4711"
+  databases:
+    - name: orders-db
+      spec:
+        engineVersion: "16"
+        memoryGb: 4
+        storageGb: 50
+        deletionPolicy: Orphan    # the data outlives the project
+        network:                  # placement comes from the landing zone, not from here
+          subnetGroupName: acme-db-subnets
+          securityGroupIds: [sg-0123456789abcdef0]
+  caches:
+    - name: sessions
+      spec:
+        memoryGb: 1
+        network:
+          subnetGroupName: acme-cache-subnets
+          securityGroupIds: [sg-0123456789abcdef0]
+  queues:
+    - name: orders
+      spec:
+        deadLetter:
+          enabled: true
+          maxReceives: 5
+  buckets:
+    - name: acme-shop-assets
+      spec:
+        versioning: true
+  registries:
+    - name: acme-shop
+  apps:
+    # Static frontend behind the shared gateway.
+    - name: web
+      kind: ui
+      image: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/acme-shop/web:1.4.0
+      route:
+        hosts: [shop.acme.example.com]
+        gateway: {name: platform, namespace: gateway-system}
+    # Public API: database + cache coordinates as ORDERS_DB_* / SESSIONS_*.
+    - name: api
+      kind: api
+      image: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/acme-shop/api:2.1.0
+      uses: [orders-db, sessions, acme-shop-assets]
+      identity:
+        accessPolicies:
+          - role: AmazonS3ReadOnlyAccess
+      config:
+        LOG_LEVEL: info
+      secrets:
+        items:
+          - secretKey: JWT_SECRET
+            key: acme/shop/api
+            property: jwt_secret
+      route:
+        hosts: [shop.acme.example.com]
+        path: /api
+        gateway: {name: platform, namespace: gateway-system}
+      overrides:
+        readinessProbe: {type: http, path: /ready, port: http}
+        scaler: {minReplicas: 2, maxReplicas: 10, cpu: 70}
+    # Nightly report: a CronJob with the database wired in.
+    - name: report
+      kind: cli
+      image: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/acme-shop/api:2.1.0
+      command: [/app/report]
+      schedule: "0 2 * * *"
+      uses: [orders-db]
+    # Reconciles the client's own CRDs (installed by the platform) in this namespace.
+    - name: fulfilment-operator
+      kind: operator
+      image: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/acme-shop/operator:0.3.0
+      rules:
+        - apiGroups: [shop.acme.example.com]
+          resources: [fulfilments, fulfilments/status]
+          verbs: [get, list, watch, update, patch]
+    # Dapr service: invoked through its sidecar, publishes to the orders queue.
+    - name: checkout
+      kind: dapr-server
+      image: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/acme-shop/checkout:1.0.0
+      port: 50051
+      dapr: {protocol: grpc}
+      uses: [orders]
+      identity:
+        accessPolicies:
+          - role: AmazonSQSFullAccess
+    # Dapr worker: only calls its sidecar (subscriptions, invocations).
+    - name: notifier
+      kind: dapr-client
+      image: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/acme-shop/notifier:1.0.0
+      identity:
+        accessPolicies:
+          - role: AmazonSQSFullAccess
+  dapr:
+    components:
+      - name: orders-pubsub
+        type: pubsub.aws.snssqs
+        scopes: [checkout, notifier]
+        metadata:
+          - name: region
+            value: eu-west-1
+      - name: session-store
+        type: state.redis
+        scopes: [checkout]
+        metadata:
+          - name: redisHost
+            fromResource: {name: sessions, field: endpoint}
+          - name: redisPassword
+            fromResource: {name: sessions, field: password}
+          - name: enableTLS
+            value: "true"

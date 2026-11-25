@@ -1,3 +1,4 @@
+import runtime
 import .backup
 
 # ---- helpers ----------------------------------------------------------------
@@ -79,6 +80,34 @@ test_storage_location_credentials = lambda {
         credentialsSecret = {name = "rustfs-creds", key = "aws"}
     }})["storage-location"]
     assert _keyed.spec.credential.key == "aws", "an explicit key must win"
+}
+
+_err = lambda f -> str {
+    runtime.catch(f) or ""
+}
+
+# The XRD stopped requiring destination when the cloud backends arrived, so
+# the velero backend has to refuse a plan with nowhere to write itself.
+test_destination_required = lambda {
+    _msg = _err(lambda {
+        backup.render(_build({schedule = "0 2 * * *"}))
+    })
+    assert "spec.destination is required" in _msg, "a velero plan without a bucket must fail the render, got: ${_msg}"
+}
+
+# Velero's azure plugin addresses a container through its storage account.
+test_storage_location_azure = lambda {
+    _bsl = _by_name({schedule = "0 2 * * *", destination = {
+        provider = "azure"
+        bucket = "velero"
+        storageAccount = "acmebackups"
+        resourceGroup = "backups-rg"
+    }})["storage-location"]
+    assert _bsl.spec.config == {storageAccount = "acmebackups", resourceGroup = "backups-rg"}, "the azure plugin reads storageAccount and resourceGroup from config"
+    _msg = _err(lambda {
+        backup.render(_build({schedule = "0 2 * * *", destination = {provider = "azure", bucket = "velero"}}))
+    })
+    assert "storageAccount and destination.resourceGroup are required" in _msg, "azure without its account must fail, got: ${_msg}"
 }
 
 # ---- render: snapshot location ----------------------------------------------

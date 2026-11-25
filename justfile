@@ -69,6 +69,11 @@ gets:
 #                                       Namespace per team. Split a render by
 #                                       layer with
 #                                       `kubectl apply -l platform.example.org/layer=platform`
+#   just platform-addons [params.yaml]  the addons a client's repos need
+#                                       (packages/platform-addons): the plan
+#                                       the ClientPlatform controller renders,
+#                                       Flux or Argo CD install objects plus
+#                                       addons / unmapped / warnings
 #   just entitlements [values.yaml]     who has paid for what
 #                                       (packages/platform/entitlement)
 #   just bucket-import <state> [ns] [mode]
@@ -94,14 +99,57 @@ app values env="":
 manager values="packages/manager/examples/values.yaml" env="":
     kcl run packages/manager -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
 
+# Regenerate packages/app/litmus_hub.k: the chaos-charts ChaosExperiment
+# definitions a `provider: litmus` Fault renders. Keep `ref` equal to the
+# chaos-operator version the `litmus` row in packages/providers/registry.yaml
+# pins (litmus-core chart 3.31.1 = operator 3.31.0).
+litmus-hub ref="3.31.0":
+    tools/litmus-hub.sh {{ ref }}
+
 cncf values="packages/cncf/examples/values.yaml" env="":
     kcl run packages/cncf -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
 
 gitops values="packages/gitops/examples/values.yaml" env="":
     kcl run packages/gitops -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
 
+platform-addons params="packages/platform-addons/examples/params-flux.yaml":
+    kcl run packages/platform-addons -D params={{ params }}
+
 fleet values="packages/fleet/examples/values.yaml" env="":
     kcl run packages/fleet -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+# Local cluster + its charts from one values file (packages/local-platform).
+# `output=kind` renders the Kind config instead of the manifests.
+local-platform values="packages/local-platform/examples/values.yaml" env="" output="manifests":
+    kcl run packages/local-platform -D values={{ values }} -D output={{ output }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+# Kind cluster from the same values file, then Flux, then the render (applied
+# twice: the CNPG Cluster needs the CRDs its chart installs).
+local-platform-up values="packages/local-platform/examples/values.yaml":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just local-platform {{ values }} "" kind | kind create cluster --config -
+    flux install
+    just local-platform {{ values }} | kubectl apply -f - || true
+    kubectl -n flux-system wait helmrelease/cloudnative-pg --for=condition=Ready --timeout=10m
+    just local-platform {{ values }} | kubectl apply -f -
+
+# Jira epics → one Namespace + Project per customer (packages/epics). `data`
+# is the `atlassian-ingest export-epics` JSON; paying customers land on
+# dedicated nodes. `epics-report` is the second reduce: placement, the node
+# labels/taints dedicated tenants need, epics still waiting.
+epics values="packages/epics/examples/values.yaml" data="packages/epics/examples/epics.json" env="":
+    kcl run packages/epics -D values={{ values }} -D data={{ data }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+epics-report values="packages/epics/examples/values.yaml" data="packages/epics/examples/epics.json" env="":
+    kcl run packages/epics -D values={{ values }} -D data={{ data }} -D report=true {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+# The infra repo's mgmt Pulumi stack as data (packages/pulumi-mgmt): every
+# resource apps/mgmt declares, with its Pulumi type token, logical name and
+# typed Args, rendered from the stack file the program applies. `format` is
+# yaml or json; `output` a file (default stdout).
+pulumi-mgmt stack="../infra/apps/mgmt/Pulumi.prod.yaml" format="yaml" output="":
+    kcl run packages/pulumi-mgmt -D values={{ stack }} --format {{ format }} {{ if output != "" { "-o " + output } else { "" } }}
 
 # The portal side of the same values files: entities, not manifests. Piping
 # either of these into `kubectl apply` is a mistake — backstage.io/v1alpha1 is
@@ -129,6 +177,17 @@ manager-phase type values="packages/manager/examples/values.yaml" env="":
 # Render the paid-feature records the gated Compositions read.
 entitlements values="":
     kcl run packages/platform/entitlement {{ if values != "" { "-D values=" + values } else { "" } }} -q
+
+# A tenant whose buckets are billed to its own AWS account: a namespaced
+# ProviderConfig per account (assume-role into the client's role) plus the
+# admission policy that makes Bucket spec.providerConfigName mandatory there.
+# `output=client` renders the CloudFormation template the client deploys
+# instead; `namespace` narrows that to one tenant. Only renders, never applies.
+#   just tenant-accounts accounts.yaml | kubectl apply -f -
+#   just tenant-accounts accounts.yaml client tenant-a > tenant-a.cfn.yaml
+# Render client-account ProviderConfigs (or the client's CloudFormation).
+tenant-accounts values="" output="cluster" namespace="":
+    kcl run packages/platform/tenant-account {{ if values != "" { "-D values=" + values } else { "" } }} -D output={{ output }} {{ if namespace != "" { "-D namespace=" + namespace } else { "" } }} -q
 
 # ─── Move buckets out of Terraform / Pulumi ───────────────────────────────────
 #   just bucket-import terraform.tfstate                 one XR per bucket, observe mode
@@ -357,6 +416,8 @@ seed-providers:
     just provider aws-s3        ghcr.io/crossplane-contrib/provider-aws-s3:v2.6.0        s3
     just provider gcp-storage   ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0   storage
     just provider azure-storage ghcr.io/crossplane-contrib/provider-azure-storage:v2.6.0 storage
+    # the family's (Cluster)ProviderConfig, typed for platform/tenant-account
+    just provider aws-family    ghcr.io/crossplane-contrib/provider-family-aws:v2.6.0
 
 # A static page on a custom domain is three services per cloud, not one: the
 # object store, the CDN that is the only place TLS can terminate, and (on AWS)
@@ -446,13 +507,23 @@ seed-vm-providers:
     just provider azure-network ghcr.io/crossplane-contrib/provider-azure-network:v2.6.0 network
     tools/providers.sh seed kubevirt
 
-# Velero is an operator, like cnpg: the backup Composition composes
-# velero.io/v1 Schedule / BackupStorageLocation directly and provider-helm
-# (seeded with the redis providers) installs the chart. Keep the ref in step
-# with the chart version pinned in backup/xrd/providerconfigs.yaml.
-# Bootstrap/refresh the schema package used by the backup Composition.
+# Velero is an operator, like cnpg: the velero backend composes velero.io/v1
+# Schedule / BackupStorageLocation directly and provider-helm (seeded with the
+# redis providers) installs the chart. Keep the ref in step with the chart
+# version pinned in backup/xrd/providerconfigs.yaml. The cloud backends are
+# ordinary providers: AWS Backup (+ aws-iam for its service role, shared with
+# `seed-iam-providers`), Backup for GKE, and Azure Backup for AKS (+ the
+# containerservice and authorization families it wires the cluster with,
+# shared with `seed-cluster-providers` / `seed-iam-providers`).
+# Bootstrap/refresh the schema packages used by the backup Composition.
 seed-backup-providers:
     just provider-repo velero vmware-tanzu/velero v1.18.2 velero config/crd/v1/bases
+    just provider aws-backup             ghcr.io/crossplane-contrib/provider-aws-backup:v2.6.0             backup
+    just provider aws-iam                ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0                iam
+    just provider gcp-gke                ghcr.io/crossplane-contrib/provider-gcp-gke:v2.6.0                gke
+    just provider azure-dataprotection   ghcr.io/crossplane-contrib/provider-azure-dataprotection:v2.6.0   dataprotection
+    just provider azure-containerservice ghcr.io/crossplane-contrib/provider-azure-containerservice:v2.6.0 containerservice
+    just provider azure-authorization    ghcr.io/crossplane-contrib/provider-azure-authorization:v2.6.0    authorization
 
 # Neither of these is a Crossplane provider: the application Composition
 # composes gateway.networking.k8s.io/v1 HTTPRoute and networking.istio.io/v1
@@ -472,13 +543,16 @@ seed-application-providers:
 # RedisInstance attaches to those), so the aws backend renders against three
 # schema packages. It shares aws-ec2 with `seed-vm-providers`, aws-rds with
 # `seed-postgres-providers` and aws-elasticache with `seed-redis-providers`.
+# The gcp backend adds servicenetworking for the private-service-access peering
+# (spec.servicePeering).
 # There is no in-cluster backend: a Kubernetes cluster already has a network.
 # Bootstrap/refresh the network providers used by the network Composition.
 seed-network-providers:
-    just provider aws-ec2         ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0         ec2
-    just provider aws-rds         ghcr.io/crossplane-contrib/provider-aws-rds:v2.6.0         rds
-    just provider aws-elasticache ghcr.io/crossplane-contrib/provider-aws-elasticache:v2.6.0 elasticache
-    just provider gcp-compute     ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0     compute
+    just provider aws-ec2               ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0               ec2
+    just provider aws-rds               ghcr.io/crossplane-contrib/provider-aws-rds:v2.6.0               rds
+    just provider aws-elasticache       ghcr.io/crossplane-contrib/provider-aws-elasticache:v2.6.0       elasticache
+    just provider gcp-compute           ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0           compute
+    just provider gcp-servicenetworking ghcr.io/crossplane-contrib/provider-gcp-servicenetworking:v2.6.0 servicenetworking
 
 # Each cloud files its hub under a different service, so there is no shared
 # family here: the Transit Gateway is ec2 (shared with `seed-network-providers`
@@ -491,6 +565,22 @@ seed-hubspoke-providers:
     just provider aws-ec2                   ghcr.io/crossplane-contrib/provider-aws-ec2:v2.6.0                   ec2
     just provider azure-network             ghcr.io/crossplane-contrib/provider-azure-network:v2.6.0             network
     just provider gcp-networkconnectivity   ghcr.io/crossplane-contrib/provider-gcp-networkconnectivity:v2.6.0   networkconnectivity
+
+# The mgmt plane (the infra `mgmt` Pulumi stack as one XR) touches ten GCP
+# services. All but binaryauthorization and secretmanager are shared with other
+# modules' recipes (cluster, postgres, dns, kms, registry, bucket, iam, network).
+# Bootstrap/refresh the providers used by the mgmt Composition.
+seed-mgmt-providers:
+    just provider gcp-artifact            ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0            artifact
+    just provider gcp-binaryauthorization ghcr.io/crossplane-contrib/provider-gcp-binaryauthorization:v2.6.0 binaryauthorization
+    just provider gcp-cloudplatform       ghcr.io/crossplane-contrib/provider-gcp-cloudplatform:v2.6.0       cloudplatform
+    just provider gcp-compute             ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0             compute
+    just provider gcp-container           ghcr.io/crossplane-contrib/provider-gcp-container:v2.6.0           container
+    just provider gcp-dns                 ghcr.io/crossplane-contrib/provider-gcp-dns:v2.6.0                 dns
+    just provider gcp-kms                 ghcr.io/crossplane-contrib/provider-gcp-kms:v2.6.0                 kms
+    just provider gcp-secretmanager       ghcr.io/crossplane-contrib/provider-gcp-secretmanager:v2.6.0       secretmanager
+    just provider gcp-sql                 ghcr.io/crossplane-contrib/provider-gcp-sql:v2.6.0                 sql
+    just provider gcp-storage             ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0             storage
 
 # Lambda needs an execution role, so the serverless Composition shares the
 # aws-iam schema package with `seed-iam-providers`. The knative schema package
@@ -762,13 +852,71 @@ typecheck:
 # Redraw docs/install-graph.md from devkit.toml [[deps]] and the manager values:
 # the wave ladder `devkit cluster deps` runs, and the HelmRelease dependsOn DAG
 # Flux keeps. Code dependencies between KCL packages are a different graph —
-# `nx graph` draws those from kcl.mod path deps.
+# `just package-graph` below, or `nx graph` for path deps inside this repo only.
 graph:
     node tools/graph/src/install-graph.ts
 
 # Fail if docs/install-graph.md no longer matches its sources (pre-commit).
 graph-check:
     node tools/graph/src/install-graph.ts --check
+
+# Write docs/packages/index.html: every kcl.mod here and in the repos checked out
+# beside this one (platform-api, gitops, toolkit, infra, the workspace), their
+# path/oci/registry dependencies, who uses each package, and the findings of
+# package-graph-check. Not checked for staleness: what it shows depends on which
+# repos are checked out, so regenerate it from the workspace.
+package-graph:
+    node tools/graph/src/package-graph.ts
+
+# The same page as a local server on 127.0.0.1:<port>: every load rescans the
+# repos, so a reload shows the current state and docs/packages/index.html is
+# left alone. The workspace's butler dashboard frames it (`[ui.kcl-packages]`).
+package-graph-serve port="4560":
+    node tools/graph/src/package-graph.ts serve {{ port }}
+
+# Dependency findings over the same scan; exits 1 on an error: a cycle, a path dep
+# with no kcl.mod, an oci pin older or newer than its source, or one package name
+# in two directories with different .k files. Stale tags in other files warn.
+package-graph-check:
+    node tools/graph/src/package-graph.ts check
+
+# What a change to <pkg> touches: every package downstream, in bump/publish
+# order, and every file that consumes one. <pkg> is a name, <repo>:<path>, a
+# path, or an external module (`k8s`).
+package-impact pkg:
+    node tools/graph/src/package-graph.ts impact {{ pkg }}
+
+# The same graph as a Neo4j load script (Repo, KclPackage, ExternalModule,
+# SourceFile; DEPENDS_ON, REFERENCES, IN_REPO), with example queries at its top.
+# Load: cypher-shell -u neo4j -p <password> -f <out>
+package-graph-cypher out="dist/kcl-graph.cypher":
+    node tools/graph/src/package-graph.ts cypher {{ out }}
+
+# Regenerate docs/devkit-commands.md: every `devkit …` command, flag and
+# default, from the installed devkit module's own help text (`monodocs nu`,
+# which works the same on any Nushell module or script, in any repo).
+nu-docs:
+    monodocs nu devkit --prefix devkit --out docs/devkit-commands.md
+
+# Fail if docs/devkit-commands.md differs from the installed devkit's help text.
+# Local only: CI has neither monodocs nor the devkit module.
+nu-docs-check:
+    monodocs nu devkit --prefix devkit | diff -u docs/devkit-commands.md - || { echo 'docs/devkit-commands.md is stale: run `just nu-docs`' >&2; exit 1; }
+
+# Regenerate every generated doc under docs/ (`just docs` builds the site out of them).
+gen-docs: graph nu-docs crossplane-catalog
+
+# Fail if any generated doc under docs/ is stale.
+gen-docs-check: graph-check nu-docs-check crossplane-catalog-check
+
+# Regenerate lefthook.yml, tools/authorship/ from butler's templates, merged
+# with their `<name>.local.<ext>` overlays (lefthook.local.yml, …).
+repo-init:
+    butler repo init
+
+# Fail if a repo file is missing or stale.
+repo-check:
+    butler repo init --check
 
 # catalog/crossplane.yaml gets an entity per XRD, Composition, example XR and
 # generated provider schema package; docs/crossplane-graph.md gets who composes
@@ -951,7 +1099,7 @@ pkgreg-models:
     tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
     # image|package dir|group|version|Kind:module[,Kind:module…]
     specs=(
-        "ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0|aws_ecr|ecr.aws.m.upbound.io|v1beta1|Repository:repository,LifecyclePolicy:lifecycle_policy,RepositoryPolicy:repository_policy"
+        "ghcr.io/crossplane-contrib/provider-aws-ecr:v2.6.0|aws_ecr|ecr.aws.m.upbound.io|v1beta1|Repository:repository,LifecyclePolicy:lifecycle_policy,RepositoryPolicy:repository_policy,RepositoryCreationTemplate:repository_creation_template"
         "ghcr.io/crossplane-contrib/provider-aws-codeartifact:v2.6.0|aws_codeartifact|codeartifact.aws.m.upbound.io|v1beta1|Domain:domain,Repository:repository"
         "ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0|gcp_artifact|artifact.gcp.m.upbound.io|v1beta1|RegistryRepository:registry_repository,RegistryRepositoryIAMMember:registry_repository_iam_member"
         "ghcr.io/crossplane-contrib/provider-azure-containerregistry:v2.6.0|azure_containerregistry|containerregistry.azure.m.upbound.io|v1beta1|Registry:registry"
@@ -1005,18 +1153,22 @@ pkgreg-serve:
     cd python/function-package-registry && hatch run development
 
 #   just pkgreg-render forgejo --include-context
+#   just pkgreg-render aws-helm      # example package-registry-aws-helm.yaml on aws
 # The nx `render` target is bound to function-kcl and to a KCL `source:` line,
 # so it cannot render these Compositions — hence a recipe of its own.
 # Render one example against a locally served function (needs `just pkgreg-serve`).
-pkgreg-render backend="gcp" *args:
+pkgreg-render example="gcp" *args:
     #!/usr/bin/env bash
     set -euo pipefail
+    # The example's backend is its name up to the first dash.
+    example={{ example }}
+    backend=${example%%-*}
     mkdir -p tmp/pkgreg
     yq '(select(.metadata.name == "function-package-registry") | .metadata.annotations["render.crossplane.io/runtime"]) = "Development"' \
         packages/cloud/package-registry/xrd/functions.yaml > tmp/pkgreg/functions.yaml
     crossplane render \
-        packages/cloud/package-registry/xrd/examples/package-registry-{{ backend }}.yaml \
-        packages/cloud/package-registry/{{ backend }}/composition.yaml \
+        "packages/cloud/package-registry/xrd/examples/package-registry-$example.yaml" \
+        "packages/cloud/package-registry/$backend/composition.yaml" \
         tmp/pkgreg/functions.yaml --include-function-results {{ args }}
 
 # Build the function runtime image. The tag is the one the local cluster's
@@ -1049,6 +1201,20 @@ pkgreg-install version="v0.1.0": pkgreg-image registry
     kubectl -n crossplane-system delete pod \
         -l pkg.crossplane.io/function=function-package-registry --ignore-not-found
     echo "function-package-registry {{ version }} installed"
+
+# ─── console (multi-cloud micro frontends, apps/console) ──────────────────────
+#
+# A Module Federation host (:4200) with one remote per packages/cloud domain
+# (bucket :4201), over the `kcl-console` API (:8095). apps/console/README.md.
+
+#   just console-api --source k8s,aws --timeout-secs 10
+# Serve /api/buckets: Bucket XRs in the current kubecontext + the aws/gcloud/az CLIs.
+console-api *args:
+    cargo run --manifest-path rust/Cargo.toml -q -p kcl-console -- {{ args }}
+
+# Host and every remote with hot reload (run `just console-api` alongside).
+console-dev:
+    pnpm nx run-many -t serve -p console-host console-bucket
 
 # ─── KclModule operator (kube-rs) ─────────────────────────────────────────────
 #

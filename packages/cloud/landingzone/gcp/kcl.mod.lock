@@ -1,0 +1,29 @@
+[dependencies]
+  [dependencies.hubspoke-xrd]
+    name = "hubspoke-xrd"
+    full_name = "hubspoke-xrd_0.1.1"
+    version = "0.1.1"
+  [dependencies.k8s]
+    name = "k8s"
+    full_name = "k8s_1.32.4"
+    version = "1.32.4"
+    sum = "WrltC/mTXtdzmhBZxlvM71wJL5C/UZ/vW+bF3nFvNbM="
+    reg = "ghcr.io"
+    repo = "kcl-lang/k8s"
+    oci_tag = "1.32.4"
+  [dependencies.kms-xrd]
+    name = "kms-xrd"
+    full_name = "kms-xrd_0.1.1"
+    version = "0.1.1"
+  [dependencies.landingzone-contract]
+    name = "landingzone-contract"
+    full_name = "landingzone-contract_0.1.0"
+    version = "0.1.0"
+  [dependencies.landingzone-xrd]
+    name = "landingzone-xrd"
+    full_name = "landingzone-xrd_0.1.0"
+    version = "0.1.0"
+  [dependencies.network-xrd]
+    name = "network-xrd"
+    full_name = "network-xrd_0.1.0"
+    version = "0.1.0"

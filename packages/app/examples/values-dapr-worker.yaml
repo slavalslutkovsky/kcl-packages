@@ -1,0 +1,48 @@
+# Broker-agnostic worker values (Helm-style) → app.Release with a Dapr sidecar.
+#   kcl run /abs/path/to/packages/app -D values=<this file> -q | kubectl apply -f -
+#
+# `dapr:` adds the pod-template annotations the Dapr injector reads, so every
+# pod gets a daprd sidecar. The worker consumes and publishes through daprd on
+# the namespace's `pubsub` Component, never through a broker SDK: the same
+# image runs on Kafka (kind), GCP Pub/Sub (GKE) or SNS+SQS (AWS). It declares
+# its own topic subscriptions (daprd calls GET /dapr/subscribe on `port`), so
+# nothing here names a topic or a subscription object, and it reaches daprd at
+# DAPR_HTTP_ENDPOINT, else http://127.0.0.1:$DAPR_HTTP_PORT (injected by daprd).
+#
+# The namespace must be labelled `shluviza.com/dapr: enabled`: that is what
+# gives it the `pubsub` Component and the platform Resiliency defaults
+# (timeouts, delivery retries, circuit breakers). The app names its dead-letter
+# topic (`<topic>-dlq`) in its own subscription.
+#
+# daprd authenticates to the cloud broker as the pod's ServiceAccount, so an
+# env overlay adds the identity, e.g. values.gke.yaml:
+#   workload:
+#     serviceAccount:
+#       cloud: gcp
+#       identity: orders-worker@my-project.iam.gserviceaccount.com
+
+workload:
+  name: zerg-orders-worker
+  namespace: zerg
+  component: worker
+  image: yurikrupnik/zerg-orders-worker:latest
+  # daprd delivers events here (dapr.io/app-port); nothing else dials in
+  port: 8080
+  prometheus: false
+  service: false
+  serviceAccount: {}                # named after the workload; overlays add the cloud identity
+  readinessProbe:                   # reused by daprd's app health check
+    type: http
+    path: /healthz
+    port: 8080
+  dapr:
+    maxConcurrency: 10              # in-flight events per pod
+  # CPU-based, broker-agnostic: a KEDA queue trigger would name one broker
+  scaler:
+    minReplicas: 1
+    maxReplicas: 10
+    cpu: 70
+
+# → ConfigMap "zerg-orders-worker-config"
+config:
+  ORDERS_TOPIC: orders

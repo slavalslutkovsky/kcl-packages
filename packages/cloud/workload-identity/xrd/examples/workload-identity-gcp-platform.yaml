@@ -72,6 +72,50 @@ spec:
   cluster:
     project: my-project
   accessPolicies:
+    - { role: roles/cloudsql.admin, scope: my-project }
+    - { role: roles/redis.admin, scope: my-project }
+    - { role: roles/compute.networkAdmin, scope: my-project }
+    - { role: roles/container.admin, scope: my-project }
+#    - { role: roles/iam.serviceAccountAdmin, scope: my-project }
+#    - { role: roles/iam.serviceAccountUser, scope: my-project }
+#    - { role: roles/artifactregistry.admin, scope: my-project }
+#    - { role: roles/bigquery.admin, scope: my-project }
+#    - { role: roles/servicenetworking.networksAdmin, scope: my-project }
+#    - { role: roles/dns.admin, scope: my-project }
+#    - { role: roles/storage.admin, scope: my-project }
+#    - { role: roles/resourcemanager.projectIamAdmin, scope: my-project }
+
+---
+apiVersion: cloud.example.org/v1alpha1
+kind: WorkloadIdentity
+metadata:
+  name: networking-manager
+  namespace: networking-manager
+spec:
+  displayName: Network manager for all 3 clouds
+  serviceAccount:
+    name: networking-manager
+  identity:
+    name: networking-manager
+  cluster:
+    project: my-project
+  accessPolicies:
+    - {role: roles/dns.admin, scope: my-project}
+---
+apiVersion: cloud.example.org/v1alpha1
+kind: WorkloadIdentity
+metadata:
+  name: shared-manager
+  namespace: shared-manager
+spec:
+  displayName: Shared manager for all 3 clouds
+  serviceAccount:
+    name: shared-manager
+  identity:
+    name: shared-manager
+  cluster:
+    project: my-project
+  accessPolicies:
     - {role: roles/dns.admin, scope: my-project}
 ---
 # FluxCD source-controller: pulls OCI artifacts and Helm charts.

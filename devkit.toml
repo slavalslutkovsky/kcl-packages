@@ -29,7 +29,7 @@ workers = 3                  # worker node count
 db_workers = 1              # tainted db-dedicated workers
 ingress = true        # binds host ports 80/443 on the control plane
 #kcl_package = "oci://docker.io/yurikrupnik/cluster"
-#kcl_tag = "0.0.6"
+#kcl_tag = "0.1.5"
 
 [cluster.kcl_args]      # MUST sit directly after [cluster]'s scalar keys
 oidc_bucket = "my-oidc-bucket"
@@ -104,11 +104,6 @@ namespace = "openebs"
 # Mayastor (replicated engine) needs hugepages + io-engine nodes — not
 # available on kind/macOS; local PV engines are enough for e2e.
 set = ["engines.replicated.mayastor.enabled=false"]
-[[deps]]
-name = "vcluster"
-repo = "https://charts.loft.sh"
-version = "0.37.0-rc.3"
-namespace = "vcluster"
 
 [[deps]]
 name = "external-secrets"
@@ -243,8 +238,8 @@ name = "bucket-examples"
 manifest = "packages/cloud/bucket/xrd/examples/"
 wave = 5
 
-# The `package-registry` module: one polyglot registry (OCI containers plus
-# npm/pypi/maven/go/cargo/nuget/generic) on five backends, rendered by the
+# The `package-registry` module: one polyglot registry (OCI containers, Helm
+# charts and the language package managers) on five backends, rendered by the
 # PYTHON composition function in python/function-package-registry rather than
 # by function-kcl — `just pkgreg-install` puts it in the local registry and
 # the wave-2 crossplane-functions row above installs the Function object. The
@@ -407,6 +402,30 @@ name = "organization-examples"
 manifest = "packages/cloud/organization/xrd/examples/"
 wave = 5
 
+# The `mgmt` module: the infra repo's `mgmt` Pulumi stack (project, identities,
+# private GKE cluster, Cloud SQL, registry, DNS) as one XR. GCP only, and like
+# organization it needs an organization-level credential, so the example
+# exists to be rendered and diffed, not reconciled on a kind cluster.
+[[deps]]
+name = "mgmt-xrd"
+manifest = "packages/cloud/mgmt/xrd/xrd.yaml"
+wave = 2
+
+[[deps]]
+name = "mgmt-providers"
+manifest = "packages/cloud/mgmt/xrd/providers.yaml"
+wave = 3
+
+[[deps]]
+name = "mgmt-composition-gcp"
+manifest = "packages/cloud/mgmt/gcp/composition.yaml"
+wave = 4
+
+[[deps]]
+name = "mgmt-examples"
+manifest = "packages/cloud/mgmt/xrd/examples/"
+wave = 5
+
 # The `component` module: one namespaced XR per deployable component, composed
 # into a Flux source + Kustomization/HelmRelease pair. providers.yaml here is
 # not a Provider — it is the aggregated ClusterRole that lets Crossplane compose
@@ -545,6 +564,11 @@ wave = 4
 name = "repository-examples"
 manifest = "packages/cloud/repository/xrd/examples/"
 wave = 5
+
+[[deps]]
+name = "dam"
+manifest = "packages/cloud/repository/xrd/examples/1"
+#wave = 5
 
 [tilt]
 enabled = true

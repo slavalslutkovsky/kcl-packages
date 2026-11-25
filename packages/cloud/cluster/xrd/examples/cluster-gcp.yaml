@@ -5,6 +5,7 @@ metadata:
   name: web-cluster
 spec:
   region: us-central1
+  fleetProject: shl-fleet-dev        # required: GKE fleet host project (fleet.project)
   version: "1.32"
   nodeCount: 2
   autoscaling:                       # GKE NodePool autoscaling

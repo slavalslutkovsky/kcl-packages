@@ -9,7 +9,21 @@ explicit `null` is treated exactly like an absent key.
 import dataclasses
 
 #: Every package format the XRD accepts. A backend serves a subset.
-FORMATS = ("oci", "npm", "pypi", "maven", "go", "cargo", "nuget", "generic")
+FORMATS = (
+    "oci",
+    "npm",
+    "pypi",
+    "maven",
+    "go",
+    "cargo",
+    "nuget",
+    "generic",
+    "rubygems",
+    "composer",
+    "conan",
+    "swift",
+    "helm",
+)
 
 #: Crossplane management policy set for the Orphan deletion policy
 #: (everything but Delete).

@@ -42,12 +42,37 @@ version: 1
 
 providers:
   # ── aws ─────────────────────────────────────────────────────────────────────
+  - name: aws-family
+    cloud: aws
+    image: ghcr.io/crossplane-contrib/provider-family-aws
+    tag: v2.6.0
+    install: none
+    modules: [tenant-account]
+    notes: >-
+      The aws family provider: no managed resources, only the aws.m.upbound.io
+      (Cluster)ProviderConfig every aws sub-provider authenticates through.
+      Typed here for platform/tenant-account, which renders one namespaced
+      ProviderConfig per client account (an assume-role chain into the
+      client's role). Nothing is installed from this row: Crossplane pulls the
+      family in as a dependency of each sub-provider (provider-aws-s3, ...).
+      `kcl import` buckets the v1beta1 schemas under models/unknown/.
+
   - name: aws-apigatewayv2
     cloud: aws
     service: apigatewayv2
     image: ghcr.io/crossplane-contrib/provider-aws-apigatewayv2
     tag: v2.6.0
     modules: [apigateway]
+
+  - name: aws-backup
+    cloud: aws
+    service: backup
+    image: ghcr.io/crossplane-contrib/provider-aws-backup
+    tag: v2.6.0
+    modules: [backup]
+    notes: >-
+      AWS Backup for EKS: the backup aws backend composes Vault + Plan +
+      Selection, with the service role it runs as from aws-iam.
 
   - name: aws-codeartifact
     cloud: aws
@@ -78,7 +103,7 @@ providers:
     service: ec2
     image: ghcr.io/crossplane-contrib/provider-aws-ec2
     tag: v2.6.0
-    modules: [network, vm, hubspoke]
+    modules: [network, vm, hubspoke, instancetemplate]
 
   - name: aws-ecr
     cloud: aws
@@ -112,11 +137,13 @@ providers:
     service: iam
     image: ghcr.io/crossplane-contrib/provider-aws-iam
     tag: v2.6.0
-    modules: [cluster, iam, serverless, workflow, workload-identity]
+    modules: [backup, cluster, iam, serverless, workflow, workload-identity]
     notes: >-
       Shared: EKS clusters cannot exist without their IAM roles, and Lambda
       and Step Functions need an execution role, so cluster, serverless and
-      workflow compose IAM too.
+      workflow compose IAM too. The backup aws backend composes the AWS Backup
+      service role (a custom one: the service-linked role cannot create EKS
+      access entries).
 
   - name: aws-kms
     cloud: aws
@@ -262,25 +289,40 @@ providers:
     service: artifact
     image: ghcr.io/crossplane-contrib/provider-gcp-artifact
     tag: v2.6.0
-    modules: [registry, package-registry]
+    modules: [registry, package-registry, mgmt]
     notes: >-
       Artifact Registry ships in the `artifact` family (CRD group
       artifact.gcp.m.upbound.io, kind RegistryRepository) — there is no
       provider-gcp-artifactregistry image.
+
+  - name: gcp-binaryauthorization
+    cloud: gcp
+    service: binaryauthorization
+    image: ghcr.io/crossplane-contrib/provider-gcp-binaryauthorization
+    tag: v2.6.0
+    modules: [mgmt]
+    notes: >-
+      Binary Authorization: the mgmt Composition composes the project's
+      singleton Policy (audit-only default rule, the artifacts registry
+      allowlisted) that its GKE cluster evaluates with
+      PROJECT_SINGLETON_POLICY_ENFORCE.
 
   - name: gcp-cloudbuild
     cloud: gcp
     service: cloudbuild
     image: ghcr.io/crossplane-contrib/provider-gcp-cloudbuild
     tag: v2.6.0
-    modules: []
+    modules: [ci-pipeline]
+    notes: >-
+      ci-pipeline renders Trigger MRs (one per push / pull request event)
+      carrying its container pipeline as the inline build.
 
   - name: gcp-cloudplatform
     cloud: gcp
     service: cloudplatform
     image: ghcr.io/crossplane-contrib/provider-gcp-cloudplatform
     tag: v2.6.0
-    modules: [iam, workload-identity, organization]
+    modules: [iam, workload-identity, organization, mgmt]
     notes: >-
       GCP has no standalone iam provider — service accounts and IAM members
       live in cloudplatform. The resource-hierarchy kinds the organization
@@ -300,28 +342,38 @@ providers:
     service: compute
     image: ghcr.io/crossplane-contrib/provider-gcp-compute
     tag: v2.6.0
-    modules: [network, vm, landing]
+    modules: [network, vm, landing, instancetemplate, mgmt]
 
   - name: gcp-container
     cloud: gcp
     service: container
     image: ghcr.io/crossplane-contrib/provider-gcp-container
     tag: v2.6.0
-    modules: [cluster]
+    modules: [cluster, mgmt]
 
   - name: gcp-dns
     cloud: gcp
     service: dns
     image: ghcr.io/crossplane-contrib/provider-gcp-dns
     tag: v2.6.0
-    modules: [dns]
+    modules: [dns, mgmt]
+
+  - name: gcp-gke
+    cloud: gcp
+    service: gke
+    image: ghcr.io/crossplane-contrib/provider-gcp-gke
+    tag: v2.6.0
+    modules: [backup]
+    notes: >-
+      Backup for GKE: one BackupBackupPlan per BackupPlan XR (the family's
+      only kind). The GKE cluster itself is in gcp-container.
 
   - name: gcp-kms
     cloud: gcp
     service: kms
     image: ghcr.io/crossplane-contrib/provider-gcp-kms
     tag: v2.6.0
-    modules: [kms]
+    modules: [kms, mgmt]
 
   - name: gcp-networkconnectivity
     cloud: gcp
@@ -362,19 +414,42 @@ providers:
     tag: v2.6.0
     modules: [redis]
 
+  - name: gcp-secretmanager
+    cloud: gcp
+    service: secretmanager
+    image: ghcr.io/crossplane-contrib/provider-gcp-secretmanager
+    tag: v2.6.0
+    modules: [mgmt]
+    notes: >-
+      Secret Manager: the mgmt Composition composes the flux-github-app Secret
+      container and its accessor grant; the version holding the GitHub App
+      JSON is added out of band, so its payload never passes through an XR.
+
+  - name: gcp-servicenetworking
+    cloud: gcp
+    service: servicenetworking
+    image: ghcr.io/crossplane-contrib/provider-gcp-servicenetworking
+    tag: v2.6.0
+    modules: [network]
+    notes: >-
+      Private Service Access: the Connection kind peers a network's reserved
+      VPC_PEERING range to servicenetworking.googleapis.com, which is what lets
+      Cloud SQL and Memorystore take private IPs from it. The network
+      Composition composes it next to the GlobalAddress reservation.
+
   - name: gcp-sql
     cloud: gcp
     service: sql
     image: ghcr.io/crossplane-contrib/provider-gcp-sql
     tag: v2.6.0
-    modules: [postgres]
+    modules: [postgres, mgmt]
 
   - name: gcp-storage
     cloud: gcp
     service: storage
     image: ghcr.io/crossplane-contrib/provider-gcp-storage
     tag: v2.6.0
-    modules: [bucket, landing]
+    modules: [bucket, landing, mgmt]
 
   - name: gcp-workflows
     cloud: gcp
@@ -399,13 +474,14 @@ providers:
     service: authorization
     image: ghcr.io/crossplane-contrib/provider-azure-authorization
     tag: v2.6.0
-    modules: [iam, workload-identity, organization]
+    modules: [backup, iam, workload-identity, organization]
     notes: >-
       Azure splits the identity (managedidentity) from its role assignments
       (authorization), so the iam Composition needs both. The organization
       module composes two more kinds from this family:
       ManagementGroupPolicyAssignment and the management-group scoped
-      RoleAssignment.
+      RoleAssignment. The backup azure backend composes RoleAssignments and
+      the AKS TrustedAccessRoleBinding Azure Backup needs.
 
   - name: azure-cdn
     cloud: azure
@@ -423,7 +499,7 @@ providers:
     service: compute
     image: ghcr.io/crossplane-contrib/provider-azure-compute
     tag: v2.6.0
-    modules: [vm]
+    modules: [vm, instancetemplate]
 
   - name: azure-containerapp
     cloud: azure
@@ -444,7 +520,21 @@ providers:
     service: containerservice
     image: ghcr.io/crossplane-contrib/provider-azure-containerservice
     tag: v2.6.0
-    modules: [cluster]
+    modules: [backup, cluster]
+    notes: >-
+      The backup azure backend composes the AKS backup extension
+      (KubernetesClusterExtension) and observes the cluster read-only for its
+      identity.
+
+  - name: azure-dataprotection
+    cloud: azure
+    service: dataprotection
+    image: ghcr.io/crossplane-contrib/provider-azure-dataprotection
+    tag: v2.6.0
+    modules: [backup]
+    notes: >-
+      Azure Backup for AKS: BackupVault, BackupPolicyKubernetesCluster and
+      BackupInstanceKubernetesCluster for the backup azure backend.
 
   - name: azure-dbforpostgresql
     cloud: azure
@@ -501,7 +591,7 @@ providers:
     service: network
     image: ghcr.io/crossplane-contrib/provider-azure-network
     tag: v2.6.0
-    modules: [vm, hubspoke]
+    modules: [vm, hubspoke, instancetemplate]
     notes: >-
       The VM's NIC and public IP live in the network family, not compute — and
       so does Virtual WAN: the hubspoke module's Virtual Hub, its connections
@@ -716,6 +806,29 @@ providers:
       whole group is imported; packages/providers/crds.yaml says which kinds
       are rendered.
 
+  - name: litmus
+    cloud: kubernetes
+    repo: litmuschaos/litmus-helm
+    ref: litmus-core-3.31.1
+    crdPath: charts/litmus-core/crds
+    scope: cluster
+    install: none
+    modules: [app, manager]
+    notes: >-
+      Operator CRDs, not a Crossplane provider: a `chaos:` Fault with
+      `provider: litmus` renders litmuschaos.io/v1alpha1 ChaosEngine +
+      ChaosExperiment (the chaos-charts 3.31.0 definition, so the go-runner
+      image matches the operator), and platform-api's XChaosExperiment
+      composes them through the app renderers. Sourced from the litmus-core
+      chart rather than chaos-operator's deploy/crds because the chart is
+      what the gitops repo installs into `litmus` (chart 3.31.1 = operator
+      and runner 3.31.0; its CRDs add `job` kinds and workload
+      labelMatchMode). Keep `ref` in step with that chart and the operator
+      version with `tools/litmus-hub.sh`'s ref (hub.version in
+      packages/app/litmus_hub.k). No `service`: the files are named
+      <kind>_crd.yaml and the directory holds only the litmuschaos.io group.
+      ChaosResult is typed but written by the experiment, never rendered.
+
   - name: prometheus-operator
     cloud: kubernetes
     service: monitoring.coreos.com_servicemonitors,monitoring.coreos.com_podmonitors,monitoring.coreos.com_prometheusrules
@@ -764,9 +877,11 @@ providers:
     kinds:
       - kubevirt.io/virtualmachine_v1.json:VirtualMachine
       - cdi.kubevirt.io/datavolume_v1beta1.json:DataVolume
+      - instancetype.kubevirt.io/virtualmachineinstancetype_v1beta1.json:VirtualMachineInstancetype
+      - instancetype.kubevirt.io/virtualmachinepreference_v1beta1.json:VirtualMachinePreference
     scope: cluster
     install: none
-    modules: [vm]
+    modules: [vm, instancetemplate]
     notes: >-
       Operator CRDs, not a Crossplane provider: the kubevirt backend composes
       a kubevirt.io/v1 VirtualMachine directly. Catalog-sourced because
@@ -779,6 +894,10 @@ providers:
       tools/datree-crd.sh rebuilds the CRD envelope around it. DataVolume is
       generated alongside because the disk import is expressed as
       spec.dataVolumeTemplates, which CDI must be present to honour.
+      VirtualMachineInstancetype and VirtualMachinePreference (namespaced,
+      v1beta1) back the instancetemplate kubevirt backend: the template's
+      shape and device preferences live in them, and every stamped
+      VirtualMachine references both by name.
 
   - name: velero
     cloud: kubernetes
@@ -835,3 +954,21 @@ providers:
       while skipping the profile-*.yaml siblings, which are not CRDs. istiod
       itself is a cluster add-on (`devkit up --istio`), not something this repo
       installs.
+
+  - name: tekton
+    cloud: kubernetes
+    service: 300-pipeline,300-pipelinerun,300-task,300-taskrun
+    repo: tektoncd/pipeline
+    ref: v1.16.0
+    crdPath: config/300-crds
+    scope: cluster
+    install: none
+    modules: [gha-tekton]
+    notes: >-
+      Operator CRDs, not a Crossplane provider: gha-tekton renders
+      tekton.dev/v1 Pipeline, Task and PipelineRun objects (the CRDs also
+      carry the deprecated v1beta1 version, which nothing here uses). `ref`
+      follows the Tekton Pipelines release gitops vendors
+      (platform/tekton/pipelines/upstream/release.yaml, v1.16.0). `service`
+      is the CRD filename prefix; StepAction, CustomRun, ResolutionRequest and
+      VerificationPolicy are left out because no translation produces them.

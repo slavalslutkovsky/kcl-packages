@@ -26,6 +26,18 @@ name: platform
 role: manager
 namespace: flux-system            # where the HelmRepository / HelmRelease objects live
 
+# Capability bundles: predefined, version-pinned charts per area, appended
+# after `dependencies` below (lib.k `bundleDependencies`, README table).
+#   finops → opencost (cost allocation + UI; reads kube-prometheus-stack)
+#   secops → kyverno, falco, trivy-operator
+#   sre    → kube-prometheus-stack, loki, tempo, chaos-mesh
+# An explicit row of the same name replaces the bundle's: kube-prometheus-stack
+# and chaos-mesh below win over the sre bundle's, so this file renders loki,
+# tempo, opencost and the three secops charts from the bundles. Every one of
+# them is `application`, so the workload overlay keeps them all. Bundle-sourced
+# Flux objects are labelled `platform.example.org/bundle: <bundle>`.
+bundles: [finops, secops, sre]
+
 dependencies:
   # What makes this a manager cluster: Crossplane, which provisions the
   # workload clusters and the cloud resources behind them (packages/cloud/*).

@@ -1,0 +1,77 @@
+# Catalog and rules for the epics map-reduce. The epics come from the export:
+#   atlassian-ingest export-epics --out epics.json
+#   kcl run packages/epics -D values=packages/epics/examples/values.yaml -D data=epics.json -q
+# or `just epics` (this file + examples/epics.json).
+#
+# Every customer becomes a Namespace plus a Project XR
+# (packages/platform/project), so the cluster needs the Project XRD and
+# Composition and the cloud modules its resources resolve to.
+
+environment: dev
+
+# spec.cloud of every tenant's Project.
+cloud:
+  provider: aws
+  region: eu-west-1
+  oidcIssuer: arn:aws:iam::123456789012:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE1234567890
+
+# Only these status categories deploy; "To Do" epics wait (and are listed in
+# the report). Jira statuses are read as they are — nothing new is added.
+deployCategories: ["In Progress", "Done"]
+
+placement:
+  dedicatedPlans: [team, enterprise]       # paying customers
+  dedicatedLabel: platform.example.org/dedicated
+  sharedNodeSelector:
+    platform.example.org/pool: shared
+
+# What each `app-<name>` epic label deploys. `app` is a Project app without
+# its name; `resources` are what that app needs, merged per customer.
+catalog:
+  shop-web:
+    app:
+      kind: ui
+      image: ghcr.io/example/shop-web:1.4.0
+  shop-api:
+    app:
+      kind: api
+      image: ghcr.io/example/shop-api:2.1.0
+      uses: [db, sessions]
+      overrides:
+        readinessProbe: {type: http, path: /ready, port: http}
+    resources:
+      databases:
+        - name: db
+          spec: {engineVersion: "16", memoryGb: 2, storageGb: 20}
+      caches:
+        - name: sessions
+          spec: {memoryGb: 1}
+  shop-report:
+    app:
+      kind: cli
+      image: ghcr.io/example/shop-api:2.1.0
+      command: [/app/report]
+      schedule: "0 2 * * *"
+      uses: [db]
+    resources:
+      databases:
+        - name: db
+          spec: {engineVersion: "16", memoryGb: 2, storageGb: 20}
+  orders:
+    app:
+      kind: dapr-server
+      image: ghcr.io/example/orders:1.0.0
+      dapr: {protocol: grpc}
+      port: 50051
+  notifier:
+    app:
+      kind: dapr-client
+      image: ghcr.io/example/notifier:1.0.0
+  tenant-operator:
+    app:
+      kind: operator
+      image: ghcr.io/example/tenant-operator:0.3.0
+      rules:
+        - apiGroups: [shop.example.com]
+          resources: [stores, stores/status]
+          verbs: [get, list, watch, update, patch]

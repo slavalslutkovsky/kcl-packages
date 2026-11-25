@@ -1,8 +1,16 @@
 [dependencies]
+  [dependencies.aws-iam]
+    name = "aws-iam"
+    full_name = "aws-iam_0.0.1"
+    version = "0.0.1"
   [dependencies.aws-s3]
     name = "aws-s3"
     full_name = "aws-s3_0.0.1"
     version = "0.0.1"
+  [dependencies.federation]
+    name = "federation"
+    full_name = "federation_0.1.0"
+    version = "0.1.0"
   [dependencies.k8s]
     name = "k8s"
     full_name = "k8s_1.32.4"

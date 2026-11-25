@@ -2,8 +2,14 @@
 
 Ported from packages/cloud/registry/gcp/registry.k, which composes the DOCKER
 repository only. Artifact Registry is natively polyglot — the same regional
-service hosts npm, python, maven and go repositories — so the mapping is one
-`RegistryRepository` per format, each with its own `format` and its own id.
+service hosts npm, python, maven, go, ruby and generic repositories — so the
+mapping is one `RegistryRepository` per format, each with its own `format` and
+its own id.
+
+Helm charts are OCI artifacts in Artifact Registry (there is no HELM format):
+`helm` is a second DOCKER repository, `<xr name>-helm`, kept apart from the
+image repository so chart and image names never collide and each keeps its own
+cleanup policies.
 
 Typed against the generated models in function/models/gcp_artifact, which come
 from the same provider image as the KCL schema package packages/providers/
@@ -18,7 +24,8 @@ NAME = "gcp"
 
 API_VERSION = "artifact.gcp.m.upbound.io/v1beta1"
 
-#: XR format -> Artifact Registry repository format.
+#: XR format -> Artifact Registry repository format
+#: (https://cloud.google.com/artifact-registry/docs/supported-formats).
 AR_FORMAT = {
     "oci": "DOCKER",
     "npm": "NPM",
@@ -26,6 +33,9 @@ AR_FORMAT = {
     "maven": "MAVEN",
     "go": "GO",
     "generic": "GENERIC",
+    # RUBY is a Preview format, but a public one: any project can create it.
+    "rubygems": "RUBY",
+    "helm": "DOCKER",
 }
 
 #: XR format -> the service host segment Artifact Registry serves it on
@@ -37,13 +47,14 @@ AR_HOST = {
     "maven": "maven",
     "go": "go",
     "generic": "generic",
+    "rubygems": "ruby",
+    "helm": "docker",
 }
 
 SUPPORTED = frozenset(AR_FORMAT)
 
 UNSUPPORTED_HINT = (
-    "Artifact Registry has no cargo or nuget format; "
-    "use the aws or forgejo backend for those."
+    "Artifact Registry has no cargo, nuget, composer, conan or swift format."
 )
 
 SECONDS_PER_DAY = 86400
@@ -61,10 +72,10 @@ def repo_id(spec: Spec, fmt: str) -> str:
 
 def _cleanup_policies(spec: Spec, fmt: str) -> list[repo.CleanupPolicy]:
     # KEEP wins over DELETE in Artifact Registry, so the two compose without
-    # ordering. "untagged" is a container concept: only the DOCKER repository
-    # has versions without a tag.
+    # ordering. "untagged" is a container concept: only DOCKER repositories
+    # (images and charts) have versions without a tag.
     policies: list[repo.CleanupPolicy] = []
-    if fmt == "oci" and spec.untagged_retention_days:
+    if AR_FORMAT[fmt] == "DOCKER" and spec.untagged_retention_days:
         policies.append(
             repo.CleanupPolicy(
                 id="delete-untagged",
@@ -99,7 +110,7 @@ def _repository(spec: Spec, fmt: str) -> repo.RegistryRepository:
             enablementConfig="INHERITED" if spec.scan_on_push else "DISABLED"
         ),
     )
-    if fmt == "oci":
+    if AR_FORMAT[fmt] == "DOCKER":
         for_provider.dockerConfig = repo.DockerConfig(immutableTags=spec.immutable_tags)
     policies = _cleanup_policies(spec, fmt)
     if policies:
@@ -154,8 +165,16 @@ def _project_of(resource_id: str) -> str:
 def _endpoint(location: str, project: str, spec: Spec, fmt: str) -> str:
     host = f"{location}-{AR_HOST[fmt]}.pkg.dev"
     path = f"{host}/{project}/{repo_id(spec, fmt)}"
-    # The docker client is given a host/path pair, every other client a URL.
-    return path if fmt == "oci" else f"https://{path}/"
+    # Each is the string its client is configured with: a host/path pair for
+    # docker, an oci:// reference for `helm push`, the `gem push --host` /
+    # Gemfile source for gems, and a base URL for every other client.
+    if fmt == "oci":
+        return path
+    if fmt == "helm":
+        return f"oci://{path}"
+    if fmt == "rubygems":
+        return f"https://{path}"
+    return f"https://{path}/"
 
 
 def status(spec: Spec, observed: dict[str, dict]) -> dict:

@@ -1,3 +1,4 @@
+import runtime
 import .cluster
 
 _orphan = ["Observe", "Create", "Update", "LateInitialize"]
@@ -10,12 +11,20 @@ _build = lambda _spec {
         apiVersion = "cloud.example.org/v1alpha1"
         kind = "KubernetesCluster"
         metadata.name = "demo"
-        spec = {region = "us-central1"} | _spec
+        spec = {region = "us-central1", fleetProject = "shl-fleet-dev"} | _spec
     }
 }
 
 _render = lambda _spec {
     cluster.render(_build(_spec), {})
+}
+
+# runtime.catch returns the assertion message, or nothing when the render
+# succeeds. Takes the whole spec: the fleetProject default is not merged in.
+_fails = lambda _spec {
+    runtime.catch(lambda {
+        cluster.render({apiVersion = "cloud.example.org/v1alpha1", kind = "KubernetesCluster", metadata.name = "demo", spec = _spec}, {})
+    })
 }
 
 # ---- render: shape ----------------------------------------------------------
@@ -37,6 +46,14 @@ test_cluster = lambda {
     assert fp.deletionProtection == False, "lifecycle is governed by deletionPolicy, not the GKE lock"
     assert fp.minMasterVersion == "1.32", "version -> minMasterVersion"
     assert fp.resourceLabels == {team = "platform"}, "tags -> resourceLabels"
+}
+
+# ---- render: fleet ----------------------------------------------------------
+test_fleet = lambda {
+    items = _render({})
+    assert items[0].spec.forProvider.fleet.project == "shl-fleet-dev", "fleetProject -> fleet.project: every cluster is fleet-registered"
+    assert "spec.fleetProject is required" in _fails({region = "us-central1"}), "no unregistered cluster: render fails without fleetProject"
+    assert "spec.fleetProject is required" in _fails({region = "us-central1", fleetProject = ""}), "an empty fleetProject is no fleet"
 }
 
 test_network = lambda {

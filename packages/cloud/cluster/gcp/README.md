@@ -12,7 +12,7 @@ Composition (label `provider: gcp`).
 
 | resource | when | notes |
 | --- | --- | --- |
-| `Cluster` (`container.gcp.m.upbound.io`) `managed` | always | external-name = XR name; `removeDefaultNodePool: true`, `initialNodeCount: 1`, `deletionProtection: false`; connection secret `<xr>-kubeconfig` |
+| `Cluster` (`container.gcp.m.upbound.io`) `managed` | always | external-name = XR name; `removeDefaultNodePool: true`, `initialNodeCount: 1`, `deletionProtection: false`; registered to the GKE fleet `fleet.project`; connection secret `<xr>-kubeconfig` |
 | `NodePool` (`container.gcp.m.upbound.io`) `nodes` | always | external-name `<xr>-nodes`; cluster by `matchControllerRef` |
 
 ## Spec fields read
@@ -22,6 +22,7 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 | field | maps to |
 | --- | --- |
 | `region` | `location` of `Cluster` and `NodePool` |
+| `fleetProject` | `Cluster.fleet.project` — required: every cluster is fleet-registered (the host project needs `gkehub.googleapis.com`) |
 | `version` | `Cluster.minMasterVersion`, when set |
 | `nodeCount` | `NodePool.nodeCount` (default `2`); with `autoscaling`, `initialNodeCount` instead |
 | `autoscaling.min` / `.max` | `NodePool.autoscaling.minNodeCount` / `maxNodeCount` |
@@ -33,8 +34,8 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 | `deletionPolicy` | `Orphan` → `managementPolicies: [Observe, Create, Update, LateInitialize]` |
 | `tags` | `Cluster.resourceLabels` and `nodeConfig.labels` |
 
-Ignored: `resourceGroup`. The render fails when `kubeconfigSecret` or
-`bootstrap` (onprem only) is set.
+Ignored: `resourceGroup`. The render fails without `fleetProject`, or when
+`kubeconfigSecret` or `bootstrap` (onprem only) is set.
 
 Status written back: `provider: gcp`, `ready` (observed `endpoint`), `name`
 (XR name), `kubeconfigSecret: <xr>-kubeconfig`, and once observed `endpoint`,
@@ -44,7 +45,7 @@ from `id`).
 ## Usage
 
 Without `option("params")`, `main.k` renders a built-in example: `us-central1`,
-everything else defaulted.
+fleet `shl-fleet-dev`, everything else defaulted.
 
 ```bash
 kcl run packages/cloud/cluster/gcp

@@ -1,0 +1,31 @@
+apiVersion: cloud.example.org/v1alpha1
+kind: BackupPlan
+metadata:
+  # The gcp backend composes a namespaced Crossplane MR, so any namespace
+  # works; what gets backed up is includedNamespaces, below.
+  namespace: default
+  name: nightly
+spec:
+  schedule: "0 2 * * *"           # -> backupSchedule.cronSchedule; Backup for GKE runs it in UTC
+  retentionDays: 30               # -> retentionPolicy.backupRetainDays (max 365, and 360 x the interval)
+  includedNamespaces:             # -> backupConfig.selectedNamespaces; empty/omitted means allNamespaces
+    - zerg
+    - dbs
+  excludedResources:              # only `secrets` is honoured (includeSecrets=false); the rest are ignored
+    - events
+    - secrets
+  snapshotVolumes: true           # -> backupConfig.includeVolumeData (PD snapshots of the PVCs)
+  cluster:
+    # The GKE cluster's full name — a KubernetesCluster XR on gcp publishes it
+    # as status.id. A zonal cluster (locations/us-central1-a) is fine: the plan
+    # is placed in the cluster's region, where Backup for GKE plans live.
+    id: projects/example-project/locations/us-central1/clusters/example
+  encryptionKmsKeyId: projects/example-project/locations/us-central1/keyRings/backups/cryptoKeys/gke  # -> backupConfig.encryptionKey; the Backup for GKE agent must be able to use the key
+  paused: false                   # -> backupSchedule.paused; existing backups keep expiring
+  deletionPolicy: Orphan          # keep the plan if the XR goes; GCP refuses to delete a plan holding backups anyway
+  tags:                           # -> labels on the BackupPlan (GCP label rules: lowercase)
+    team: platform
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: gcp             # the flag: picks the backend (Backup for GKE)

@@ -1,0 +1,511 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: projects.platform.example.org
+spec:
+  scope: Namespaced
+  group: platform.example.org
+  names:
+    kind: Project
+    plural: projects
+  # One implementation; the cloud is a field (spec.cloud.provider) that picks
+  # each child's backend, not a Composition to select.
+  defaultCompositionRef:
+    name: project
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              description: |
+                One client project in this namespace: the cloud resources it
+                needs and the apps that use them.
+
+                Cloud resources are child XRs of the cloud.example.org
+                capabilities (PostgresInstance, RedisInstance, Queue, Bucket,
+                Registry, WorkloadIdentity); spec.cloud.provider picks each
+                child's backend, aws or azure. A capability without a native
+                backend on that cloud runs in-cluster instead (azure: caches on
+                valkey); queues exist on aws only.
+
+                Apps are rendered by the `app` package (packages/app), one per
+                entry, shaped by `kind`: cli (Job / CronJob), ui, api, operator,
+                dapr-server, dapr-client. An app lists the resources it `uses`
+                and gets their coordinates as env vars; it is composed once
+                those resources are ready.
+
+                The XR composes only into its own namespace, which is the
+                client's tenant boundary: no ClusterRole, CRD or Namespace is
+                created here.
+              properties:
+                client:
+                  type: string
+                  description: The client this project belongs to. Label platform.example.org/client and cloud tag `client` on everything composed.
+                environment:
+                  type: string
+                  description: Environment name (dev, uat, prod, ...). Label platform.example.org/environment and cloud tag `environment`; one Project per environment, each in its own namespace or cluster.
+                labels:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Extra labels on every composed object and every app pod (e.g. platform.example.org/customer, finops.shluviza.com/cost-center). The project's own identity labels (part-of, project, client, environment) win on a clash.
+                placement:
+                  type: object
+                  description: Where every app's pods are scheduled. Scheduling only — the nodes must already carry the labels and taints. A paying customer's dedicated pool is a nodeSelector plus a matching toleration; a shared pool is a nodeSelector alone.
+                  properties:
+                    nodeSelector:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    tolerations:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          key:
+                            type: string
+                          operator:
+                            type: string
+                            enum: [Equal, Exists]
+                          value:
+                            type: string
+                          effect:
+                            type: string
+                            enum: [NoSchedule, PreferNoSchedule, NoExecute]
+                          tolerationSeconds:
+                            type: integer
+                cloud:
+                  type: object
+                  description: Where the project's cloud resources live. One cloud per project.
+                  properties:
+                    provider:
+                      type: string
+                      enum: [aws, azure]
+                      description: The backend every child resolves to (its compositionSelector provider label), unless a resource picks its in-cluster backend.
+                    region:
+                      type: string
+                      description: AWS region / Azure location of every cloud resource. In-cluster backends ignore it.
+                    resourceGroup:
+                      type: string
+                      description: Azure-only — the existing resource group databases, registries and workload identities are created in. Required on azure once any of those exist.
+                    oidcIssuer:
+                      type: string
+                      description: 'The cluster''s OIDC issuer, trusted by every app `identity`. AWS: the IAM OIDC provider ARN (or issuer URL). Azure: the AKS oidcIssuerProfile.issuerUrl. Required once any app has an identity.'
+                    secretStore:
+                      type: string
+                      description: ClusterSecretStore an app's `secrets` are read from. Defaults to aws-secrets-manager on aws and azure-key-vault on azure; the platform creates the store, never the tenant.
+                    deletionPolicy:
+                      type: string
+                      enum: [Delete, Orphan]
+                      default: Delete
+                      description: Default for every child. A resource overrides it in its own `spec` (e.g. Orphan on a production database).
+                    tags:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Cloud tags on every child, on top of project / client / environment.
+                  required: [provider, region]
+                databases:
+                  type: array
+                  description: PostgreSQL instances (PostgresInstance). Env vars for an app that uses one, prefixed with the upper-cased name (orders-db → ORDERS_DB_*) — HOST, PORT, NAME, USER, URL, and PASSWORD from the instance's Secret.
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [name]
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                        maxLength: 50
+                        description: Child XR name, and the handle an app's `uses` names. Unique across every resource list.
+                      backend:
+                        type: string
+                        enum: [aws, azure, cnpg]
+                        description: Defaults to spec.cloud.provider. cnpg runs it in-cluster (CloudNativePG).
+                      spec:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                        description: The PostgresInstance spec (packages/cloud/postgres/xrd), validated by that XRD. region, deletionPolicy and resourceGroup come from the project unless set here; tags are added to the project's; the composition selector is `backend`.
+                    required: [name]
+                caches:
+                  type: array
+                  description: Redis-compatible caches (RedisInstance). Env vars for an app that uses one — <NAME>_HOST, _PORT, _URL, and _PASSWORD when auth is on.
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [name]
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                        maxLength: 40
+                      backend:
+                        type: string
+                        enum: [aws, valkey]
+                        description: aws (ElastiCache) on aws; valkey (in-cluster) otherwise — there is no azure cache backend.
+                      spec:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                        description: The RedisInstance spec (packages/cloud/redis/xrd).
+                    required: [name]
+                queues:
+                  type: array
+                  description: Message queues (Queue) — aws (SQS) only; a project on azure with queues fails to render. Env vars for an app that uses one — <NAME>_NAME, _URL, _TOPIC, _DLQ_URL, as the backend publishes them.
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [name]
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                        maxLength: 60
+                      backend:
+                        type: string
+                        enum: [aws]
+                        description: aws (SQS). The only Queue backend for these two clouds.
+                      spec:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                        description: The Queue spec (packages/cloud/queue/xrd).
+                    required: [name]
+                buckets:
+                  type: array
+                  description: Object storage (Bucket). Env vars for an app that uses one — <NAME>_NAME, _URL, _ENDPOINT, _REGION.
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [name]
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                        maxLength: 60
+                      backend:
+                        type: string
+                        enum: [aws, azure, rustfs]
+                        description: Defaults to spec.cloud.provider. rustfs runs it in-cluster.
+                      spec:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                        description: The Bucket spec (packages/cloud/bucket/xrd).
+                    required: [name]
+                registries:
+                  type: array
+                  description: Container registries (Registry) the client's CI pushes to. Env vars for an app that uses one — <NAME>_NAME, _ENDPOINT, _URL.
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [name]
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                        maxLength: 50
+                        description: ACR names are alphanumeric only — no dashes on azure.
+                      backend:
+                        type: string
+                        enum: [aws, azure, zot]
+                        description: Defaults to spec.cloud.provider. zot runs it in-cluster.
+                      spec:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                        description: The Registry spec (packages/cloud/registry/xrd).
+                    required: [name]
+                apps:
+                  type: array
+                  description: The client's apps, one `app` package Release each.
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [name]
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                        maxLength: 50
+                        description: Name of the Deployment / Job, its Service, ServiceAccount and route.
+                      kind:
+                        type: string
+                        enum: [cli, ui, api, operator, dapr-server, dapr-client]
+                        description: |
+                          cli          Job, or CronJob with `schedule`.
+                          ui           Deployment + Service, 2 replicas, no scrape annotations; routable.
+                          api          Deployment + Service, 2 replicas, Prometheus scrape annotations; routable.
+                          operator     Deployment, 1 replica, no Service; a namespaced Role from `rules` plus leader-election rules; WATCH_NAMESPACE set to this namespace.
+                          dapr-server  api + a Dapr sidecar that calls the app on its port (app-port, app-protocol); routable.
+                          dapr-client  Deployment, 1 replica, no Service; a Dapr sidecar the app calls, nothing calls the app.
+                      image:
+                        type: string
+                      version:
+                        type: string
+                        description: app.kubernetes.io/version label.
+                      port:
+                        type: integer
+                        default: 8080
+                        description: Container port, Service port, Dapr app-port. Ignored by cli.
+                      replicas:
+                        type: integer
+                        minimum: 0
+                        description: Defaults per kind (ui, api, dapr-server 2; operator, dapr-client 1).
+                      command:
+                        type: array
+                        items:
+                          type: string
+                        description: cli only — the container entrypoint.
+                      args:
+                        type: array
+                        items:
+                          type: string
+                        description: cli only.
+                      schedule:
+                        type: string
+                        description: cli only — cron schedule; turns the Job into a CronJob.
+                      env:
+                        type: object
+                        additionalProperties:
+                          type: string
+                        description: Plain env vars. A wired variable of the same name (from `uses`) wins.
+                      config:
+                        type: object
+                        additionalProperties:
+                          type: string
+                        description: ConfigMap <name>-config, mounted with envFrom.
+                      secrets:
+                        type: object
+                        description: ExternalSecret into Secret <name>-secrets, mounted with envFrom (required, not optional).
+                        properties:
+                          store:
+                            type: string
+                            description: ClusterSecretStore; defaults to spec.cloud.secretStore.
+                          refreshInterval:
+                            type: string
+                            default: 1h
+                          items:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                secretKey:
+                                  type: string
+                                key:
+                                  type: string
+                                property:
+                                  type: string
+                              required: [secretKey, key]
+                        required: [items]
+                      uses:
+                        type: array
+                        items:
+                          type: string
+                        description: Names of this project's resources the app reads. Each one's coordinates become env vars, and the app is composed only once all of them are ready.
+                      identity:
+                        type: object
+                        description: A cloud identity for the app (WorkloadIdentity child) — IRSA role on aws, user-assigned identity + federated credential on azure — bound to ServiceAccount <name>, which the identity composes. The app waits for it.
+                        properties:
+                          accessPolicies:
+                            type: array
+                            description: Grants, as the WorkloadIdentity XRD defines them (aws — managed policy ARN or name; azure — role name or definition ID plus `scope`).
+                            items:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                      route:
+                        type: object
+                        description: ui, api and dapr-server only — an HTTPRoute (Gateway API) to the app's Service through a shared, platform-owned Gateway.
+                        properties:
+                          hosts:
+                            type: array
+                            minItems: 1
+                            items:
+                              type: string
+                          path:
+                            type: string
+                            default: /
+                          pathType:
+                            type: string
+                            enum: [PathPrefix, Exact]
+                            default: PathPrefix
+                          gateway:
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                              namespace:
+                                type: string
+                              sectionName:
+                                type: string
+                            required: [name]
+                        required: [hosts, gateway]
+                      rules:
+                        type: array
+                        description: operator only — namespaced RBAC rules for the operator's Role.
+                        items:
+                          type: object
+                          properties:
+                            apiGroups:
+                              type: array
+                              items:
+                                type: string
+                            resources:
+                              type: array
+                              items:
+                                type: string
+                            verbs:
+                              type: array
+                              items:
+                                type: string
+                            resourceNames:
+                              type: array
+                              items:
+                                type: string
+                          required: [resources, verbs]
+                      dapr:
+                        type: object
+                        description: dapr-server / dapr-client only — sidecar settings.
+                        properties:
+                          appId:
+                            type: string
+                            description: Dapr app id; defaults to the app name.
+                          protocol:
+                            type: string
+                            enum: [http, grpc, https, grpcs, h2c]
+                            default: http
+                            description: dapr-server only — how the sidecar calls the app.
+                          config:
+                            type: string
+                            description: Name of a Dapr Configuration in this namespace.
+                          logLevel:
+                            type: string
+                            enum: [debug, info, warn, error]
+                      overrides:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                        description: Deep-merged over the generated `app` package Workload (or Task, for cli) — probes, resources, scaler (KEDA), monitoring, volumes, any field of packages/app. Maps merge, lists and scalars replace.
+                      labels:
+                        type: object
+                        additionalProperties:
+                          type: string
+                        description: Extra labels on this app's objects and pods (e.g. jira.shluviza.com/epic, jira.shluviza.com/alert); the project's labels win on a clash.
+                    required: [name, kind, image]
+                dapr:
+                  type: object
+                  description: Dapr building blocks shared by the project's dapr apps.
+                  properties:
+                    components:
+                      type: array
+                      x-kubernetes-list-type: map
+                      x-kubernetes-list-map-keys: [name]
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                          type:
+                            type: string
+                            description: Dapr component type, e.g. state.redis, pubsub.aws.snssqs, pubsub.jetstream, bindings.azure.blobstorage.
+                          version:
+                            type: string
+                            default: v1
+                          scopes:
+                            type: array
+                            items:
+                              type: string
+                            description: Dapr apps of this project allowed to load it; all of them when empty.
+                          ignoreErrors:
+                            type: boolean
+                          initTimeout:
+                            type: string
+                          metadata:
+                            type: array
+                            description: 'Each item is one of: `value`; `secretKeyRef` into a Secret of this namespace; `fromResource` — a field of a project resource''s observed status (field `password` → its auth Secret as a secretKeyRef). The component is composed once every fromResource value is published.'
+                            items:
+                              type: object
+                              properties:
+                                name:
+                                  type: string
+                                value:
+                                  type: string
+                                secretKeyRef:
+                                  type: object
+                                  properties:
+                                    name:
+                                      type: string
+                                    key:
+                                      type: string
+                                  required: [name, key]
+                                fromResource:
+                                  type: object
+                                  properties:
+                                    name:
+                                      type: string
+                                    field:
+                                      type: string
+                                      description: A status field of the resource (host, endpoint, url, queueName, ...), or `password`.
+                                  required: [name, field]
+                              required: [name]
+                        required: [name, type]
+              required: [client, cloud]
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: Every resource and identity is ready, every workload has an available replica, every cli app is composed.
+                provider:
+                  type: string
+                resources:
+                  type: object
+                  description: Per resource name — kind, backend, ready.
+                  additionalProperties:
+                    type: object
+                    properties:
+                      kind:
+                        type: string
+                      backend:
+                        type: string
+                      ready:
+                        type: boolean
+                identities:
+                  type: object
+                  description: Per app with an identity — whether its WorkloadIdentity is ready.
+                  additionalProperties:
+                    type: boolean
+                apps:
+                  type: object
+                  description: Per app — Waiting (dependencies not ready), Composed, or Ready.
+                  additionalProperties:
+                    type: object
+                    properties:
+                      kind:
+                        type: string
+                      phase:
+                        type: string
+                      ready:
+                        type: boolean
+                      availableReplicas:
+                        type: integer
+                      waitingFor:
+                        type: array
+                        items:
+                          type: string
+                message:
+                  type: string
+                  description: What is not ready yet; empty once ready.
+      additionalPrinterColumns:
+        - name: READY
+          type: boolean
+          jsonPath: .status.ready
+        - name: CLIENT
+          type: string
+          jsonPath: .spec.client
+        - name: PROVIDER
+          type: string
+          jsonPath: .status.provider
+        - name: MESSAGE
+          type: string
+          jsonPath: .status.message

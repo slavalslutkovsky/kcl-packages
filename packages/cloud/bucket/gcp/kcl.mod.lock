@@ -1,4 +1,8 @@
 [dependencies]
+  [dependencies.federation]
+    name = "federation"
+    full_name = "federation_0.1.0"
+    version = "0.1.0"
   [dependencies.gcp-storage]
     name = "gcp-storage"
     full_name = "gcp-storage_0.0.1"

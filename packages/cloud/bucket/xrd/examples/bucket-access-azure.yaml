@@ -1,0 +1,30 @@
+# Keyless CI access to an Azure storage account. Each entry becomes a User
+# Assigned Identity in rg-ci-access, one federated credential per subject
+# (exact match, no wildcards, at most 20) and a Storage Blob Data role on the
+# account. status.access[].clientId is azure/login's client-id.
+apiVersion: cloud.example.org/v1alpha1
+kind: Bucket
+metadata:
+  namespace: default
+  name: releaseartifactsaz
+spec:
+  region: westeurope
+  federation:
+    azureResourceGroup: rg-ci-access
+  access:
+    - client: github
+      owner: acme
+      role: write
+      subjects:
+        - repo:acme/app:ref:refs/heads/main
+        - repo:acme/app:environment:prod
+    # GitLab's aud is whatever the job's id_tokens ask for.
+    - client: gitlab
+      repositories: [acme-platform/deployer]
+      audiences: [api://AzureADTokenExchange]
+      subjects:
+        - project_path:acme-platform/deployer:ref_type:branch:ref:main
+  crossplane:
+    compositionSelector:
+      matchLabels:
+        provider: azure

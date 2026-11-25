@@ -12,12 +12,17 @@ spec:
   # own namespace by provider-helm. `region` stays required by the XRD, so give
   # it something honest.
   region: in-cluster
-  # The only backend that serves every format from one instance.
+  # Serves every format from one instance, and is the only backend for
+  # composer and conan. The in-cluster endpoints are plain HTTP: composer needs
+  # "secure-http": false, and `helm` here is Forgejo's chart repository
+  # (helm repo add / helm cm-push), not an oci:// reference.
   formats:
     - oci
     - npm
     - pypi
     - cargo
+    - composer
+    - conan
   owner: packages                # forgejo-only, REQUIRED: the user that owns the packages
   adminSecret: my-packages-admin # forgejo-only, REQUIRED: the Secret below
   storageGb: 20                  # self-hosted only: PVC the repository data lives on

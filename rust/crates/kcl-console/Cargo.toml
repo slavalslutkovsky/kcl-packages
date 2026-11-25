@@ -1,0 +1,28 @@
+[package]
+name = "kcl-console"
+description = "Backend for the multi-cloud console: aggregates Crossplane XRs and cloud inventories over HTTP"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# A binary of its own, not a `kclx` subcommand: the console never renders KCL,
+# so it does not link the KCL SDK and builds in seconds instead of minutes.
+[[bin]]
+name = "kcl-console"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+futures.workspace = true
+kube.workspace = true
+k8s-openapi.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# `process` runs the cloud CLIs; `signal` for graceful shutdown.
+tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread", "signal"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true

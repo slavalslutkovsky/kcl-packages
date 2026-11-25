@@ -1,20 +1,72 @@
-# Crossplane providers the BackupPlan Compositions render against — and the
-# short list is: none of them speak to a cloud.
+# Crossplane providers the BackupPlan Compositions render against. Install
+# only the ones whose backends you intend to use.
 #
 # The velero backend composes velero.io/v1 objects DIRECTLY, so no Crossplane
-# provider is involved in a backup. It needs the Velero operator instead, which
-# providerconfigs.yaml installs through provider-helm. This is the same shape
-# as the in-cluster (cnpg) PostgresInstance backend: the thing that talks to
-# AWS/GCP/Azure is the operator's own object-store plugin, authenticated by the
-# Secret in spec.destination.credentialsSecret, not a Crossplane ProviderConfig.
+# provider is involved in a velero backup. It needs the Velero operator instead,
+# which providerconfigs.yaml installs through provider-helm. This is the same
+# shape as the in-cluster (cnpg) PostgresInstance backend: the thing that talks
+# to AWS/GCP/Azure is the operator's own object-store plugin, authenticated by
+# the Secret in spec.destination.credentialsSecret, not a Crossplane
+# ProviderConfig.
+#
+# The cloud backends are ordinary Crossplane managed resources:
+#   aws    provider-aws-backup (Vault, Plan, Selection) + provider-aws-iam
+#          (the AWS Backup service role)
+#   gcp    provider-gcp-gke (BackupBackupPlan)
+#   azure  provider-azure-dataprotection (vault, policy, instance) +
+#          provider-azure-containerservice (the AKS backup extension, and a
+#          read-only view of the cluster) + provider-azure-authorization (role
+#          assignments, trusted access)
 #
 # The versions here are the ones the schema packages under packages/providers/
 # were generated from (`just seed-backup-providers`) — keep them in step, or the
-# rendered manifests can reference fields the installed operator does not have.
+# rendered manifests can reference fields the installed provider does not have.
 #
 # The Helm chart install needs provider-helm v1.x — that is the first line that
 # ships the namespaced `helm.m.crossplane.io` CRDs the Release below is typed
 # against.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-backup
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-backup:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-iam
+spec:
+  package: ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-gke
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-gke:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-dataprotection
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-dataprotection:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-containerservice
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-containerservice:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-azure-authorization
+spec:
+  package: ghcr.io/crossplane-contrib/provider-azure-authorization:v2.6.0
+---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:

@@ -1,0 +1,79 @@
+# Crossplane providers the Mgmt Composition renders against: one GCP family
+# per service the infra mgmt stack touches.
+#
+# The versions here are the ones the schema packages under packages/providers/
+# were generated from (`just seed-mgmt-providers`) — keep them in step, or the
+# rendered manifests can reference fields the installed provider does not have.
+#
+# Not here: a billing-account IAM kind (provider-gcp has none), so the
+# billing.user / billing.costsManager grants of crossplane@ and
+# crossplane-prod@ stay out of band.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-artifact
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-artifact:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-binaryauthorization
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-binaryauthorization:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-cloudplatform
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-cloudplatform:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-compute
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-compute:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-container
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-container:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-dns
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-dns:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-kms
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-kms:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-secretmanager
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-secretmanager:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-sql
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-sql:v2.6.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-storage
+spec:
+  package: ghcr.io/crossplane-contrib/provider-gcp-storage:v2.6.0

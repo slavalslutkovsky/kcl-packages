@@ -1,0 +1,87 @@
+# The same kind of project on Azure: Flexible Server and Storage natively,
+# the cache on valkey in-cluster (azure has no cache backend here), ACR, and
+# AKS Workload Identity. No queues — the Queue capability has no azure
+# backend; Dapr pub/sub runs over the valkey cache instead.
+apiVersion: platform.example.org/v1alpha1
+kind: Project
+metadata:
+  namespace: globex-portal
+  name: portal
+spec:
+  client: globex
+  environment: prod
+  cloud:
+    provider: azure
+    region: westeurope
+    resourceGroup: globex-portal-prod   # existing; databases, registries and identities go here
+    # az aks show -n <cluster> -g <rg> --query oidcIssuerProfile.issuerUrl -o tsv
+    oidcIssuer: https://westeurope.oic.prod-aks.azure.com/00000000-0000-0000-0000-000000000000/11111111-1111-1111-1111-111111111111/
+    secretStore: globex-key-vault
+  databases:
+    - name: portal-db
+      spec:
+        engineVersion: "16"
+        memoryGb: 4
+        storageGb: 64
+        highAvailability: true
+        publicAccess: false
+  caches:
+    - name: cache                 # → valkey, the default where azure has no backend
+      spec:
+        memoryGb: 1
+        authEnabled: true
+  buckets:
+    - name: globexportaldocs      # storage account names: lowercase alphanumeric
+  registries:
+    - name: globexportal          # ACR names: alphanumeric, no dashes
+  apps:
+    - name: web
+      kind: ui
+      image: globexportal.azurecr.io/web:3.0.0
+      route:
+        hosts: [portal.globex.example.com]
+        gateway: {name: platform, namespace: gateway-system}
+    - name: api
+      kind: api
+      image: globexportal.azurecr.io/api:3.0.0
+      uses: [portal-db, cache, globexportaldocs]
+      identity:
+        accessPolicies:
+          - role: Storage Blob Data Contributor
+            scope: /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/globex-portal-prod
+      route:
+        hosts: [portal.globex.example.com]
+        path: /api
+        gateway: {name: platform, namespace: gateway-system}
+    - name: migrate
+      kind: cli
+      image: globexportal.azurecr.io/api:3.0.0
+      command: [/app/migrate]
+      args: [up]
+      uses: [portal-db]
+    - name: tenant-operator
+      kind: operator
+      image: globexportal.azurecr.io/operator:0.1.0
+      rules:
+        - apiGroups: [portal.globex.example.com]
+          resources: [tenants, tenants/status]
+          verbs: [get, list, watch, update, patch]
+    - name: billing
+      kind: dapr-server
+      image: globexportal.azurecr.io/billing:1.2.0
+      uses: [portal-db]
+    - name: mailer
+      kind: dapr-client
+      image: globexportal.azurecr.io/mailer:1.0.0
+      dapr: {logLevel: debug}
+  dapr:
+    components:
+      # Composed once the cache publishes its endpoint and auth Secret.
+      - name: events
+        type: pubsub.redis
+        scopes: [billing, mailer]
+        metadata:
+          - name: redisHost
+            fromResource: {name: cache, field: endpoint}
+          - name: redisPassword
+            fromResource: {name: cache, field: password}

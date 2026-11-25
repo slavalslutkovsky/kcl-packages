@@ -129,18 +129,27 @@ operators:
              StatusCheck, WorkflowNode]
 
   - name: litmus
-    source: litmuschaos/chaos-operator@3.31.0 (deploy/crds)
-    installedBy: not installed
-    schemas: none
+    source: litmuschaos/litmus-helm@litmus-core-3.31.1 (charts/litmus-core/crds; chaos-operator 3.31.0)
+    installedBy: gitops (mgmt) — litmus-core chart 3.31.1 in `litmus`; not in devkit.toml
+    schemas: packages/providers/litmus/models
     groups: [litmuschaos.io]
     notes: >-
-      The other chaos option, not taken: a Litmus experiment needs a
-      ChaosExperiment installed from the hub per fault type plus a chaos
-      ServiceAccount/Role per target namespace before a ChaosEngine can
-      run, whereas a Chaos Mesh experiment is one self-contained CR. Listed
-      so the choice is on record; nothing here renders these.
-    used: []
-    unused: [ChaosEngine, ChaosExperiment, ChaosResult]
+      The second chaos provider, for comparison with Chaos Mesh. A Fault with
+      `provider: litmus` renders a ChaosEngine plus its own ChaosExperiment
+      definition (copied from chaos-charts 3.31.0 into
+      packages/app/litmus_hub.k) in `litmus`; the manager package renders the
+      same for its experiments, and platform-api's XChaosExperiment composes
+      them through app.litmusObjects. ChaosResult is written by the
+      experiment, never rendered — its verdict surfaces on the ChaosEngine's
+      status, which is what XChaosExperiment maps.
+    used:
+      - kind: ChaosEngine
+        group: litmuschaos.io
+        by: [app, manager (through app.litmusObjects), platform-api xchaosexperiment (through app.litmusObjects)]
+      - kind: ChaosExperiment
+        group: litmuschaos.io
+        by: [app, manager (through app.litmusObjects), platform-api xchaosexperiment (through app.litmusObjects)]
+    unused: [ChaosResult]
 
   - name: flux-source
     source: fluxcd/source-controller@v1.9.2
@@ -426,6 +435,27 @@ providers:
     unused: [APIMapping, Authorizer, Deployment, DomainName, Integration, IntegrationResponse,
              Model, Route, RouteResponse, Stage, VPCLink]
 
+  - name: aws-backup
+    source: ghcr.io/crossplane-contrib/provider-aws-backup:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-backup:v2.6.0 in cloud/backup/xrd/providers.yaml
+    schemas: packages/providers/aws-backup/models
+    groups: [backup.aws.m.upbound.io]
+    used:
+      - kind: Plan
+        group: backup.aws.m.upbound.io
+        by: [cloud/backup/aws]
+      - kind: Selection
+        group: backup.aws.m.upbound.io
+        by: [cloud/backup/aws]
+      - kind: Vault
+        group: backup.aws.m.upbound.io
+        by: [cloud/backup/aws]
+    unused: [Framework, GlobalSettings, RegionSettings, ReportPlan, VaultLockConfiguration,
+             VaultNotifications, VaultPolicy]
+    notes: >-
+      RegionSettings carries the per-region EKS opt-in; it is account-wide, so
+      it is a prerequisite rather than something one BackupPlan composes.
+
   - name: aws-codeartifact
     source: ghcr.io/crossplane-contrib/provider-aws-codeartifact:v2.6.0
     installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-codeartifact:v2.6.0 in cloud/package-registry/xrd/providers.yaml
@@ -577,19 +607,19 @@ providers:
 
   - name: aws-iam
     source: ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0 in cloud/cluster/xrd/providers.yaml, cloud/iam/xrd/providers.yaml, cloud/serverless/xrd/providers.yaml, cloud/workflow/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-aws-iam:v2.6.0 in cloud/backup/xrd/providers.yaml, cloud/cluster/xrd/providers.yaml, cloud/iam/xrd/providers.yaml, cloud/serverless/xrd/providers.yaml, cloud/workflow/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
     schemas: packages/providers/aws-iam/models
     groups: [iam.aws.m.upbound.io]
     used:
       - kind: Role
         group: iam.aws.m.upbound.io
-        by: [cloud/cluster/aws, cloud/iam/aws, cloud/serverless/aws, cloud/workflow/aws, cloud/workload-identity/aws]
+        by: [cloud/backup/aws, cloud/cluster/aws, cloud/iam/aws, cloud/serverless/aws, cloud/workflow/aws, cloud/workload-identity/aws]
       - kind: RolePolicy
         group: iam.aws.m.upbound.io
         by: [cloud/iam/aws]
       - kind: RolePolicyAttachment
         group: iam.aws.m.upbound.io
-        by: [cloud/cluster/aws, cloud/iam/aws, cloud/serverless/aws, cloud/workload-identity/aws]
+        by: [cloud/backup/aws, cloud/cluster/aws, cloud/iam/aws, cloud/serverless/aws, cloud/workload-identity/aws]
     unused: [AccessKey, AccountAlias, AccountPasswordPolicy, Group, GroupMembership,
              GroupPolicyAttachment, InstanceProfile, OpenIDConnectProvider, Policy, SAMLProvider,
              ServerCertificate, ServiceLinkedRole, ServiceSpecificCredential, SigningCertificate,
@@ -776,19 +806,21 @@ providers:
 
   - name: azure-authorization
     source: ghcr.io/crossplane-contrib/provider-azure-authorization:v2.6.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-authorization:v2.6.0 in cloud/iam/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-authorization:v2.6.0 in cloud/backup/xrd/providers.yaml, cloud/iam/xrd/providers.yaml, cloud/workload-identity/xrd/providers.yaml
     schemas: packages/providers/azure-authorization/models
     groups: [authorization.azure.m.upbound.io]
     used:
       - kind: RoleAssignment
         group: authorization.azure.m.upbound.io
-        by: [cloud/iam/azure, cloud/workload-identity/azure]
+        by: [cloud/backup/azure, cloud/iam/azure, cloud/workload-identity/azure]
+      - kind: TrustedAccessRoleBinding
+        group: authorization.azure.m.upbound.io
+        by: [cloud/backup/azure]
     unused: [ManagementGroupPolicyAssignment, ManagementGroupPolicyExemption, ManagementLock,
              PimActiveRoleAssignment, PimEligibleRoleAssignment, PolicyDefinition,
              PolicySetDefinition, ResourceGroupPolicyAssignment, ResourceGroupPolicyExemption,
              ResourcePolicyAssignment, ResourcePolicyExemption, RoleDefinition,
-             RoleManagementPolicy, SubscriptionPolicyAssignment, SubscriptionPolicyExemption,
-             TrustedAccessRoleBinding]
+             RoleManagementPolicy, SubscriptionPolicyAssignment, SubscriptionPolicyExemption]
 
   - name: azure-compute
     source: ghcr.io/crossplane-contrib/provider-azure-compute:v2.6.0
@@ -836,14 +868,39 @@ providers:
 
   - name: azure-containerservice
     source: ghcr.io/crossplane-contrib/provider-azure-containerservice:v2.6.0
-    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-containerservice:v2.6.0 in cloud/cluster/xrd/providers.yaml
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-containerservice:v2.6.0 in cloud/backup/xrd/providers.yaml, cloud/cluster/xrd/providers.yaml
     schemas: packages/providers/azure-containerservice/models
     groups: [containerservice.azure.m.upbound.io]
     used:
       - kind: KubernetesCluster
         group: containerservice.azure.m.upbound.io
-        by: [cloud/cluster/azure]
-    unused: [KubernetesClusterExtension, KubernetesClusterNodePool, KubernetesFleetManager]
+        by: [cloud/backup/azure, cloud/cluster/azure]
+      - kind: KubernetesClusterExtension
+        group: containerservice.azure.m.upbound.io
+        by: [cloud/backup/azure]
+    unused: [KubernetesClusterNodePool, KubernetesFleetManager]
+    notes: >-
+      cloud/backup/azure composes KubernetesCluster Observe-only, to read the
+      cluster's identity; it never manages the cluster.
+
+  - name: azure-dataprotection
+    source: ghcr.io/crossplane-contrib/provider-azure-dataprotection:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-azure-dataprotection:v2.6.0 in cloud/backup/xrd/providers.yaml
+    schemas: packages/providers/azure-dataprotection/models
+    groups: [dataprotection.azure.m.upbound.io]
+    used:
+      - kind: BackupInstanceKubernetesCluster
+        group: dataprotection.azure.m.upbound.io
+        by: [cloud/backup/azure]
+      - kind: BackupPolicyKubernetesCluster
+        group: dataprotection.azure.m.upbound.io
+        by: [cloud/backup/azure]
+      - kind: BackupVault
+        group: dataprotection.azure.m.upbound.io
+        by: [cloud/backup/azure]
+    unused: [BackupInstanceBlobStorage, BackupInstanceDisk, BackupInstancePostgreSQL,
+             BackupInstancePostgreSQLFlexibleServer, BackupPolicyBlobStorage, BackupPolicyDisk,
+             BackupPolicyPostgreSQL, BackupPolicyPostgreSQLFlexibleServer, ResourceGuard]
 
   - name: azure-dbforpostgresql
     source: ghcr.io/crossplane-contrib/provider-azure-dbforpostgresql:v2.6.0
@@ -1155,6 +1212,17 @@ providers:
         group: dns.gcp.m.upbound.io
         by: [cloud/dns/gcp]
     unused: [ManagedZoneIAMMember, Policy, ResponsePolicy, ResponsePolicyRule]
+
+  - name: gcp-gke
+    source: ghcr.io/crossplane-contrib/provider-gcp-gke:v2.6.0
+    installedBy: Provider ghcr.io/crossplane-contrib/provider-gcp-gke:v2.6.0 in cloud/backup/xrd/providers.yaml
+    schemas: packages/providers/gcp-gke/models
+    groups: [gke.gcp.m.upbound.io]
+    used:
+      - kind: BackupBackupPlan
+        group: gke.gcp.m.upbound.io
+        by: [cloud/backup/gcp]
+    unused: []
 
   - name: gcp-kms
     source: ghcr.io/crossplane-contrib/provider-gcp-kms:v2.6.0
