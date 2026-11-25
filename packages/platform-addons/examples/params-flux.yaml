@@ -1,0 +1,42 @@
+# Params the ClientPlatform controller would pass for a gcp client on Flux
+# (contract §2): its repos hold Kyverno policies, an XCanary on Flagger, an
+# XPostgres on CloudNativePG, a GCS bucket, an S3 bucket it cannot have, and
+# a CRD of its own. KEDA was installed before and is sticky.
+#
+#   kcl run packages/platform-addons -D params=packages/platform-addons/examples/params-flux.yaml
+client: client-yurikrupnik/yurikrupnik
+config:
+  apiVersion: platform.shluviza.com/v1alpha1
+  kind: ClientConfig
+  cloud: gcp
+  delivery: flux
+  namespace: flux-system
+  platformSource:
+    flux: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  crossplane:
+    families: [sql]
+    vars:
+      GCP_ADMIN_PROJECT: shl-yurikrupnik
+      XP_KSA: crossplane-gcp
+      XP_GSA_EMAIL: crossplane@shl-yurikrupnik.iam.gserviceaccount.com
+  addons:
+    kyverno:
+      values:
+        admissionController: {replicas: 1}
+    my-tool:
+      enabled: true
+      namespace: my-tool
+      helm: {repo: oci://ghcr.io/example/charts, chart: my-tool, version: 1.2.3}
+      values: {replicas: 2}
+      dependsOn: [cert-manager]
+detected:
+  - {group: "", version: v1, versions: [v1], kind: ConfigMap, count: 4, providers: [], sources: [client-yurikrupnik/GitRepository/app]}
+  - {group: example.com, version: v1, versions: [v1], kind: Widget, count: 1, providers: [], sources: [client-yurikrupnik/GitRepository/app]}
+  - {group: kyverno.io, version: v1, versions: [v1], kind: ClusterPolicy, count: 3, providers: [], sources: [client-yurikrupnik/GitRepository/app]}
+  - {group: platform.shluviza.com, version: v1alpha1, versions: [v1alpha1], kind: XCanary, count: 1, providers: [flagger], sources: [client-yurikrupnik/GitRepository/app]}
+  - {group: platform.shluviza.com, version: v1alpha1, versions: [v1alpha1], kind: XPostgres, count: 1, providers: [cnpg], sources: [client-yurikrupnik/GitRepository/app]}
+  - {group: s3.aws.m.upbound.io, version: v1beta1, versions: [v1beta1], kind: Bucket, count: 1, providers: [], sources: [client-yurikrupnik/GitRepository/app]}
+  - {group: storage.gcp.m.upbound.io, version: v1beta1, versions: [v1beta1], kind: Bucket, count: 2, providers: [], sources: [client-yurikrupnik/GitRepository/app]}
+  - {group: thirdparty.io, version: v1, versions: [v1], kind: Gadget, count: 1, providers: [], sources: [client-yurikrupnik/GitRepository/app]}
+provided: [example.com]
+previous: [keda]

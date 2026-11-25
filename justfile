@@ -69,6 +69,11 @@ gets:
 #                                       Namespace per team. Split a render by
 #                                       layer with
 #                                       `kubectl apply -l platform.example.org/layer=platform`
+#   just platform-addons [params.yaml]  the addons a client's repos need
+#                                       (packages/platform-addons): the plan
+#                                       the ClientPlatform controller renders,
+#                                       Flux or Argo CD install objects plus
+#                                       addons / unmapped / warnings
 #   just entitlements [values.yaml]     who has paid for what
 #                                       (packages/platform/entitlement)
 #   just bucket-import <state> [ns] [mode]
@@ -106,6 +111,9 @@ cncf values="packages/cncf/examples/values.yaml" env="":
 
 gitops values="packages/gitops/examples/values.yaml" env="":
     kcl run packages/gitops -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
+
+platform-addons params="packages/platform-addons/examples/params-flux.yaml":
+    kcl run packages/platform-addons -D params={{ params }}
 
 fleet values="packages/fleet/examples/values.yaml" env="":
     kcl run packages/fleet -D values={{ values }} {{ if env != "" { "-D env=" + env } else { "" } }} -q
