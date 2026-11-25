@@ -4,7 +4,7 @@ metadata:
   namespace: default
   name: platform
 spec:
-  engine: flux                    # fluxcd-community flux2 2.19.0 -> flux-system
+  engine: flux                    # fluxcd-community flux2 2.20.0 -> flux-system
   db:
     connection:                   # validated first: 3 attempts, then the fallback
       host: postgres.shared.svc.cluster.local

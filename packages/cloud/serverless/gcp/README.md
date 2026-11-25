@@ -29,7 +29,7 @@ Full schema: [`../xrd/xrd.yaml`](../xrd/xrd.yaml).
 | `timeoutSeconds` | `timeout: "<n>s"`, default 60 |
 | `env` | container `env`, sorted by name |
 | `serviceAccount` | `template.serviceAccount` |
-| `public` | `ingress` `INGRESS_TRAFFIC_ALL` vs `INGRESS_TRAFFIC_INTERNAL_ONLY`, and the invoker binding |
+| `public` | the invoker binding; `ingress` is always `INGRESS_TRAFFIC_INTERNAL_ONLY` |
 | `deletionPolicy` | `Orphan` → `managementPolicies: [Observe, Create, Update, LateInitialize]` |
 | `tags` | `labels` |
 

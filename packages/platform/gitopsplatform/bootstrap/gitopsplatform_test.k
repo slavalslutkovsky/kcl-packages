@@ -178,15 +178,15 @@ _release = lambda _x {
 
 test_flux_release = lambda {
     r = _release(_build({}))
-    assert r.spec.forProvider.chart.name == "flux2" and r.spec.forProvider.chart.version == "2.19.0", "pinned flux2 chart"
+    assert r.spec.forProvider.chart.name == "flux2" and r.spec.forProvider.chart.version == "2.20.0", "pinned flux2 chart"
     assert r.spec.forProvider.namespace == "flux-system", "default namespace"
     assert r.spec.providerConfigRef.kind == "ClusterProviderConfig" and r.spec.providerConfigRef.name == "default", "in-cluster by default"
     v = _release(_build({
         values = {imageAutomationController.resources.limits.cpu = "1", sourceController.create = False}
     })).spec.forProvider.values
-    assert v.imageAutomationController.create == False, "an override under a defaulted key keeps the default"
+    assert v.imageAutomationController.create == True, "an override under a defaulted key keeps the default"
     assert v.imageAutomationController.resources.limits.cpu == "1", "the override applies"
-    assert v.notificationController.create == False and v.sourceController.create == False, "untouched defaults and new keys both survive"
+    assert v.notificationController.create == True and v.sourceController.create == False, "untouched defaults and new keys both survive"
 }
 
 test_argocd_release = lambda {

@@ -68,6 +68,13 @@ export const createNodesV2: CreateNodes<NxKclPluginOptions> = [
               options: {
                 command: 'kcl test',
                 cwd: `{workspaceRoot}/${projectRoot}`,
+                // Since kcl 0.13.x (after 0.13.0), file.read/exists refuse paths outside the
+                // module root. Tests deliberately read their sibling package's
+                // fixtures (a composite's `../xrd/examples/*.yaml`, pricing's
+                // cross-package XRDs) to prove they stay in step, so the scope
+                // check is switched off for tests only; build and publish-check
+                // keep it (kcl-lang/kcl#1886).
+                env: { KCL_FILE_SCOPE: 'off' },
               },
             },
             lint: {

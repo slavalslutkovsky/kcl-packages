@@ -34,10 +34,10 @@ _orphan_policies = ["Observe", "Create", "Update", "LateInitialize"]
 # backend in this repo publishes, so a cluster's connection Secret works as-is.
 kubeconfig_key = "kubeconfig"
 
-# Pinned charts. flux2 2.19.0 installs Flux v2.9.1 (the version the clusters in
-# this repo run); argo-cd 10.9.6 installs Argo CD v3.5.3, the version the
-# packages/providers/argocd schemas are generated from. The flux defaults
-# switch off the controllers nothing here uses, as devkit.toml does.
+# Pinned charts. flux2 2.20.0 installs Flux v2.10.0; argo-cd 10.9.6 installs
+# Argo CD v3.5.3, the version the packages/providers/argocd schemas are
+# generated from. The flux defaults enable the image automation, image
+# reflection and notification controllers.
 engines = {
     flux = {
         chart = "flux2"
@@ -85,7 +85,7 @@ _condition = lambda res, ctype: str -> bool {
 
 # Helm values over the engine defaults. KCL's `|` replaces a nested dict
 # wholesale, so a user override of one key under imageAutomationController
-# would silently re-enable the controller; merging one level down keeps every
+# would silently drop its `create` default; merging one level down keeps every
 # default the user did not touch. One level is exact for the defaults above,
 # whose leaves are all at depth two.
 merge_values = lambda defaults: {str:any}, overrides: {str:any} -> {str:any} {

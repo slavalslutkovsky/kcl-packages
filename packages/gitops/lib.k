@@ -86,7 +86,7 @@ schema Tenant:
 
     # Paid tier. `private` repositories need team or better; highAvailability
     # needs enterprise.
-    plan: "free" | "team" | "enterprise" = "free"
+    plan: "free" | "team" | "enterprise" = "team"
     # Feature keys the Compositions check before composing anything.
     features: [str] = ["forgejo", "repository"]
     quota: Quota = Quota {}
