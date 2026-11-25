@@ -1,3 +1,21 @@
+## 0.3.1 (2026-11-25)
+
+### 🚀 Features
+
+- **platform:** render app resources in-cluster with kclx KclModule, CI reads toolkit through the ci-read App ([5250120](https://github.com/slavalslutkovsky/kcl-packages/commit/5250120))
+- ⚠️  **app:** add litmus chaos provider and gateway HTTPRoute ([54ce561](https://github.com/slavalslutkovsky/kcl-packages/commit/54ce561))
+- **backup:** add aws, azure and gcp backends, console micro frontends ([873f2e4](https://github.com/slavalslutkovsky/kcl-packages/commit/873f2e4))
+- **packages:** add instancetemplate, local-platform, airflow-dags ([74a0faa](https://github.com/slavalslutkovsky/kcl-packages/commit/74a0faa))
+- **platform:** add Project XR, federation, epics and bucket access ([e112967](https://github.com/slavalslutkovsky/kcl-packages/commit/e112967))
+
+### ⚠️  Breaking Changes
+
+- **app:** add litmus chaos provider and gateway HTTPRoute  ([54ce561](https://github.com/slavalslutkovsky/kcl-packages/commit/54ce561))
+
+### ❤️ Thank You
+
+- yurikrupnik @yurikrupnik
+
 ## 0.1.6 (2026-10-01)
 
 ### 🚀 Features

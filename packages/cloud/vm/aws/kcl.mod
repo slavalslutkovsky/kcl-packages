@@ -1,7 +1,7 @@
 [package]
 name = "vm-aws"
 edition = "v0.12.3"
-version = "0.1.5"
+version = "0.1.6"
 
 [dependencies]
 aws-ec2 = { path = "../../../providers/aws-ec2" }

@@ -1,3 +1,17 @@
+## 0.1.6 (2026-11-25)
+
+### 🚀 Features
+
+- **packages:** pin flux2 2.20.0, bump app to 0.3.0, add litmus ([#1886](https://github.com/slavalslutkovsky/kcl-packages/issues/1886))
+
+### 🩹 Fixes
+
+- **serverless:** always set cloud run ingress to internal only ([60429e4](https://github.com/slavalslutkovsky/kcl-packages/commit/60429e4))
+
+### ❤️ Thank You
+
+- yurikrupnik @yurikrupnik
+
 ## 0.1.5 (2026-10-01)
 
 ### 🚀 Features

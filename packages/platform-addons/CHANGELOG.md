@@ -1,3 +1,13 @@
+## 0.1.1 (2026-11-25)
+
+### 🚀 Features
+
+- **platform-addons:** add package mapping client detection to addons ([d14670b](https://github.com/slavalslutkovsky/kcl-packages/commit/d14670b))
+
+### ❤️ Thank You
+
+- yurikrupnik @yurikrupnik
+
 ## 0.1.0 (2026-11-25)
 
 ### 🚀 Features

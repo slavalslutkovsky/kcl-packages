@@ -1,7 +1,7 @@
 [package]
 name = "registry-gcp"
 edition = "v0.12.3"
-version = "0.1.5"
+version = "0.1.6"
 
 [dependencies]
 gcp-artifact = { path = "../../../providers/gcp-artifact" }

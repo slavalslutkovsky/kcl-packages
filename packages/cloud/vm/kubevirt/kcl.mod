@@ -1,7 +1,7 @@
 [package]
 name = "vm-kubevirt"
 edition = "v0.12.3"
-version = "0.1.1"
+version = "0.1.2"
 
 [dependencies]
 kubevirt = { path = "../../../providers/kubevirt" }

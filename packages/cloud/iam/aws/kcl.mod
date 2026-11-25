@@ -1,7 +1,7 @@
 [package]
 name = "iam-aws"
 edition = "v0.12.3"
-version = "0.1.5"
+version = "0.1.6"
 
 [dependencies]
 aws-iam = { path = "../../../providers/aws-iam" }

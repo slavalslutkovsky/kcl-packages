@@ -1,3 +1,9 @@
+## 0.1.3 (2026-11-25)
+
+### 🧱 Updated Dependencies
+
+- Updated kms-xrd to 0.1.2
+
 ## 0.1.2 (2026-10-01)
 
 This was a version bump only for residency to align it with other projects, there were no code changes.

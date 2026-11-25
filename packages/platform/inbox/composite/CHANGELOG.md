@@ -1,3 +1,18 @@
+## 0.1.5 (2026-11-25)
+
+### 🩹 Fixes
+
+- **serverless:** always set cloud run ingress to internal only ([60429e4](https://github.com/slavalslutkovsky/kcl-packages/commit/60429e4))
+
+### 🧱 Updated Dependencies
+
+- Updated bucket-xrd to 0.1.3
+- Updated queue-xrd to 0.1.3
+
+### ❤️ Thank You
+
+- yurikrupnik @yurikrupnik
+
 ## 0.1.4 (2026-10-01)
 
 This was a version bump only for inbox to align it with other projects, there were no code changes.

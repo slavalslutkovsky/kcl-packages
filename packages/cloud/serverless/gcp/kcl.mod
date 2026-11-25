@@ -1,7 +1,7 @@
 [package]
 name = "serverless-gcp"
 edition = "v0.12.3"
-version = "0.1.5"
+version = "0.1.6"
 
 [dependencies]
 gcp-cloudrun = { path = "../../../providers/gcp-cloudrun" }

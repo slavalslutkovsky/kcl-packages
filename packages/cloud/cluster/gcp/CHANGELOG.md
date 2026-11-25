@@ -1,3 +1,13 @@
+## 0.1.6 (2026-11-25)
+
+### 🚀 Features
+
+- **fleet:** register every GKE cluster to a fleet; env fleets, scopes, logging and rollout sequencing ([e6ed54d](https://github.com/slavalslutkovsky/kcl-packages/commit/e6ed54d))
+
+### ❤️ Thank You
+
+- yurikrupnik @yurikrupnik
+
 ## 0.1.5 (2026-10-01)
 
 ### 🚀 Features

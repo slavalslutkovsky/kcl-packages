@@ -1,3 +1,18 @@
+## 0.1.6 (2026-11-25)
+
+### 🚀 Features
+
+- **packages:** add mgmt xrd, tenant-account and provider packages ([2b153d2](https://github.com/slavalslutkovsky/kcl-packages/commit/2b153d2))
+- **platform:** add Project XR, federation, epics and bucket access ([e112967](https://github.com/slavalslutkovsky/kcl-packages/commit/e112967))
+
+### 🧱 Updated Dependencies
+
+- Updated federation to 0.1.1
+
+### ❤️ Thank You
+
+- yurikrupnik @yurikrupnik
+
 ## 0.1.5 (2026-10-01)
 
 ### 🚀 Features

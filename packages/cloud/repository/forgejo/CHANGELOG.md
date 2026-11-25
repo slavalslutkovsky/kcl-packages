@@ -1,3 +1,9 @@
+## 0.1.6 (2026-11-25)
+
+### 🧱 Updated Dependencies
+
+- Updated entitlement to 0.1.4
+
 ## 0.1.5 (2026-10-01)
 
 This was a version bump only for repository-forgejo to align it with other projects, there were no code changes.

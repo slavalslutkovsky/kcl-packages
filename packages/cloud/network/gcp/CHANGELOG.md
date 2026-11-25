@@ -1,3 +1,18 @@
+## 0.1.6 (2026-11-25)
+
+### 🚀 Features
+
+- **packages:** add mgmt envs factory and network xrd schemas ([f2a916f](https://github.com/slavalslutkovsky/kcl-packages/commit/f2a916f))
+- **packages:** add mgmt xrd, tenant-account and provider packages ([2b153d2](https://github.com/slavalslutkovsky/kcl-packages/commit/2b153d2))
+
+### 🧱 Updated Dependencies
+
+- Updated network-xrd to 0.1.1
+
+### ❤️ Thank You
+
+- yurikrupnik @yurikrupnik
+
 ## 0.1.5 (2026-10-01)
 
 ### 🚀 Features

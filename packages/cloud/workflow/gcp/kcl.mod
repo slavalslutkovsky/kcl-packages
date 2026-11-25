@@ -1,7 +1,7 @@
 [package]
 name = "workflow-gcp"
 edition = "v0.12.3"
-version = "0.1.1"
+version = "0.1.2"
 
 [dependencies]
 gcp-workflows = { path = "../../../providers/gcp-workflows" }
