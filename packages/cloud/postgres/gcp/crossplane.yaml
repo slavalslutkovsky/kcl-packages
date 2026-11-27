@@ -1,0 +1,29 @@
+# Crossplane Configuration package configuration-postgres-gcp:
+# this backend's Composition and exactly what it needs — the module's base
+# package (XRD + Functions), the Providers it composes against and the
+# configurations of any XR it composes. Installing it installs those and
+# nothing else.
+#
+# `tools/configurations.sh sync` adds what kcl.mod implies (provider schema
+# packages, other modules' xrd packages). What it cannot see is added here by
+# hand: an operator installed through provider-helm by
+# xrd/providerconfigs.yaml, an XR composed by kind, every dependency of a
+# Composition rendered by a non-KCL function. `check` keeps both in step
+# with kcl.mod and packages/providers/registry.yaml.
+# Version: kcl.mod (nx release), the same one composition.yaml pins.
+apiVersion: meta.pkg.crossplane.io/v1
+kind: Configuration
+metadata:
+  name: postgres-gcp
+spec:
+  crossplane:
+    version: ">=v2.2.0-0"
+  dependsOn:
+    - apiVersion: pkg.crossplane.io/v1
+      kind: Configuration
+      package: docker.io/yurikrupnik/configuration-postgres
+      version: '>=0.1.0'
+    - apiVersion: pkg.crossplane.io/v1
+      kind: Provider
+      package: ghcr.io/crossplane-contrib/provider-gcp-sql
+      version: v2.6.0

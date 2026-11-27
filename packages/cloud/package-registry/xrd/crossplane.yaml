@@ -1,0 +1,27 @@
+# Crossplane Configuration package configuration-package-registry: the package-registry XRD and the
+# Functions its Compositions run. Every backend is a package of its own
+# (<backend>/crossplane.yaml) depending on this one, so installing a backend
+# installs that backend's Providers and nothing else.
+#
+# Versioned here: `tools/configurations.sh bump package-registry` after any change to
+# xrd.yaml or this file (`check` fails on a stale digest). Functions are kept
+# in step with functions.yaml by `tools/configurations.sh sync`.
+apiVersion: meta.pkg.crossplane.io/v1
+kind: Configuration
+metadata:
+  name: package-registry
+  annotations:
+    pkg.example.org/version: 0.1.0
+    pkg.example.org/digest: 474cfe41000a2ea4
+spec:
+  crossplane:
+    version: ">=v2.2.0-0"
+  dependsOn:
+    - apiVersion: pkg.crossplane.io/v1
+      kind: Function
+      package: ghcr.io/yurikrupnik/function-package-registry
+      version: v0.1.0
+    - apiVersion: pkg.crossplane.io/v1
+      kind: Function
+      package: ghcr.io/crossplane-contrib/function-auto-ready
+      version: v0.7.0

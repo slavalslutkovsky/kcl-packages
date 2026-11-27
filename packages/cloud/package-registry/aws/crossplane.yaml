@@ -1,0 +1,38 @@
+# Crossplane Configuration package configuration-package-registry-aws:
+# this backend's Composition and exactly what it needs — the module's base
+# package (XRD + Functions), the Providers it composes against and the
+# configurations of any XR it composes. Installing it installs those and
+# nothing else.
+#
+# `tools/configurations.sh sync` adds what kcl.mod implies (provider schema
+# packages, other modules' xrd packages). What it cannot see is added here by
+# hand: an operator installed through provider-helm by
+# xrd/providerconfigs.yaml, an XR composed by kind, every dependency of a
+# Composition rendered by a non-KCL function. `check` keeps both in step
+# with kcl.mod and packages/providers/registry.yaml.
+# Versioned here: `tools/configurations.sh bump package-registry-aws` after any change.
+apiVersion: meta.pkg.crossplane.io/v1
+kind: Configuration
+metadata:
+  name: package-registry-aws
+  annotations:
+    pkg.example.org/version: 0.1.1
+    pkg.example.org/digest: 0abdf2ad139e1bfc
+spec:
+  crossplane:
+    version: ">=v2.2.0-0"
+  dependsOn:
+    - apiVersion: pkg.crossplane.io/v1
+      kind: Configuration
+      package: docker.io/yurikrupnik/configuration-package-registry
+      version: '>=0.1.0'
+    # function-package-registry renders this backend: ECR for OCI images,
+    # CodeArtifact for the language registries.
+    - apiVersion: pkg.crossplane.io/v1
+      kind: Provider
+      package: ghcr.io/crossplane-contrib/provider-aws-ecr
+      version: v2.6.0
+    - apiVersion: pkg.crossplane.io/v1
+      kind: Provider
+      package: ghcr.io/crossplane-contrib/provider-aws-codeartifact
+      version: v2.6.0

@@ -281,6 +281,40 @@ workload module backend: install-functions (install-module module) (e2e-provider
     kubectl apply -f "$(just module-dir {{ module }})/xrd/examples/{{ module }}-{{ backend }}.yaml"
     just status
 
+#   just configuration postgres cnpg   |   just configuration bucket gcp
+# The package-manager twin of `workload`: one backend installed as its
+# Configuration package (tools/configurations.sh), so Crossplane resolves the
+# base package (XRD + Functions) and exactly that backend's Providers — instead
+# of the module's XRD, every Composition and every backend's providers. Not
+# combinable with `workload` / `install-module` for the same module: the
+# package manager does not take over an XRD that was applied by hand.
+# Install one backend as a Configuration package, then apply its example.
+configuration module backend: install-functions
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pkg={{ module }}-{{ backend }}
+    pull={{ registry_ip }}:80
+    modules=$(tools/configurations.sh closure "$pkg" --modules)
+    # The KCL modules the Compositions pull, for every package in the closure.
+    for m in $modules; do just e2e-publish "$m"; done
+    # Built for in-cluster names: Configuration dependencies resolve from
+    # {{ registry_ip }}:80 (see registry_ip), KCL sources from {{ registry_host }}.
+    tools/configurations.sh push "$pkg" --registry "$pull" --push-to {{ registry_push }} --kcl-registry {{ registry_host }}
+    # Runtime prerequisites before the package: an ImageConfig created after a
+    # provider revision only reaches it on that revision's next reconcile.
+    runtime=$(for m in $modules; do tools/configurations.sh runtime "$m"; echo "---"; done)
+    if grep -q '^kind:' <<<"$runtime"; then kubectl apply -f - <<<"$runtime"; fi
+    tools/configurations.sh manifest "$pkg" --registry "$pull" | kubectl apply -f -
+    kubectl wait --for=condition=Healthy "configuration.pkg.crossplane.io/configuration-$pkg" --timeout=900s
+    if kubectl get provider.pkg.crossplane.io -o name | grep -q .; then
+        kubectl wait --for=condition=Healthy provider.pkg.crossplane.io --all --timeout=900s
+    fi
+    # Only the ProviderConfigs / Releases whose provider this backend installed.
+    configs=$(tools/configurations.sh providerconfigs {{ module }})
+    if [ -n "$configs" ]; then kubectl apply -f - <<<"$configs"; fi
+    kubectl apply -f "$(just module-dir {{ module }})/xrd/examples/$pkg.yaml"
+    just status
+
 #   just down   |   just down --keep-cluster
 # Tear the platform down: devkit's cluster and add-ons, plus the local registry.
 down *flags:
@@ -685,6 +719,33 @@ seed-workflow-providers:
 # Scaffold a Crossplane v2 XRD + one function-kcl Composition package per provider.
 composition name providers="aws,gcp,azure,rustfs":
     {{ nx }} g nx-kcl:composition {{ name }} --providers={{ providers }} --no-interactive
+
+# ─── Crossplane Configuration packages ────────────────────────────────────────
+# One package per module (xrd/crossplane.yaml: XRD + Functions) and one per
+# backend (<backend>/crossplane.yaml: Composition + exactly its Providers).
+# See docs/configurations.md.
+
+#   just configurations   |   just configurations postgres
+# List the Configuration packages, their versions and dependencies.
+configurations filter="":
+    tools/configurations.sh list {{ filter }}
+
+# Create missing crossplane.yaml files; add/refresh what kcl.mod, registry.yaml and functions.yaml imply.
+configurations-sync module="all":
+    tools/configurations.sh sync {{ module }}
+
+# Fail on drift between the crossplane.yaml files and what they package.
+configurations-check:
+    tools/configurations.sh check
+
+#   just configurations-bump postgres   |   just configurations-bump postgres minor
+# Version a package kcl.mod does not version (a module base, a non-KCL backend).
+configurations-bump package level="patch":
+    tools/configurations.sh bump {{ package }} {{ level }}
+
+# Build the xpkgs into tmp/xpkg/configurations/ without pushing.
+configurations-build filter="all":
+    tools/configurations.sh build {{ filter }}
 
 # ─── Validate ─────────────────────────────────────────────────────────────────
 

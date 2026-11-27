@@ -56,3 +56,10 @@ jobs:
       # side: `just package-graph-check` in the workspace.
       - name: Package dependencies are consistent
         run: just package-graph-check
+
+      # Every module's Crossplane Configuration packages (crossplane.yaml)
+      # agree with kcl.mod, packages/providers/registry.yaml and
+      # xrd/functions.yaml, and no self-versioned package changed without a
+      # bump. yq v4 ships on the ubuntu runner image.
+      - name: Crossplane Configuration packages are consistent
+        run: tools/configurations.sh check
