@@ -1,8 +1,9 @@
 # console
 
 Multi-cloud console over the portable XRDs in [`packages/cloud`](../../packages/cloud):
-one micro frontend per domain, composed by a host into an aggregate dashboard.
-Each domain joins two kinds of source into one row per real resource:
+one single-spa micro frontend per domain, composed by the shluviza-wrokspace
+console host (`apps/console-host`) into an aggregate dashboard. Each domain
+joins two kinds of source into one row per real resource:
 
 * the Crossplane composites in the current kubecontext, and
 * each cloud's own inventory, read through its CLI (`aws`, `gcloud`, `az`),
@@ -12,22 +13,32 @@ and which cloud resources nothing manages yet (import candidates — see
 [`packages/cloud/bucket/import`](../../packages/cloud/bucket/import)).
 
 ```
- browser ──▶ host :4200  (console-host, Module Federation host)
-               │  /           overview: every remote's ./Widget
-               │  /buckets    bucket remote's ./Page
-               │  /api/*  ──▶ kcl-console :8095 (rust/crates/kcl-console)
-               ▼                 ├─ k8s    buckets.cloud.example.org (kube-rs)
-             bucket :4201        ├─ aws    aws s3api list-buckets
-             (console-bucket,    ├─ gcp    gcloud storage buckets list
-              remoteEntry.js)    └─ azure  az storage account list
+ browser ──▶ console-host :4240  (shluviza-wrokspace apps/console-host, single-spa root config)
+               │  import map from mfe-registry :8097 (MicroFrontend resources)
+               │  /           overview: every module's `widget` parcel
+               │  /buckets    @shluviza/bucket application
+               │  /buckets/api/*  ──▶ kcl-console :8095 (rust/crates/kcl-console)
+               ▼                         ├─ k8s    buckets.cloud.example.org (kube-rs)
+             bucket :4201                ├─ aws    aws s3api list-buckets
+             (console-bucket,            ├─ gcp    gcloud storage buckets list
+              src/mfe.tsx)               └─ azure  az storage account list
 ```
+
+`bucket` is the micro frontend `@shluviza/bucket`: route `/buckets`, apiBase
+`/buckets`. It has no Kubernetes deployment; it runs in local dev only.
 
 ## Run
 
+With the workspace host (ports: bucket 4201, kcl-console 8095, mfe-registry
+8097, host 4240):
+
 ```shell
 just console-api      # API on 127.0.0.1:8095, all four sources
-just console-dev      # host :4200 + bucket remote :4201, hot reload
-open http://localhost:4200
+just console-dev      # bucket micro frontend :4201, hot reload
+# in shluviza-wrokspace: mfe-registry on :8097 and the host on :4240, with a
+# MicroFrontend for @shluviza/bucket (dev entry http://localhost:4201/src/mfe.tsx);
+# see docs/console-host.md there
+open http://localhost:4240/buckets
 ```
 
 `just console-api --source k8s` limits the sources. A source that is not set
@@ -36,39 +47,46 @@ up (no kubeconfig, CLI not on PATH, XRD not installed) is reported as
 CLI's first stderr line. Neither fails the response. The CLIs run with the
 caller's own login, so the console lists exactly what that person can see.
 
-The remote also runs alone: `pnpm nx serve console-bucket` → http://localhost:4201.
+The micro frontend also runs alone: `pnpm nx serve console-bucket` →
+http://localhost:4201, proxying `/api` to kcl-console.
 
 | project | targets |
 | --- | --- |
-| `console-host` | `serve`, `build`, `preview`, `typecheck` |
 | `console-bucket` | `serve`, `build`, `preview`, `typecheck`, `test` |
 | `kcl-console` (cargo) | `just console-api`; checked by `just kclx-test` |
 
-## Remote contract
+`build` writes the standalone SPA to `dist/` and the module to
+`dist/mfe/entry.js` with hashed chunks in `dist/mfe/assets/`.
 
-A remote exposes `./Widget` (overview card) and `./Page` (its route). Each
-exports one function:
+## Module contract
+
+`src/mfe.tsx` is an ES module exporting single-spa application lifecycles and
+a `widget` parcel (the overview card):
 
 ```ts
-mount(el: HTMLElement, props: { apiBase?: string; pageHref?: string; navigate?: (to: string) => void }): () => void
+export function bootstrap(props: AppProps): Promise<void>;
+export function mount(props: AppProps): Promise<void>;
+export function unmount(props: AppProps): Promise<void>;
+export const widget: { bootstrap; mount; unmount }; // props: WidgetProps
+
+interface AppProps { name: string; domElement: HTMLElement; apiBase: string; basePath: string; navigate(to: string): void; addStyles?(css: string): () => void }
+type WidgetProps = Omit<AppProps, 'name'>;
 ```
 
-It renders into the host's element and returns the teardown. Nothing is
-shared at the framework level (`shared: {}`), so host and remotes deploy and
-upgrade independently; each remote injects its own Tailwind build once
-(`<style id="console-remote-<name>">`). Remotes call `/api/...` relative to
-the page, so the host's origin (dev proxy, or the ingress in a deployment)
-routes every remote's API traffic.
-
-Point the host at a deployed remote at build or dev time:
-`VITE_BUCKET_REMOTE=https://…/remoteEntry.js pnpm nx build console-host`.
+Both render into the host's `domElement`. API calls go to
+`${apiBase}/api/...`. The module hands its Tailwind build to the host's
+`addStyles`, which scopes it to the module's containers with CSS `@scope`, and
+calls the returned remover when neither the page nor the widget is mounted;
+without a host it injects `<style id="mfe-style-@shluviza/bucket">` itself.
+Nothing is shared at the framework level, so host and modules deploy and
+upgrade independently. The full contract is `docs/console-host.md` in
+shluviza-wrokspace.
 
 ## Adding a domain
 
 1. `rust/crates/kcl-console`: a source module for the XR (`k8s.rs` pattern)
    and the cloud listings (`cloud.rs`), merged by `model::merge`, under a new
    `/api/<domain>` route.
-2. `apps/console/<domain>`: copy `bucket/`, change the federation `name`, the
-   port, and the style id.
-3. Host: the remote in `vite.config.ts` `remotes`, a `declare module` in
-   `src/remotes.d.ts`, an entry in `src/domains.ts`.
+2. `apps/console/<domain>`: copy `bucket/`, change the port, the module name
+   and the style id.
+3. Host: a `MicroFrontend` resource for the module in shluviza-wrokspace.

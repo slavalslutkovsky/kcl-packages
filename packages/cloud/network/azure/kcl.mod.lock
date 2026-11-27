@@ -13,5 +13,5 @@
     oci_tag = "1.32.4"
   [dependencies.network-xrd]
     name = "network-xrd"
-    full_name = "network-xrd_0.1.0"
-    version = "0.1.0"
+    full_name = "network-xrd_0.1.1"
+    version = "0.1.1"

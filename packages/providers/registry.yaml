@@ -13,6 +13,10 @@
 #                                  generated packages, and the per-module
 #                                  xrd/providers.yaml manifests
 #
+# And by tools/configurations.sh (`just configurations-check`): every Provider
+# a module's Configuration packages depend on must be a row's install ref
+# whose `modules` lists that module (docs/configurations.md).
+#
 # Fields
 #   name      schema package directory under packages/providers/
 #   cloud     aws | gcp | azure | oci | kubernetes (in-cluster, no cloud account)
@@ -34,8 +38,8 @@
 #   install   package ref installed as a pkg.crossplane.io Provider.
 #             Omitted  -> "<image>:<tag>". "none" -> nothing is installed
 #             (the CRDs come from an operator, not a Crossplane provider).
-#   modules   modules whose renderers compose it: a cloud module
-#             (packages/cloud/<module>) or a top-level package such as `app`;
+#   modules   modules whose renderers compose it: a Composition module
+#             (packages/<area>/<module>) or a top-level package such as `app`;
 #             [] means the schemas are generated and available but not wired in yet
 #   notes     why this row looks the way it does
 version: 1
@@ -137,7 +141,7 @@ providers:
     service: iam
     image: ghcr.io/crossplane-contrib/provider-aws-iam
     tag: v2.6.0
-    modules: [backup, cluster, iam, serverless, workflow, workload-identity]
+    modules: [backup, bucket, cluster, iam, serverless, workflow, workload-identity]
     notes: >-
       Shared: EKS clusters cannot exist without their IAM roles, and Lambda
       and Step Functions need an execution role, so cluster, serverless and
@@ -216,7 +220,7 @@ providers:
     service: s3
     image: ghcr.io/crossplane-contrib/provider-aws-s3
     tag: v2.6.0
-    modules: [bucket, landing]
+    modules: [bucket, landing, name]
     notes: >-
       Also backs the rustfs bucket backend: an in-cluster S3-compatible server
       driven through this provider with an endpoint-overriding ProviderConfig.
@@ -449,7 +453,7 @@ providers:
     service: storage
     image: ghcr.io/crossplane-contrib/provider-gcp-storage
     tag: v2.6.0
-    modules: [bucket, landing, mgmt]
+    modules: [bucket, landing, mgmt, name]
 
   - name: gcp-workflows
     cloud: gcp
@@ -474,7 +478,7 @@ providers:
     service: authorization
     image: ghcr.io/crossplane-contrib/provider-azure-authorization
     tag: v2.6.0
-    modules: [backup, iam, workload-identity, organization]
+    modules: [backup, bucket, iam, workload-identity, organization]
     notes: >-
       Azure splits the identity (managedidentity) from its role assignments
       (authorization), so the iam Composition needs both. The organization
@@ -571,7 +575,7 @@ providers:
     service: managedidentity
     image: ghcr.io/crossplane-contrib/provider-azure-managedidentity
     tag: v2.6.0
-    modules: [iam, workload-identity]
+    modules: [bucket, iam, workload-identity]
 
   - name: azure-management
     cloud: azure
@@ -591,7 +595,7 @@ providers:
     service: network
     image: ghcr.io/crossplane-contrib/provider-azure-network
     tag: v2.6.0
-    modules: [vm, hubspoke, instancetemplate]
+    modules: [vm, hubspoke, instancetemplate, network]
     notes: >-
       The VM's NIC and public IP live in the network family, not compute — and
       so does Virtual WAN: the hubspoke module's Virtual Hub, its connections
@@ -637,7 +641,7 @@ providers:
     service: helm
     image: ghcr.io/crossplane-contrib/provider-helm
     tag: v1.3.0
-    modules: [backup, cluster, email, forge, kms, landing, package-registry, postgres, redis, registry]
+    modules: [backup, cluster, email, forge, gitopsplatform, kms, landing, package-registry, postgres, queue, redis, registry]
     notes: >-
       Must be v1.x — the first line that ships the namespaced
       helm.m.crossplane.io CRDs the Compositions render. Backs the stalwart

@@ -281,6 +281,40 @@ workload module backend: install-functions (install-module module) (e2e-provider
     kubectl apply -f "$(just module-dir {{ module }})/xrd/examples/{{ module }}-{{ backend }}.yaml"
     just status
 
+#   just configuration postgres cnpg   |   just configuration bucket gcp
+# The package-manager twin of `workload`: one backend installed as its
+# Configuration package (tools/configurations.sh), so Crossplane resolves the
+# base package (XRD + Functions) and exactly that backend's Providers — instead
+# of the module's XRD, every Composition and every backend's providers. Not
+# combinable with `workload` / `install-module` for the same module: the
+# package manager does not take over an XRD that was applied by hand.
+# Install one backend as a Configuration package, then apply its example.
+configuration module backend: install-functions
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pkg={{ module }}-{{ backend }}
+    pull={{ registry_ip }}:80
+    modules=$(tools/configurations.sh closure "$pkg" --modules)
+    # The KCL modules the Compositions pull, for every package in the closure.
+    for m in $modules; do just e2e-publish "$m"; done
+    # Built for in-cluster names: Configuration dependencies resolve from
+    # {{ registry_ip }}:80 (see registry_ip), KCL sources from {{ registry_host }}.
+    tools/configurations.sh push "$pkg" --registry "$pull" --push-to {{ registry_push }} --kcl-registry {{ registry_host }}
+    # Runtime prerequisites before the package: an ImageConfig created after a
+    # provider revision only reaches it on that revision's next reconcile.
+    runtime=$(for m in $modules; do tools/configurations.sh runtime "$m"; echo "---"; done)
+    if grep -q '^kind:' <<<"$runtime"; then kubectl apply -f - <<<"$runtime"; fi
+    tools/configurations.sh manifest "$pkg" --registry "$pull" | kubectl apply -f -
+    kubectl wait --for=condition=Healthy "configuration.pkg.crossplane.io/configuration-$pkg" --timeout=900s
+    if kubectl get provider.pkg.crossplane.io -o name | grep -q .; then
+        kubectl wait --for=condition=Healthy provider.pkg.crossplane.io --all --timeout=900s
+    fi
+    # Only the ProviderConfigs / Releases whose provider this backend installed.
+    configs=$(tools/configurations.sh providerconfigs {{ module }})
+    if [ -n "$configs" ]; then kubectl apply -f - <<<"$configs"; fi
+    kubectl apply -f "$(just module-dir {{ module }})/xrd/examples/$pkg.yaml"
+    just status
+
 #   just down   |   just down --keep-cluster
 # Tear the platform down: devkit's cluster and add-ons, plus the local registry.
 down *flags:
@@ -686,6 +720,33 @@ seed-workflow-providers:
 composition name providers="aws,gcp,azure,rustfs":
     {{ nx }} g nx-kcl:composition {{ name }} --providers={{ providers }} --no-interactive
 
+# ─── Crossplane Configuration packages ────────────────────────────────────────
+# One package per module (xrd/crossplane.yaml: XRD + Functions) and one per
+# backend (<backend>/crossplane.yaml: Composition + exactly its Providers).
+# See docs/configurations.md.
+
+#   just configurations   |   just configurations postgres
+# List the Configuration packages, their versions and dependencies.
+configurations filter="":
+    tools/configurations.sh list {{ filter }}
+
+# Create missing crossplane.yaml files; add/refresh what kcl.mod, registry.yaml and functions.yaml imply.
+configurations-sync module="all":
+    tools/configurations.sh sync {{ module }}
+
+# Fail on drift between the crossplane.yaml files and what they package.
+configurations-check:
+    tools/configurations.sh check
+
+#   just configurations-bump postgres   |   just configurations-bump postgres minor
+# Version a package kcl.mod does not version (a module base, a non-KCL backend).
+configurations-bump package level="patch":
+    tools/configurations.sh bump {{ package }} {{ level }}
+
+# Build the xpkgs into tmp/xpkg/configurations/ without pushing.
+configurations-build filter="all":
+    tools/configurations.sh build {{ filter }}
+
 # ─── Validate ─────────────────────────────────────────────────────────────────
 
 # Build + test + lint the apps (compositions + cluster); providers are skipped.
@@ -777,9 +838,13 @@ yaml-check *files:
 # Workspace invariants that nothing else enforces:
 #   1. kcl.mod names are unique — nx derives the project name from that field,
 #      so a duplicate silently collapses two projects into one.
-#   2. every `path = "…"` dependency resolves to a real package — the cloud
-#      Compositions consume the provider schemas this way, and a stale path
-#      only fails much later, inside `kcl run`.
+#   2. every `path = "…"` dependency resolves to a real package, and pins no
+#      `version` — the cloud Compositions consume the provider schemas this
+#      way, and a stale path only fails much later, inside `kcl run`. The path
+#      is the pin: KCL refuses a path dep whose `version` differs from the
+#      target's kcl.mod, and `nx release` bumps the target without touching its
+#      dependents (`updateDependents: never`), so a pinned version breaks every
+#      dependent at the next release (`package 'hubspoke-xrd:0.1.1' not found`).
 #   3. a Composition's `source:` image matches its own package name — that line
 #      is rewritten by `nx release`, and a hand-edit here points a live
 #      Composition at somebody else's package.
@@ -799,6 +864,11 @@ mod-check:
             [ -z "$p" ] && continue
             [ -f "$dir/$p/kcl.mod" ] || { echo "$mod: path dependency not found: $p"; fail=1; }
         done < <(grep -o 'path = "[^"]*"' "$mod" | sed 's/path = "//;s/"//')
+        if grep -qE 'path = "[^"]*"[^}]*\bversion\s*=' "$mod"; then
+            echo "$mod: path dependency pins a version (drop it; the path is the pin):"
+            grep -nE 'path = "[^"]*"[^}]*\bversion\s*=' "$mod" | sed 's/^/  /'
+            fail=1
+        fi
     done < <(find packages -name kcl.mod -not -path '*/node_modules/*')
     while IFS= read -r comp; do
         dir=$(dirname "$comp")
@@ -1204,17 +1274,19 @@ pkgreg-install version="v0.1.0": pkgreg-image registry
 
 # ─── console (multi-cloud micro frontends, apps/console) ──────────────────────
 #
-# A Module Federation host (:4200) with one remote per packages/cloud domain
-# (bucket :4201), over the `kcl-console` API (:8095). apps/console/README.md.
+# One single-spa micro frontend per packages/cloud domain (bucket :4201), over
+# the `kcl-console` API (:8095). The host is apps/console-host in the
+# shluviza-wrokspace workspace (:4240). apps/console/README.md.
 
 #   just console-api --source k8s,aws --timeout-secs 10
 # Serve /api/buckets: Bucket XRs in the current kubecontext + the aws/gcloud/az CLIs.
 console-api *args:
     cargo run --manifest-path rust/Cargo.toml -q -p kcl-console -- {{ args }}
 
-# Host and every remote with hot reload (run `just console-api` alongside).
+# The bucket micro frontend with hot reload (run `just console-api` alongside);
+# open it through the workspace host, apps/console-host (:4240).
 console-dev:
-    pnpm nx run-many -t serve -p console-host console-bucket
+    pnpm nx run console-bucket:serve
 
 # ─── KclModule operator (kube-rs) ─────────────────────────────────────────────
 #

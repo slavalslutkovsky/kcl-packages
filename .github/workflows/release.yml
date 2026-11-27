@@ -204,3 +204,27 @@ jobs:
       - name: Publish bumped packages to OCI
         if: steps.version.outputs.projects != ''
         run: pnpm exec nx release publish --projects="${{ steps.version.outputs.projects }}" --yes
+
+      # Crossplane Configuration packages (docs/configurations.md): every
+      # version not published yet. Unconditional — a module base package (XRD +
+      # Functions) is versioned in its crossplane.yaml, outside nx, so it can
+      # move on a push that bumps no KCL package. A published version is marked
+      # by the git tag xpkg/configuration-<name>/<version>; deliberately not
+      # `<pkg>@<version>`, which the affected-base step above reads. Runs after
+      # the KCL publish because every Composition pins its KCL module.
+      - name: Install Crossplane CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/crossplane/crossplane/main/install.sh | XP_VERSION=v2.5.0 sh
+          sudo mv crossplane /usr/local/bin/
+
+      # `crossplane xpkg push` reads the docker credential store.
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Publish Crossplane Configuration packages
+        run: |
+          tools/configurations.sh check
+          tools/configurations.sh push all --registry "$KCL_REGISTRY" --skip-tagged --tag
+          git push origin 'refs/tags/xpkg/*:refs/tags/xpkg/*'

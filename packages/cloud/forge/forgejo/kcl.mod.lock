@@ -1,8 +1,8 @@
 [dependencies]
   [dependencies.entitlement]
     name = "entitlement"
-    full_name = "entitlement_0.1.3"
-    version = "0.1.3"
+    full_name = "entitlement_0.1.4"
+    version = "0.1.4"
   [dependencies.helm]
     name = "helm"
     full_name = "helm_0.0.1"

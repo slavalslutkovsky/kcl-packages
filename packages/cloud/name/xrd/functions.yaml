@@ -1,13 +1,19 @@
+# Functions the name Compositions run.
+#
+# Pinned, and sourced from ghcr.io like every other module's: the previous
+# `xpkg.upbound.io/crossplane-contrib/function-*:latest` references do not
+# resolve (function-auto-ready:latest 404s with MANIFEST_UNKNOWN), and a
+# Configuration dependency needs a semver version.
 apiVersion: pkg.crossplane.io/v1
 kind: Function
 metadata:
   name: function-kcl
 spec:
-  package: xpkg.upbound.io/crossplane-contrib/function-kcl:latest
+  package: ghcr.io/crossplane-contrib/function-kcl:v0.12.2
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Function
 metadata:
   name: function-auto-ready
 spec:
-  package: xpkg.upbound.io/crossplane-contrib/function-auto-ready:latest
+  package: ghcr.io/crossplane-contrib/function-auto-ready:v0.7.0

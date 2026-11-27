@@ -1,8 +1,8 @@
 [dependencies]
   [dependencies.app]
     name = "app"
-    full_name = "app_0.3.0"
-    version = "0.3.0"
+    full_name = "app_0.3.1"
+    version = "0.3.1"
   [dependencies.argocd]
     name = "argocd"
     full_name = "argocd_0.0.1"
@@ -17,8 +17,8 @@
     version = "0.0.1"
   [dependencies.cluster]
     name = "cluster"
-    full_name = "cluster_0.1.6"
-    version = "0.1.6"
+    full_name = "cluster_0.1.7"
+    version = "0.1.7"
   [dependencies.cnpg]
     name = "cnpg"
     full_name = "cnpg_0.0.1"
@@ -65,8 +65,8 @@
     version = "0.0.1"
   [dependencies.manager]
     name = "manager"
-    full_name = "manager_0.1.6"
-    version = "0.1.6"
+    full_name = "manager_0.1.7"
+    version = "0.1.7"
   [dependencies.prometheus-operator]
     name = "prometheus-operator"
     full_name = "prometheus-operator_0.0.1"
