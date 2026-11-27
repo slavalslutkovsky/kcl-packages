@@ -1,4 +1,5 @@
-//! Backend for the multi-cloud console (`apps/console`).
+//! Backend for the multi-cloud console (`apps/console`), whose single-spa
+//! micro frontends the shluviza-wrokspace host (`apps/console-host`) loads.
 //!
 //! Each portable XRD in `packages/cloud` gets a micro frontend; this crate
 //! serves their data. A domain aggregates two kinds of source into one row

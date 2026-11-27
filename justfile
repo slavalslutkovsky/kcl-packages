@@ -777,9 +777,13 @@ yaml-check *files:
 # Workspace invariants that nothing else enforces:
 #   1. kcl.mod names are unique — nx derives the project name from that field,
 #      so a duplicate silently collapses two projects into one.
-#   2. every `path = "…"` dependency resolves to a real package — the cloud
-#      Compositions consume the provider schemas this way, and a stale path
-#      only fails much later, inside `kcl run`.
+#   2. every `path = "…"` dependency resolves to a real package, and pins no
+#      `version` — the cloud Compositions consume the provider schemas this
+#      way, and a stale path only fails much later, inside `kcl run`. The path
+#      is the pin: KCL refuses a path dep whose `version` differs from the
+#      target's kcl.mod, and `nx release` bumps the target without touching its
+#      dependents (`updateDependents: never`), so a pinned version breaks every
+#      dependent at the next release (`package 'hubspoke-xrd:0.1.1' not found`).
 #   3. a Composition's `source:` image matches its own package name — that line
 #      is rewritten by `nx release`, and a hand-edit here points a live
 #      Composition at somebody else's package.
@@ -799,6 +803,11 @@ mod-check:
             [ -z "$p" ] && continue
             [ -f "$dir/$p/kcl.mod" ] || { echo "$mod: path dependency not found: $p"; fail=1; }
         done < <(grep -o 'path = "[^"]*"' "$mod" | sed 's/path = "//;s/"//')
+        if grep -qE 'path = "[^"]*"[^}]*\bversion\s*=' "$mod"; then
+            echo "$mod: path dependency pins a version (drop it; the path is the pin):"
+            grep -nE 'path = "[^"]*"[^}]*\bversion\s*=' "$mod" | sed 's/^/  /'
+            fail=1
+        fi
     done < <(find packages -name kcl.mod -not -path '*/node_modules/*')
     while IFS= read -r comp; do
         dir=$(dirname "$comp")
@@ -1204,17 +1213,19 @@ pkgreg-install version="v0.1.0": pkgreg-image registry
 
 # ─── console (multi-cloud micro frontends, apps/console) ──────────────────────
 #
-# A Module Federation host (:4200) with one remote per packages/cloud domain
-# (bucket :4201), over the `kcl-console` API (:8095). apps/console/README.md.
+# One single-spa micro frontend per packages/cloud domain (bucket :4201), over
+# the `kcl-console` API (:8095). The host is apps/console-host in the
+# shluviza-wrokspace workspace (:4240). apps/console/README.md.
 
 #   just console-api --source k8s,aws --timeout-secs 10
 # Serve /api/buckets: Bucket XRs in the current kubecontext + the aws/gcloud/az CLIs.
 console-api *args:
     cargo run --manifest-path rust/Cargo.toml -q -p kcl-console -- {{ args }}
 
-# Host and every remote with hot reload (run `just console-api` alongside).
+# The bucket micro frontend with hot reload (run `just console-api` alongside);
+# open it through the workspace host, apps/console-host (:4240).
 console-dev:
-    pnpm nx run-many -t serve -p console-host console-bucket
+    pnpm nx run console-bucket:serve
 
 # ─── KclModule operator (kube-rs) ─────────────────────────────────────────────
 #

@@ -42,9 +42,6 @@ importers:
         specifier: ^1.9.15
         version: 1.9.19
     devDependencies:
-      '@module-federation/vite':
-        specifier: ^1.23.11
-        version: 1.24.0(typescript@5.9.3)(vite@8.3.8(@types/node@20.19.43)(jiti@2.7.0)(yaml@2.9.0))
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.5(vite@8.3.8(@types/node@20.19.43)(jiti@2.7.0)(yaml@2.9.0))
@@ -63,34 +60,6 @@ importers:
       vitest:
         specifier: ^5.0.1
         version: 5.1.0(@types/node@20.19.43)(vite@8.3.8(@types/node@20.19.43)(jiti@2.7.0)(yaml@2.9.0))
-
-  apps/console/host:
-    dependencies:
-      '@tanstack/solid-router':
-        specifier: ^1.170.36
-        version: 1.170.43(solid-js@1.9.19)
-      solid-js:
-        specifier: ^1.9.15
-        version: 1.9.19
-    devDependencies:
-      '@module-federation/vite':
-        specifier: ^1.23.11
-        version: 1.24.0(typescript@5.9.3)(vite@8.3.8(@types/node@20.19.43)(jiti@2.7.0)(yaml@2.9.0))
-      '@tailwindcss/vite':
-        specifier: ^4.3.3
-        version: 4.3.5(vite@8.3.8(@types/node@20.19.43)(jiti@2.7.0)(yaml@2.9.0))
-      tailwindcss:
-        specifier: ^4.3.3
-        version: 4.3.5
-      typescript:
-        specifier: 5.9.3
-        version: 5.9.3
-      vite:
-        specifier: ^8.3.0
-        version: 8.3.8(@types/node@20.19.43)(jiti@2.7.0)(yaml@2.9.0)
-      vite-plugin-solid:
-        specifier: ^2.11.14
-        version: 2.11.16(solid-js@1.9.19)(supports-color@7.2.0)(vite@8.3.8(@types/node@20.19.43)(jiti@2.7.0)(yaml@2.9.0))
 
   tools/bench:
     dependencies:
@@ -749,39 +718,6 @@ packages:
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
 
-  '@module-federation/dts-plugin@2.9.3':
-    resolution: {integrity: sha512-U5H8D36rLuCTS7ZPEAfvqIp6b5OZms3PComHPzFQcg12xlUr31PPi1gd3FbjKVFFvlqyDpEiDZ355fKi9ba5zA==}
-    peerDependencies:
-      typescript: ^4.9.0 || ^5.0.0 || ^6.0.0 || ^7.0.0
-      vue-tsc: '>=1.0.24'
-    peerDependenciesMeta:
-      vue-tsc:
-        optional: true
-
-  '@module-federation/error-codes@2.9.3':
-    resolution: {integrity: sha512-sXWo6XHOFKC1Dcu9DcSA1okZjtIz2y3uM+NJrAoSpeZ9QSPXielkMWT5PtG7MqGE3OQ+/HDawiLK53IOi3NHcQ==}
-
-  '@module-federation/managers@2.9.3':
-    resolution: {integrity: sha512-C9yyp/edzCYs7+yvvQv2cBRd9A5/n9RPkGhn6KMBbchMuKWyn5qbC6pbl70TAkFh3wHRqcyUCIHrMf+Fek0u4A==}
-
-  '@module-federation/runtime-core@2.9.3':
-    resolution: {integrity: sha512-E6AjfIWFgZOEATxf+GzBIg54Ejp7QFNTxtVzwnnhEEu01dErBo7qLjJvEPXGiN5sJTNf2a4HIW/wZTM23skouQ==}
-
-  '@module-federation/runtime@2.9.3':
-    resolution: {integrity: sha512-VCJV1VzKk+jvt+1CcTrslbl3LAKScHFpPxKSviafpMIqeHDWIDEY7ZEbVVJl/GuUjA36R7j0QhOPEjihPcz9/A==}
-
-  '@module-federation/sdk@2.9.3':
-    resolution: {integrity: sha512-cT5ko/JDzGrKe8N+MFPgwb07G8fzmpnZbKZjGjXvT9phagQpiOfV6WQZhu1j+HtO152Frv1vjv/1Hhg2wMUL8g==}
-
-  '@module-federation/third-party-dts-extractor@2.9.3':
-    resolution: {integrity: sha512-jUWFWa5l7j2jb3JU9bfGHZ5luv6XAogMsvJ/yG59AZmhpliPozkyxYRjnbtik85IipZF4Cb06PW9qv5qRRf6OQ==}
-
-  '@module-federation/vite@1.24.0':
-    resolution: {integrity: sha512-59h1pQARXDbNAHLhxLXJ6mJlRCqEIni04ZOlHJuJGlrlaMfTPt7ahwdhejXe/rb59f4nJptcJ5MK9ZakzadP1w==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    peerDependencies:
-      vite: ^5.1.0 || ^6.0.0 || ^7.0.0 || ^8.0.0
-
   '@napi-rs/wasm-runtime@0.2.4':
     resolution: {integrity: sha512-9zESzOO5aDByvhIAsOy9TbpZ0Ur2AJbUI7UT73kcUTS2mxAMHOBaa1st/jAymNoCtvrit99kkzT1FZuXVcgfIQ==}
 
@@ -1113,21 +1049,6 @@ packages:
   '@rolldown/pluginutils@1.1.1':
     resolution: {integrity: sha512-glFIJDvLNDtJhT9qrMFWLPbvS+skxgt4L0K8Ei2YtnhPysAJnsI7nyxSJxKj4ADeKX0OLjC4ntRkwpLOoS3rwA==}
 
-  '@solid-primitives/refs@1.1.4':
-    resolution: {integrity: sha512-bLjwIs6ZPu8NQnuw04sU3Zc8qKSpbc0umUU/O4SHf6oWOdO4+dHY8vb1T7C4b/Tg103+9WGr6sEE0+NFlbaB/A==}
-    peerDependencies:
-      solid-js: ^1.6.12
-
-  '@solid-primitives/utils@6.4.1':
-    resolution: {integrity: sha512-ISSB5QX1qP2ynrheIpYwc4oKR5Ny4siNuUyf1qZniy+Il+p/PtDB0QK1Dnle8noiHpwRD3gpPdubOC3qI/Zamg==}
-    peerDependencies:
-      solid-js: ^1.6.12
-
-  '@solidjs/meta@0.29.8':
-    resolution: {integrity: sha512-DkK5odQmnNJ/JlDFPf4rV6RaYN+G6ZtJyyb8jPmKAFT6HpRWnajYq4JaiDm/9UdY4rLKLVv+Q4ilkG1CD4x7mw==}
-    peerDependencies:
-      solid-js: ^1.8.4
-
   '@swc-node/core@1.14.1':
     resolution: {integrity: sha512-jrt5GUaZUU6cmMS+WTJEvGvaB6j1YNKPHPzC2PUi2BjaFbtxURHj6641Az6xN7b665hNniAIdvjxWcRml5yCnw==}
     engines: {node: '>= 10'}
@@ -1330,20 +1251,6 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
 
-  '@tanstack/history@1.162.5':
-    resolution: {integrity: sha512-w1+YvwmTkwt5n8yUqEH3IWZ9DsmorCZW/EQ3KYHnqEgIkOZpH54NvW6/Epq3Dzb8H0ifIeYX8PExvrNLIH5FIA==}
-    engines: {node: '>=20.19'}
-
-  '@tanstack/router-core@1.171.39':
-    resolution: {integrity: sha512-qUhoJ0meuSUqGYQbHbcJYdASr06YtK+bulbj6vtrhKYFkLgkSsZ6tXmMyym7sFxiSJSPYgasgozrL01LyyR/6A==}
-    engines: {node: '>=20.19'}
-
-  '@tanstack/solid-router@1.170.43':
-    resolution: {integrity: sha512-5z/V3i2x9PUxg770a9mH/o2C3fdWVB3YqyJ1r1a0O+pKf8Wevshrf8rb9sOfgNJr0nuP/WCxktZJYCq5lh1lGQ==}
-    engines: {node: '>=20.19'}
-    peerDependencies:
-      solid-js: ^1.9.10
-
   '@tootallnate/quickjs-emscripten@0.23.0':
     resolution: {integrity: sha512-C5Mc6rdnsaJDjO3UpGW/CQTHtCKaYlScZTly4JIu97Jxo/odCiH0ITnDXSJPTOrEKk/ycSZ0AOgTmkDtkOsvIA==}
 
@@ -1407,10 +1314,6 @@ packages:
   address@2.0.3:
     resolution: {integrity: sha512-XNAb/a6TCqou+TufU8/u11HCu9x1gYvOoxLwtlXgIqmkrYQADVv6ljyW2zwiPhHz9R1gItAWpuDrdJMmrOBFEA==}
     engines: {node: '>= 16.0.0'}
-
-  adm-zip@0.6.1:
-    resolution: {integrity: sha512-Xwrja8nx9e5o2N1my4DsKCeKpdrnACyr1wtbPxBDgGzKzKyE9kRtBFA8mWldI+RVlD7CBZNWY/wQ2+ydwOR6kQ==}
-    engines: {node: '>=14.0'}
 
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
@@ -1639,9 +1542,6 @@ packages:
 
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
-
-  cookie-es@3.1.1:
-    resolution: {integrity: sha512-UaXxwISYJPTr9hwQxMFYZ7kNhSXboMXP+Z3TRX6f1/NyaGPfuNUZOWP1pUEb75B2HjfklIYLVRfWiFZJyC6Npg==}
 
   core-js-compat@3.49.0:
     resolution: {integrity: sha512-VQXt1jr9cBz03b331DFDCCP90b3fanciLkgiOoy8SBHy06gNf+vQ1A3WFLqG7I8TipYIKeYK9wxd0tUrvHcOZA==}
@@ -1962,17 +1862,8 @@ packages:
     resolution: {integrity: sha512-fKzAra0rGJUUBwGBgNkHZuToZcn+TtXHpeCgmkMJMMYx1sQDYaCSyjJBSCa2nH1DGm7s3n1oBnohoVTBaN7Lww==}
     engines: {node: '>=8'}
 
-  isbot@5.2.3:
-    resolution: {integrity: sha512-e8gGz3VzAuImtTMnB5PqNRRWGAswObTc+X+X5a8PttKT78VSSFec98w9ZwUoy6jJdlvJkVdLiN+WMgA8TewoZg==}
-    engines: {node: '>=18'}
-
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
-
-  isomorphic-ws@5.0.0:
-    resolution: {integrity: sha512-muId7Zzn9ywDsyXgTIafTry2sV3nySZeUDe6YedVd1Hvuuep5AsIlqK+XefWpYTyJG5e503F2xIuT2lcU6rCSw==}
-    peerDependencies:
-      ws: '*'
 
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
@@ -2343,19 +2234,9 @@ packages:
     peerDependencies:
       seroval: ^1.0
 
-  seroval-plugins@1.8.0:
-    resolution: {integrity: sha512-96vBb12rDvPPwdKUgWw1op3fGq8AVBFOr0IllbnM72yR5J9WWXF18cQ4g1XfDO7HCyh2dt70P3XdtyRayP8FWg==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      seroval: ^1.8.0
-
   seroval@1.6.12:
     resolution: {integrity: sha512-CqbIVfk/7GL3ITwZI55lcPbpQbjHZ2DD5cUj4iH7E9YsCfHNJV1mx7yNp86Z84w5IpmkZZS/2s5vPOWmVWSdQg==}
     engines: {node: '>=10'}
-
-  seroval@1.8.1:
-    resolution: {integrity: sha512-7z9x1flFYfZBz+LfDkXNfm5UIhZJ/97ASaV8Q1wctoVkeqVfv+tLPsWebeMXBNw6XprvwxDE5wC5Ylqmr+iSrA==}
-    engines: {node: '>=20'}
 
   signal-exit@3.0.7:
     resolution: {integrity: sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ==}
@@ -2483,10 +2364,6 @@ packages:
 
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
-
-  undici@7.30.1:
-    resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
-    engines: {node: '>=20.18.1'}
 
   unicode-canonical-property-names-ecmascript@2.0.1:
     resolution: {integrity: sha512-dA8WbNeb2a6oQzAQ55YlT5vQAWGV9WXOsi3SskE3bcCdM0P4SDd+24zS/OCacdRq5BkdsRj9q3Pg6YyQoxIGqg==}
@@ -3501,54 +3378,6 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
-  '@module-federation/dts-plugin@2.9.3(typescript@5.9.3)':
-    dependencies:
-      '@module-federation/error-codes': 2.9.3
-      '@module-federation/managers': 2.9.3
-      '@module-federation/sdk': 2.9.3
-      '@module-federation/third-party-dts-extractor': 2.9.3
-      adm-zip: 0.6.1
-      isomorphic-ws: 5.0.0(ws@8.21.3)
-      typescript: 5.9.3
-      undici: 7.30.1
-      ws: 8.21.3
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-
-  '@module-federation/error-codes@2.9.3': {}
-
-  '@module-federation/managers@2.9.3':
-    dependencies:
-      '@module-federation/sdk': 2.9.3
-
-  '@module-federation/runtime-core@2.9.3':
-    dependencies:
-      '@module-federation/error-codes': 2.9.3
-      '@module-federation/sdk': 2.9.3
-
-  '@module-federation/runtime@2.9.3':
-    dependencies:
-      '@module-federation/error-codes': 2.9.3
-      '@module-federation/runtime-core': 2.9.3
-      '@module-federation/sdk': 2.9.3
-
-  '@module-federation/sdk@2.9.3': {}
-
-  '@module-federation/third-party-dts-extractor@2.9.3': {}
-
-  '@module-federation/vite@1.24.0(typescript@5.9.3)(vite@8.3.8(@types/node@20.19.43)(jiti@2.7.0)(yaml@2.9.0))':
-    dependencies:
-      '@module-federation/dts-plugin': 2.9.3(typescript@5.9.3)
-      '@module-federation/runtime': 2.9.3
-      '@module-federation/sdk': 2.9.3
-      vite: 8.3.8(@types/node@20.19.43)(jiti@2.7.0)(yaml@2.9.0)
-    transitivePeerDependencies:
-      - bufferutil
-      - typescript
-      - utf-8-validate
-      - vue-tsc
-
   '@napi-rs/wasm-runtime@0.2.4':
     dependencies:
       '@emnapi/core': 1.4.5
@@ -3814,19 +3643,6 @@ snapshots:
 
   '@rolldown/pluginutils@1.1.1': {}
 
-  '@solid-primitives/refs@1.1.4(solid-js@1.9.19)':
-    dependencies:
-      '@solid-primitives/utils': 6.4.1(solid-js@1.9.19)
-      solid-js: 1.9.19
-
-  '@solid-primitives/utils@6.4.1(solid-js@1.9.19)':
-    dependencies:
-      solid-js: 1.9.19
-
-  '@solidjs/meta@0.29.8(solid-js@1.9.19)':
-    dependencies:
-      solid-js: 1.9.19
-
   '@swc-node/core@1.14.1(@swc/core@1.15.43)(@swc/types@0.1.27)':
     dependencies:
       '@swc/core': 1.15.43
@@ -3980,24 +3796,6 @@ snapshots:
       tailwindcss: 4.3.5
       vite: 8.3.8(@types/node@20.19.43)(jiti@2.7.0)(yaml@2.9.0)
 
-  '@tanstack/history@1.162.5': {}
-
-  '@tanstack/router-core@1.171.39':
-    dependencies:
-      '@tanstack/history': 1.162.5
-      cookie-es: 3.1.1
-      seroval: 1.8.1
-      seroval-plugins: 1.8.0(seroval@1.8.1)
-
-  '@tanstack/solid-router@1.170.43(solid-js@1.9.19)':
-    dependencies:
-      '@solid-primitives/refs': 1.1.4(solid-js@1.9.19)
-      '@solidjs/meta': 0.29.8(solid-js@1.9.19)
-      '@tanstack/history': 1.162.5
-      '@tanstack/router-core': 1.171.39
-      isbot: 5.2.3
-      solid-js: 1.9.19
-
   '@tootallnate/quickjs-emscripten@0.23.0': {}
 
   '@tybys/wasm-util@0.10.3':
@@ -4068,8 +3866,6 @@ snapshots:
       argparse: 2.0.1
 
   address@2.0.3: {}
-
-  adm-zip@0.6.1: {}
 
   agent-base@7.1.4: {}
 
@@ -4289,8 +4085,6 @@ snapshots:
       delayed-stream: 1.0.0
 
   convert-source-map@2.0.0: {}
-
-  cookie-es@3.1.1: {}
 
   core-js-compat@3.49.0:
     dependencies:
@@ -4575,13 +4369,7 @@ snapshots:
     dependencies:
       is-docker: 2.2.1
 
-  isbot@5.2.3: {}
-
   isexe@2.0.0: {}
-
-  isomorphic-ws@5.0.0(ws@8.21.3):
-    dependencies:
-      ws: 8.21.3
 
   jiti@2.7.0: {}
 
@@ -5092,13 +4880,7 @@ snapshots:
     dependencies:
       seroval: 1.6.12
 
-  seroval-plugins@1.8.0(seroval@1.8.1):
-    dependencies:
-      seroval: 1.8.1
-
   seroval@1.6.12: {}
-
-  seroval@1.8.1: {}
 
   signal-exit@3.0.7: {}
 
@@ -5253,8 +5035,6 @@ snapshots:
   typescript@5.9.3: {}
 
   undici-types@6.21.0: {}
-
-  undici@7.30.1: {}
 
   unicode-canonical-property-names-ecmascript@2.0.1: {}
 
